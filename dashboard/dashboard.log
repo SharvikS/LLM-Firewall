@@ -46,3 +46,43 @@
  GET / 200 in 14ms (next.js: 1274µs, application-code: 13ms)
 (node:14542) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
 (Use `node --trace-deprecation ...` to show where the warning was created)
+ GET / 200 in 43ms (next.js: 9ms, application-code: 34ms)
+[browser] The width(-1) and height(-1) of chart should be greater than 0,
+       please check the style of container, or the props width(100%) and height(100%),
+       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
+       height and width.
+[browser] The width(-1) and height(-1) of chart should be greater than 0,
+       please check the style of container, or the props width(100%) and height(100%),
+       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
+       height and width.
+[browser] The width(-1) and height(-1) of chart should be greater than 0,
+       please check the style of container, or the props width(100%) and height(100%),
+       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
+       height and width.
+[browser] The width(-1) and height(-1) of chart should be greater than 0,
+       please check the style of container, or the props width(100%) and height(100%),
+       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
+       height and width.
+ GET / 200 in 33ms (next.js: 22ms, application-code: 11ms)
+✓ Compiled in 304ms
+ GET / 200 in 25ms (next.js: 3ms, application-code: 23ms)
+ GET / 200 in 24ms (next.js: 13ms, application-code: 11ms)
+✓ Compiled in 20ms
+[browser] Uncaught ReferenceError: BarChart2 is not defined
+    at Dashboard (src/app/page.tsx:106:106)
+  104 | ...
+  105 | ...={() => setActiveTab('Overview')} icon={<Activity size={14}/>} label="Overview" />
+> 106 | ...k={() => setActiveTab('Analytics')} icon={<BarChart2 size={14}/>} label="Analytics" />
+      |                                               ^
+  107 | ...lick={() => setActiveTab('Edge Routing')} icon={<Network size={14}/>} label="Edge Rout...
+  108 | ...
+  109 | ...
+ GET / 200 in 89ms (next.js: 14ms, application-code: 75ms)
+[browser] The width(-1) and height(-1) of chart should be greater than 0,
+       please check the style of container, or the props width(100%) and height(100%),
+       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
+       height and width.
+[browser] The width(-1) and height(-1) of chart should be greater than 0,
+       please check the style of container, or the props width(100%) and height(100%),
+       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
+       height and width.

@@ -6,7 +6,7 @@ import {
   ChevronRight, Server, Lock, Key, CreditCard, Layout, Network, 
   Cpu, ShieldAlert, ClipboardList, Fingerprint, Eye, Sliders, 
   Moon, Sun, Monitor, Plus, Trash2, Filter, Command, Maximize2, 
-  Sidebar as SidebarIcon, X, Zap, ChevronLeft, AlertCircle
+  Sidebar as SidebarIcon, X, Zap, ChevronLeft, AlertCircle, BarChart2
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 
@@ -103,16 +103,25 @@ export default function Dashboard() {
         <div className="flex-1 overflow-y-auto py-6 flex flex-col gap-8 scrollbar-hide px-3 w-[260px]">
           <NavSection title="Platform">
             <NavItem active={activeTab === 'Overview'} onClick={() => setActiveTab('Overview')} icon={<Activity size={14}/>} label="Overview" />
+            <NavItem active={activeTab === 'Analytics'} onClick={() => setActiveTab('Analytics')} icon={<BarChart2 size={14}/>} label="Analytics" />
             <NavItem active={activeTab === 'Edge Routing'} onClick={() => setActiveTab('Edge Routing')} icon={<Network size={14}/>} label="Edge Routing" />
           </NavSection>
           <NavSection title="Security Operations">
             <NavItem active={activeTab === 'Events'} onClick={() => setActiveTab('Events')} icon={<AlertCircle size={14}/>} label="Events & Logs" />
             <NavItem active={activeTab === 'Policies'} onClick={() => setActiveTab('Policies')} icon={<FileText size={14}/>} label="Policy Engine" />
             <NavItem active={activeTab === 'Sandboxes'} onClick={() => setActiveTab('Sandboxes')} icon={<Cpu size={14}/>} label="Sandboxes" />
+            <NavItem active={activeTab === 'Vulnerabilities'} onClick={() => setActiveTab('Vulnerabilities')} icon={<ShieldAlert size={14}/>} label="Vulnerabilities" />
+          </NavSection>
+          <NavSection title="Auditing & Compliance">
+            <NavItem active={activeTab === 'Audit Logs'} onClick={() => setActiveTab('Audit Logs')} icon={<ClipboardList size={14}/>} label="Audit Logs" />
+            <NavItem active={activeTab === 'Access Control'} onClick={() => setActiveTab('Access Control')} icon={<Fingerprint size={14}/>} label="Access Control" />
+            <NavItem active={activeTab === 'Data Privacy'} onClick={() => setActiveTab('Data Privacy')} icon={<Eye size={14}/>} label="Data Privacy" />
           </NavSection>
           <NavSection title="Administration">
             <NavItem active={activeTab === 'Settings'} onClick={() => setActiveTab('Settings')} icon={<Settings size={14}/>} label="Settings" />
+            <NavItem active={activeTab === 'Team'} onClick={() => setActiveTab('Team')} icon={<Users size={14}/>} label="Team" />
             <NavItem active={activeTab === 'API Keys'} onClick={() => setActiveTab('API Keys')} icon={<Key size={14}/>} label="API Keys" />
+            <NavItem active={activeTab === 'Billing'} onClick={() => setActiveTab('Billing')} icon={<CreditCard size={14}/>} label="Billing" />
           </NavSection>
         </div>
 
