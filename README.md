@@ -137,5 +137,5 @@ Designed for environments where security cannot be compromised. The LLM Firewall
 
 ---
 <div align="center">
-  Made with ❤️ by the Security Engineering Team
+  Made with ❤️ by sharvik.tech
 </div>
