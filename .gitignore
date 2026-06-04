@@ -1,0 +1,12 @@
+# Environment variables (NEVER COMMIT API KEYS)
+.env
+.env.*
+
+# Go binaries and build artifacts
+gateway/server
+gateway/gateway
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
