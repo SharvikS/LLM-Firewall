@@ -45,7 +45,7 @@ export default function Dashboard() {
   if (!isClient) return null;
 
   return (
-    <div className={`flex h-screen overflow-hidden antialiased selection:bg-base-accent/30 ${theme}`}>
+    <div className={`flex h-screen w-full bg-base-main text-base-text overflow-hidden antialiased selection:bg-base-accent/30 transition-colors duration-300 ${theme}`}>
       
       {/* SIDEBAR */}
       <div className="w-64 border-r border-base-border bg-base-main flex flex-col relative z-20 transition-colors duration-300">
