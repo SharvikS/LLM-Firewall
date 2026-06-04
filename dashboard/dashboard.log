@@ -75,3 +75,34 @@ Read more: https://nextjs.org/docs/app/api-reference/config/next-config-js/allow
 ✓ Compiled in 98ms
  GET / 200 in 8ms (next.js: 1107µs, application-code: 6ms)
  GET / 200 in 7ms (next.js: 976µs, application-code: 6ms)
+ GET / 200 in 62ms (next.js: 1590µs, application-code: 61ms)
+[browser] The width(-1) and height(-1) of chart should be greater than 0,
+       please check the style of container, or the props width(100%) and height(100%),
+       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
+       height and width.
+[browser] The width(-1) and height(-1) of chart should be greater than 0,
+       please check the style of container, or the props width(100%) and height(100%),
+       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
+       height and width.
+ GET / 200 in 42ms (next.js: 5ms, application-code: 37ms)
+[browser] The width(-1) and height(-1) of chart should be greater than 0,
+       please check the style of container, or the props width(100%) and height(100%),
+       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
+       height and width.
+[browser] The width(-1) and height(-1) of chart should be greater than 0,
+       please check the style of container, or the props width(100%) and height(100%),
+       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
+       height and width.
+ GET / 200 in 20ms (next.js: 13ms, application-code: 8ms)
+ GET / 200 in 15ms (next.js: 1832µs, application-code: 13ms)
+ GET / 200 in 15ms (next.js: 9ms, application-code: 5ms)
+✓ Compiled in 64ms
+[browser] Uncaught ReferenceError: AlertCircle is not defined
+    at Dashboard (src/app/page.tsx:108:100)
+  106 | ...
+  107 | ...
+> 108 | ...lick={() => setActiveTab('Events')} icon={<AlertCircle size={14}/>} label="Events & Lo...
+      |                                               ^
+  109 | ...nClick={() => setActiveTab('Policies')} icon={<FileText size={14}/>} label="Policy Eng...
+  110 | ...onClick={() => setActiveTab('Sandboxes')} icon={<Cpu size={14}/>} label="Sandboxes" />
+  111 | ...
