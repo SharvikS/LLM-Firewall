@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: titan-asr
+  namespace: llm-firewall
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: asr
+  template:
+    metadata:
+      labels:
+        app: asr
+      annotations:
+        sidecar.istio.io/inject: "true"
+    spec:
+      containers:
+      - name: asr
+        image: ghcr.io/sharviks/llm-firewall-asr:latest
+        securityContext:
+          privileged: true # Required for nested Docker/Firecracker execution
+        volumeMounts:
+        - name: docker-sock
+          mountPath: /var/run/docker.sock
+        ports:
+        - containerPort: 8000
+        resources:
+          requests:
+            cpu: "1000m"
+            memory: "2Gi"
+          limits:
+            cpu: "4000m"
+            memory: "4Gi"
+      volumes:
+      - name: docker-sock
+        hostPath:
+          path: /var/run/docker.sock
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: titan-asr
+  namespace: llm-firewall
+spec:
+  selector:
+    app: asr
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8000

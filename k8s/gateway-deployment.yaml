@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: titan-gateway
+  namespace: llm-firewall
+  labels:
+    app: gateway
+spec:
+  replicas: 5 # High availability multi-zone configuration
+  selector:
+    matchLabels:
+      app: gateway
+  template:
+    metadata:
+      labels:
+        app: gateway
+      annotations:
+        sidecar.istio.io/inject: "true" # Mandatory Istio mTLS boundary
+    spec:
+      containers:
+      - name: gateway
+        image: ghcr.io/sharviks/llm-firewall-gateway:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: REDPANDA_BROKERS
+          value: "redpanda.platform.svc.cluster.local:9092"
+        - name: COCKROACH_URL
+          value: "postgresql://root@cockroachdb.platform.svc.cluster.local:26257/defaultdb?sslmode=verify-full"
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "512Mi"
+          limits:
+            cpu: "2000m"
+            memory: "1Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: titan-gateway
+  namespace: llm-firewall
+spec:
+  selector:
+    app: gateway
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080
