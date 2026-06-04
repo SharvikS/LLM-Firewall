@@ -1,0 +1,9 @@
+2026/06/04 18:11:12 [CockroachDB] Warning: Could not ping database: failed to connect to `user=root database=defaultdb`:
+	[::1]:26257 (localhost): dial error: dial tcp [::1]:26257: connect: connection refused
+	127.0.0.1:26257 (localhost): dial error: dial tcp 127.0.0.1:26257: connect: connection refused. Assuming offline for local dev.
+2026/06/04 18:11:12 🚀 Starting TITAN Gateway on port :8080, forwarding to https://api.groq.com/openai
+2026/06/04 18:12:07 [Sharviks-MacBook-Air.local/JncD7i2Dko-000001] "GET http://localhost:8080/health HTTP/1.1" from 127.0.0.1:49459 - 200 24B in 151.333µs
+2026/06/04 18:12:07 [Cedar Policy Engine] Evaluating Action 'InvokeLLM' on Resource 'OpenAI_GPT4' by Principal 'tenant_123'
+2026/06/04 18:12:07 [Cedar Policy Engine] ALLOW: Request passed ABAC policy evaluation
+2026/06/04 18:12:07 [Sharviks-MacBook-Air.local/JncD7i2Dko-000002] "GET http://localhost:8080/favicon.ico HTTP/1.1" from 127.0.0.1:49459 - 404 157B in 363.095333ms
+2026/06/04 18:12:07 [Redpanda] Failed to produce event: context canceled

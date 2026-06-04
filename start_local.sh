@@ -3,19 +3,18 @@ set -e
 
 echo "🚀 Starting CyberFort AI - TITAN Platform"
 
-# 1. Check Docker
+# 1. Check Docker (Bypassed)
 if ! command -v docker &> /dev/null || ! docker info &> /dev/null; then
-  echo "❌ ERROR: Docker is not running!"
-  echo "The Titan backend (CockroachDB, Redpanda, ClickHouse) requires Docker."
-  echo "Please start Docker Desktop and run this script again."
-  exit 1
+  echo "⚠️ WARNING: Docker is not running!"
+  echo "Skipping the heavy Data Platform (Redpanda, CockroachDB, ClickHouse)."
+  echo "Starting API servers and UI in 'Dev Mode'..."
+else
+  # 2. Start Data Platform
+  echo "📦 Starting Data Platform (Redpanda, CockroachDB, ClickHouse)..."
+  cd platform
+  docker-compose up -d
+  cd ..
 fi
-
-# 2. Start Data Platform
-echo "📦 Starting Data Platform (Redpanda, CockroachDB, ClickHouse)..."
-cd platform
-docker-compose up -d
-cd ..
 
 # 3. Start Intelligence Plane (Python ASR)
 echo "🧠 Starting Intelligence Plane (ASR V2)..."
