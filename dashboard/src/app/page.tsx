@@ -6,7 +6,7 @@ import {
   ChevronRight, Server, Lock, Key, CreditCard, Layout, Network, 
   Cpu, ShieldAlert, ClipboardList, Fingerprint, Eye, Sliders, 
   Moon, Sun, Monitor, Plus, Trash2, Filter, Command, Maximize2, 
-  Sidebar as SidebarIcon, X, Zap, ChevronLeft
+  Sidebar as SidebarIcon, X, Zap, ChevronLeft, AlertCircle
 } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
 
