@@ -5,16 +5,32 @@
 ▲ Next.js 16.2.7 (Turbopack)
 - Local:         http://localhost:3000
 - Network:       http://10.80.80.43:3000
-✓ Ready in 239ms
+✓ Ready in 223ms
 
-(node:12890) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(node:13916) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
 (Use `node --trace-deprecation ...` to show where the warning was created)
- GET / 200 in 1087ms (next.js: 1015ms, application-code: 72ms)
-✓ Compiled in 294ms
- GET / 200 in 118ms (next.js: 56ms, application-code: 62ms)
-✓ Compiled in 578ms
- GET / 200 in 67ms (next.js: 51ms, application-code: 17ms)
- GET / 200 in 12ms (next.js: 1113µs, application-code: 11ms)
+ GET / 200 in 189ms (next.js: 74ms, application-code: 114ms)
+[browser] The width(-1) and height(-1) of chart should be greater than 0,
+       please check the style of container, or the props width(100%) and height(100%),
+       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
+       height and width.
+[browser] The width(-1) and height(-1) of chart should be greater than 0,
+       please check the style of container, or the props width(100%) and height(100%),
+       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
+       height and width.
+ GET / 200 in 37ms (next.js: 4ms, application-code: 34ms)
+⚠ Blocked cross-origin request to Next.js dev resource /_next/webpack-hmr from "10.80.80.43".
+Cross-origin access to Next.js dev resources is blocked by default for safety.
+
+To allow this host in development, add it to "allowedDevOrigins" in next.config.js and restart the dev server:
+
+// next.config.js
+module.exports = {
+  allowedDevOrigins: ['10.80.80.43'],
+}
+
+Read more: https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins
+ GET / 200 in 33ms (next.js: 3ms, application-code: 30ms)
 [browser] The width(-1) and height(-1) of chart should be greater than 0,
        please check the style of container, or the props width(100%) and height(100%),
        or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
@@ -39,18 +55,6 @@
        please check the style of container, or the props width(100%) and height(100%),
        or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
        height and width.
- GET / 200 in 33ms (next.js: 23ms, application-code: 10ms)
- GET / 200 in 16ms (next.js: 1475µs, application-code: 15ms)
- GET / 200 in 7ms (next.js: 1404µs, application-code: 6ms)
-[browser] The width(-1) and height(-1) of chart should be greater than 0,
-       please check the style of container, or the props width(100%) and height(100%),
-       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
-       height and width.
-[browser] The width(-1) and height(-1) of chart should be greater than 0,
-       please check the style of container, or the props width(100%) and height(100%),
-       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
-       height and width.
-✓ Compiled in 101ms
 [browser] The width(-1) and height(-1) of chart should be greater than 0,
        please check the style of container, or the props width(100%) and height(100%),
        or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
@@ -67,38 +71,7 @@
        please check the style of container, or the props width(100%) and height(100%),
        or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
        height and width.
-✓ Compiled in 31ms
-The width(-1) and height(-1) of chart should be greater than 0,
-       please check the style of container, or the props width(100%) and height(100%),
-       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
-       height and width.
- GET / 200 in 114ms (next.js: 3ms, application-code: 111ms)
-[browser] The width(-1) and height(-1) of chart should be greater than 0,
-       please check the style of container, or the props width(100%) and height(100%),
-       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
-       height and width.
-[browser] The width(-1) and height(-1) of chart should be greater than 0,
-       please check the style of container, or the props width(100%) and height(100%),
-       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
-       height and width.
-[browser] The width(-1) and height(-1) of chart should be greater than 0,
-       please check the style of container, or the props width(100%) and height(100%),
-       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
-       height and width.
-[browser] The width(-1) and height(-1) of chart should be greater than 0,
-       please check the style of container, or the props width(100%) and height(100%),
-       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
-       height and width.
- GET / 200 in 30ms (next.js: 22ms, application-code: 8ms)
- GET / 200 in 14ms (next.js: 1000µs, application-code: 13ms)
- GET / 200 in 14ms (next.js: 8ms, application-code: 6ms)
-✓ Compiled in 88ms
-[browser] The width(-1) and height(-1) of chart should be greater than 0,
-       please check the style of container, or the props width(100%) and height(100%),
-       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
-       height and width.
-[browser] The width(-1) and height(-1) of chart should be greater than 0,
-       please check the style of container, or the props width(100%) and height(100%),
-       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the
-       height and width.
-✓ Compiled in 13ms
+ GET / 200 in 21ms (next.js: 12ms, application-code: 9ms)
+✓ Compiled in 98ms
+ GET / 200 in 8ms (next.js: 1107µs, application-code: 6ms)
+ GET / 200 in 7ms (next.js: 976µs, application-code: 6ms)
