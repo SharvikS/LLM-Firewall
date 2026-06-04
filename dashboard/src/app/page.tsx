@@ -27,6 +27,7 @@ const incidentData = [
 export default function Dashboard() {
   const [isClient, setIsClient] = useState(false);
   const [activeTab, setActiveTab] = useState('Overview');
+  const [activeSettingsTab, setActiveSettingsTab] = useState('Appearance');
   const [theme, setTheme] = useState('theme-dark');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isCmdkOpen, setIsCmdkOpen] = useState(false);
