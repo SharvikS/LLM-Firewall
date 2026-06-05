@@ -61,6 +61,9 @@ The system uses a modern, fault-tolerant microservices architecture:
 
 <div align="center">
   <img src="docs/assets/dashboard.png" width="800" alt="Dashboard Preview"/>
+  <br/>
+  <br/>
+  <img src="docs/assets/policy_engine.png" width="800" alt="Security Policy Engine"/>
 </div>
 
 ---
