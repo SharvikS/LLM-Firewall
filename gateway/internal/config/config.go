@@ -33,8 +33,11 @@ type Config struct {
 	CacheTTLSec int
 
 	// ML Engine (Python gRPC)
-	AnalyzerAddr       string
-	AnalyzerTimeoutMs  int
+	AnalyzerAddr      string
+	AnalyzerTimeoutMs int
+
+	// Admin API
+	AdminToken string // master secret for /admin/* routes — never NEXT_PUBLIC_
 }
 
 // Load reads environment variables and returns a validated Config.
@@ -44,7 +47,7 @@ func Load() (*Config, error) {
 		ListenAddr:          getEnv("LISTEN_ADDR", ":8080"),
 		TargetURL:           getEnv("TARGET_URL", "https://api.groq.com/openai"),
 		APIKey:              os.Getenv("GROQ_API_KEY"),
-		DBConnString:        getEnv("DB_CONN_STRING", "postgresql://root@localhost:26257/defaultdb?sslmode=disable"),
+		DBConnString:        getEnv("DB_CONN_STRING", "postgresql://localhost/titan_dev?sslmode=disable"),
 		KafkaBrokers:        splitComma(getEnv("KAFKA_BROKERS", "localhost:9092")),
 		MaxRequestBodyBytes: getEnvInt64("MAX_REQUEST_BODY_BYTES", 4*1024*1024), // 4 MB
 		ReadTimeoutSec:      getEnvInt("READ_TIMEOUT_SEC", 30),
@@ -62,6 +65,8 @@ func Load() (*Config, error) {
 
 		AnalyzerAddr:      getEnv("ANALYZER_ADDR", "localhost:50051"),
 		AnalyzerTimeoutMs: getEnvInt("ANALYZER_TIMEOUT_MS", 150),
+
+		AdminToken: getEnv("ADMIN_TOKEN", "titan-admin-dev-secret"),
 	}
 
 	if cfg.APIKey == "" {

@@ -132,6 +132,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+      cockroachdb:
+        condition: service_healthy
       ml_engine:
         condition: service_started
     healthcheck:
@@ -148,6 +150,7 @@ services:
       dockerfile: Dockerfile
     environment:
       NEXT_PUBLIC_GATEWAY_URL: "http://gateway:8080"
+      ADMIN_TOKEN: "${ADMIN_TOKEN:-titan-admin-dev-secret}"
       NODE_ENV: production
     ports:
       - "3000:3000"
