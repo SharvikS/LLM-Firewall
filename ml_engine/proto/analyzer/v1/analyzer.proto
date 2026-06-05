@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package analyzer.v1;
+
+// go_package: path for generated Go files; name after semicolon is the Go package name.
+option go_package = "github.com/sharvik/llm-firewall/gateway/internal/analyzerpb;analyzerpb";
+
+// AnalyzerService is called synchronously by the Go Gateway before every
+// request is forwarded to the upstream LLM. It gates on injection/jailbreak
+// attempts and masks PII in the prompt body.
+service AnalyzerService {
+  rpc AnalyzePrompt(PromptRequest) returns (AnalysisResult);
+}
+
+message PromptRequest {
+  string request_id = 1;
+  string tenant_id  = 2;
+  // The full prompt text extracted from the LLM request body.
+  string prompt     = 3;
+  string model      = 4;
+}
+
+enum Action {
+  ALLOW = 0; // forward as-is
+  BLOCK = 1; // reject; return 403 to the client
+  MASK  = 2; // forward with masked_prompt replacing original
+}
+
+message ThreatDetail {
+  string type        = 1; // e.g. "PromptInjection", "Jailbreak"
+  float  confidence  = 2; // 0.0–1.0
+  string description = 3;
+}
+
+message AnalysisResult {
+  string              request_id    = 1;
+  Action              action        = 2;
+  // risk_score is 0.0–100.0 and feeds directly into Cedar's ABAC context,
+  // replacing the hardcoded value from Phase 1.
+  float               risk_score    = 3;
+  bool                pii_detected  = 4;
+  // masked_prompt is populated when action == MASK; the gateway must forward
+  // this text in place of the original prompt.
+  string              masked_prompt = 5;
+  repeated ThreatDetail threats     = 6;
+  string              reason        = 7;
+}
