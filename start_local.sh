@@ -1,56 +1,63 @@
 #!/bin/bash
 set -e
 
-echo "🚀 Starting CyberFort AI - TITAN Platform"
+echo "🚀 Starting TITAN Gateway — Zero-Trust LLM Firewall"
 
-# 1. Check Docker (Bypassed)
-if ! command -v docker &> /dev/null || ! docker info &> /dev/null; then
-  echo "⚠️ WARNING: Docker is not running!"
-  echo "Skipping the heavy Data Platform (Redpanda, CockroachDB, ClickHouse)."
-  echo "Starting API servers and UI in 'Dev Mode'..."
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+
+# ── 1. Infrastructure (Docker) ────────────────────────────────────────────────
+if ! command -v docker &> /dev/null || ! docker info &> /dev/null 2>&1; then
+  echo "⚠️  WARNING: Docker is not running."
+  echo "    CockroachDB, Redis, and Redpanda must be started manually."
 else
-  # 2. Start Data Platform
-  echo "📦 Starting Data Platform (Redpanda, CockroachDB, ClickHouse)..."
-  cd platform
-  docker-compose up -d
-  cd ..
+  echo "📦 Starting infrastructure (Redis, CockroachDB, Redpanda)..."
+  cd "$ROOT"
+  docker compose up -d redis cockroachdb redpanda
+  echo "    Waiting for infrastructure to become healthy (~15s)..."
+  sleep 15
 fi
 
-# 3. Start Intelligence Plane (Python ASR)
-echo "🧠 Starting Intelligence Plane (ASR V2)..."
-cd analyzer
+# ── 2. ML Engine (Python gRPC, port 50051) ────────────────────────────────────
+echo "🧠 Starting ML Engine (gRPC analyzer)..."
+cd "$ROOT/ml_engine"
 if [ ! -d "venv" ]; then
     python3 -m venv venv
     source venv/bin/activate
-    pip install -r requirements.txt
+    pip install -r requirements.txt -q
 else
     source venv/bin/activate
 fi
-export PYTHONPATH=$PWD/..
-nohup uvicorn analyzer.main:app --port 8000 > asr.log 2>&1 &
-ASR_PID=$!
-cd ..
+export GRPC_PORT=50051
+nohup python -m analyzer.server > "$ROOT/ml_engine/ml_engine.log" 2>&1 &
+ML_PID=$!
+echo "    ML Engine started (PID $ML_PID) — log: ml_engine/ml_engine.log"
 
-# 4. Start Data Plane (Go Gateway)
-echo "🛡️ Starting Data Plane (Go Gateway)..."
-cd gateway
-nohup go run cmd/server/main.go > gateway.log 2>&1 &
+# ── 3. Go Gateway (port 8080) ─────────────────────────────────────────────────
+echo "🛡️  Starting Go Gateway..."
+cd "$ROOT/gateway"
+nohup go run cmd/server/main.go > "$ROOT/gateway/gateway.log" 2>&1 &
 GW_PID=$!
-cd ..
+echo "    Gateway started (PID $GW_PID) — log: gateway/gateway.log"
 
-# 5. Start Control Plane (Next.js Dashboard)
-echo "📊 Starting Control Plane (Dashboard)..."
-cd dashboard
-nohup npm run dev > dashboard.log 2>&1 &
+# ── 4. Next.js Dashboard (port 3000) ─────────────────────────────────────────
+echo "📊 Starting Next.js Dashboard..."
+cd "$ROOT/dashboard"
+nohup npm run dev > "$ROOT/dashboard/dashboard.log" 2>&1 &
 DASH_PID=$!
-cd ..
+echo "    Dashboard started (PID $DASH_PID) — log: dashboard/dashboard.log"
 
-echo "-----------------------------------------------------"
-echo "✅ ALL TITAN SYSTEMS OPERATIONAL!"
-echo "-----------------------------------------------------"
-echo "🖥️  Control Plane (UI): http://localhost:3000"
-echo "🛡️  Go Gateway (Data):  http://localhost:8080"
-echo "🧠 Python ASR (Intel): http://localhost:8000"
-echo "-----------------------------------------------------"
-echo "🛑 To shut down the platform, run this command:"
-echo "kill -9 $ASR_PID $GW_PID $DASH_PID && cd platform && docker-compose down"
+cd "$ROOT"
+
+echo ""
+echo "──────────────────────────────────────────────────────"
+echo "✅  TITAN Gateway stack is starting up"
+echo "──────────────────────────────────────────────────────"
+echo "  Control Plane (UI):  http://localhost:3000"
+echo "  Go Gateway (Data):   http://localhost:8080"
+echo "  ML Engine (gRPC):    localhost:50051"
+echo "──────────────────────────────────────────────────────"
+echo "  Health check:  curl http://localhost:8080/health"
+echo ""
+echo "🛑 To stop:"
+echo "   kill $ML_PID $GW_PID $DASH_PID"
+echo "   docker compose stop redis cockroachdb redpanda"
