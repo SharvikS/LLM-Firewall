@@ -20,7 +20,7 @@ It provides **sub-millisecond latency** routing via a high-performance Go data p
 
 ---
 
-## ✨ Enterprise Features
+## ✨ Enterprise Features 
 
 ### 🔒 Zero-Trust Security
 - **Prompt Injection & Jailbreak Detection**: Stops malicious prompts from hijacking models.
