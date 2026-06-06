@@ -65,6 +65,13 @@ CREATE INDEX IF NOT EXISTS idx_audit_created  ON audit_events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_tenant   ON audit_events(tenant_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_action   ON audit_events(action, created_at DESC);
 
+-- Covering index for ListAPIKeys(tenant_id ORDER BY created_at DESC).
+-- Without this the query degrades to a full table scan as the key count grows.
+CREATE INDEX IF NOT EXISTS idx_api_keys_tenant_created ON api_keys(tenant_id, created_at DESC);
+
+-- Covering index for ListPolicies(tenant_id, enabled ORDER BY created_at DESC).
+CREATE INDEX IF NOT EXISTS idx_policies_tenant_enabled ON policies(tenant_id, enabled, created_at DESC);
+
 -- ── Schema version tracker ────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version     INTEGER PRIMARY KEY,

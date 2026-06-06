@@ -33,8 +33,10 @@ type Config struct {
 	CacheTTLSec int
 
 	// ML Engine (Python gRPC)
-	AnalyzerAddr      string
-	AnalyzerTimeoutMs int
+	AnalyzerAddr       string
+	AnalyzerTimeoutMs  int
+	AnalyzerTLSEnabled bool   // set ANALYZER_TLS_ENABLED=true to enable mTLS
+	AnalyzerTLSCertFile string // CA cert (or server cert) for client-side verification
 
 	// Provider failover — optional secondary upstream for 5xx/transport errors
 	FallbackTargetURL string // e.g. "https://api.openai.com/v1"
@@ -75,8 +77,10 @@ func Load() (*Config, error) {
 
 		CacheTTLSec: getEnvInt("CACHE_TTL_SEC", 3600),
 
-		AnalyzerAddr:      getEnv("ANALYZER_ADDR", "localhost:50051"),
-		AnalyzerTimeoutMs: getEnvInt("ANALYZER_TIMEOUT_MS", 150),
+		AnalyzerAddr:        getEnv("ANALYZER_ADDR", "localhost:50051"),
+		AnalyzerTimeoutMs:   getEnvInt("ANALYZER_TIMEOUT_MS", 150),
+		AnalyzerTLSEnabled:  getEnvBool("ANALYZER_TLS_ENABLED", false),
+		AnalyzerTLSCertFile: getEnv("ANALYZER_TLS_CERT_FILE", "/etc/certs/tls.crt"),
 
 		FallbackTargetURL: os.Getenv("FALLBACK_TARGET_URL"),
 		FallbackAPIKey:    os.Getenv("FALLBACK_API_KEY"),
@@ -120,6 +124,13 @@ func getEnvInt(key string, defaultVal int) int {
 		if i, err := strconv.Atoi(v); err == nil {
 			return i
 		}
+	}
+	return defaultVal
+}
+
+func getEnvBool(key string, defaultVal bool) bool {
+	if v := os.Getenv(key); v != "" {
+		return strings.ToLower(v) == "true" || v == "1"
 	}
 	return defaultVal
 }

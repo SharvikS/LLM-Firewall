@@ -170,14 +170,39 @@ def serve() -> None:
 
     port = os.getenv("GRPC_PORT", "50051")
     workers = int(os.getenv("GRPC_WORKERS", "4"))
+    tls_enabled = os.getenv("GRPC_TLS_ENABLED", "false").lower() in ("true", "1")
 
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=workers))
     analyzer_pb2_grpc.add_AnalyzerServiceServicer_to_server(
         AnalyzerServicer(), server
     )
-    server.add_insecure_port(f"[::]:{port}")
+
+    if tls_enabled:
+        cert_file = os.getenv("GRPC_TLS_CERT", "/etc/certs/tls.crt")
+        key_file  = os.getenv("GRPC_TLS_KEY",  "/etc/certs/tls.key")
+        try:
+            with open(cert_file, "rb") as f:
+                cert_chain = f.read()
+            with open(key_file, "rb") as f:
+                private_key = f.read()
+            server_creds = grpc.ssl_server_credentials([(private_key, cert_chain)])
+            server.add_secure_port(f"[::]:{port}", server_creds)
+            logger.info("gRPC AnalyzerService TLS enabled on port %s (cert=%s)", port, cert_file)
+        except Exception as exc:
+            logger.error(
+                "Failed to load TLS credentials (%s) — falling back to plaintext. "
+                "This violates Zero-Trust; fix cert paths before production.", exc
+            )
+            server.add_insecure_port(f"[::]:{port}")
+    else:
+        server.add_insecure_port(f"[::]:{port}")
+        logger.warning(
+            "gRPC AnalyzerService listening on plaintext port %s — "
+            "set GRPC_TLS_ENABLED=true to enable mTLS", port
+        )
+
     server.start()
-    logger.info("gRPC AnalyzerService listening on port %s", port)
+    logger.info("gRPC AnalyzerService started on port %s (tls=%s)", port, tls_enabled)
 
     def _shutdown(sig, _frame):
         logger.info("Shutting down gRPC server (signal %s)…", sig)

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/sharvik/llm-firewall/gateway/internal/logger"
 )
@@ -133,23 +134,32 @@ func (s *Store) auditBatchWriter() {
 	}
 }
 
+// insertAuditBatch writes all rows in a single network round-trip using
+// pgx.SendBatch (PostgreSQL pipelined extended query protocol).
+// This replaces the previous N×(BEGIN + INSERT + COMMIT) pattern with
+// a single pipeline flush — one TCP round-trip for any batch size.
 func (s *Store) insertAuditBatch(ctx context.Context, rows []AuditRow) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return err
+	if len(rows) == 0 {
+		return nil
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck
+	const q = `INSERT INTO audit_events
+		(request_id,tenant_id,api_key_id,action,risk_score,path,latency_ms,status_code,reason)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`
 
+	batch := &pgx.Batch{}
 	for _, r := range rows {
-		_, err := tx.Exec(ctx,
-			`INSERT INTO audit_events(request_id,tenant_id,api_key_id,action,risk_score,path,latency_ms,status_code,reason)
-			 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		batch.Queue(q,
 			r.RequestID, r.TenantID, r.APIKeyID, r.Action, r.RiskScore,
 			r.Path, r.LatencyMs, r.StatusCode, r.Reason,
 		)
-		if err != nil {
+	}
+	results := s.pool.SendBatch(ctx, batch)
+	defer results.Close()
+
+	for range rows {
+		if _, err := results.Exec(); err != nil {
 			return err
 		}
 	}
-	return tx.Commit(ctx)
+	return nil
 }

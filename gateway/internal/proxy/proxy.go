@@ -326,10 +326,18 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		rc := newResponseCapture(w)
 		p.rp.ServeHTTP(rc, r)
-		if rc.statusCode == http.StatusOK && rc.body.Len() > 0 {
+		// Cache only when ALL conditions hold:
+		//   1. Upstream returned 200 with a non-empty body.
+		//   2. Buffer did not overflow maxCacheBodyBytes (OOM guard).
+		//   3. Client context is still alive — a cancelled context means the
+		//      client disconnected mid-response, leaving a partial buffer that
+		//      would poison the cache with truncated JSON.
+		if rc.statusCode == http.StatusOK &&
+			rc.body.Len() > 0 &&
+			!rc.overflowed &&
+			r.Context().Err() == nil {
 			ct := map[string]string{"Content-Type": rc.Header().Get("Content-Type")}
 			p.cache.Set(r.Context(), cacheKey, rc.statusCode, ct, rc.body.Bytes())
-			// Also store in semantic cache for fuzzy future hits.
 			if p.semanticCache != nil {
 				p.semanticCache.Set(r.Context(), body, rc.statusCode, ct, rc.body.Bytes())
 			}
@@ -493,12 +501,25 @@ func estimateTokens(body []byte) int64 {
 	return estimate
 }
 
-// responseCapture captures the response body for caching while simultaneously
-// writing it to the client. Non-streaming only.
+// maxCacheBodyBytes is the maximum response size we will buffer for caching.
+// Responses larger than this are still forwarded to the client but never
+// stored — this prevents OOM kills from unexpectedly large LLM payloads.
+const maxCacheBodyBytes = 5 * 1024 * 1024 // 5 MB
+
+// responseCapture tees the upstream response to both the client and an
+// internal buffer for caching.  Non-streaming only.
+//
+// Safety invariants:
+//   - If the buffered response exceeds maxCacheBodyBytes the internal buffer
+//     is discarded and overflowed is set — the response still reaches the
+//     client but is never written to any cache.
+//   - The caller must also check r.Context().Err() before caching to avoid
+//     storing a partial response left behind by a client disconnect.
 type responseCapture struct {
 	http.ResponseWriter
-	body       bytes.Buffer
-	statusCode int
+	body         bytes.Buffer
+	statusCode   int
+	overflowed   bool
 }
 
 func newResponseCapture(w http.ResponseWriter) *responseCapture {
@@ -511,7 +532,15 @@ func (rc *responseCapture) WriteHeader(code int) {
 }
 
 func (rc *responseCapture) Write(b []byte) (int, error) {
-	rc.body.Write(b) //nolint:errcheck
+	if !rc.overflowed {
+		if rc.body.Len()+len(b) > maxCacheBodyBytes {
+			// Release the buffer so GC can reclaim it immediately.
+			rc.body = bytes.Buffer{}
+			rc.overflowed = true
+		} else {
+			rc.body.Write(b) //nolint:errcheck
+		}
+	}
 	return rc.ResponseWriter.Write(b)
 }
 

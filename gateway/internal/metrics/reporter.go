@@ -7,6 +7,7 @@ package metrics
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"sort"
 	"strconv"
@@ -46,9 +47,12 @@ var counterKeys = [9]string{
 // acceptable — a missed sample or event is far better than added latency.
 // ---------------------------------------------------------------------------
 
+const eventsKey = "gateway:events"
+
 var (
 	latencySamples = make(chan int64, 2048)
 	trafficEvents  = make(chan bool, 2048)
+	eventQueue     = make(chan Event, 512) // live threat feed, cluster-wide
 	redisClient    *redis.Client
 )
 
@@ -151,6 +155,26 @@ drain2:
 		pipe.Expire(ctx, key, 50*time.Hour)
 	}
 
+	// 4. Live threat feed — serialize events and LPUSH to cluster-wide Redis list.
+	// LPUSH pushes newest-first, so LRANGE 0..N returns most recent events first.
+	var eventPayloads []interface{}
+drain3:
+	for {
+		select {
+		case e := <-eventQueue:
+			data, err := json.Marshal(e)
+			if err == nil {
+				eventPayloads = append(eventPayloads, string(data))
+			}
+		default:
+			break drain3
+		}
+	}
+	if len(eventPayloads) > 0 {
+		pipe.LPush(ctx, eventsKey, eventPayloads...)
+		pipe.LTrim(ctx, eventsKey, 0, 199) // keep the 200 most recent events
+	}
+
 	if _, err := pipe.Exec(ctx); err != nil {
 		logger.Get().Warn("metrics flush to Redis failed",
 			slog.String("error", err.Error()))
@@ -231,6 +255,27 @@ func redisLatencyStats(ctx context.Context) (p99 int64, avg float64) {
 		idx = len(samples) - 1
 	}
 	return samples[idx], float64(sum) / float64(len(samples))
+}
+
+// GlobalEvents returns the N most recent threat events from the cluster-wide
+// Redis list.  Falls back to the local in-process ring buffer if Redis is
+// unavailable so single-replica deployments still work correctly.
+func GlobalEvents(ctx context.Context, n int) []Event {
+	if redisClient == nil {
+		return Events.Last(n)
+	}
+	vals, err := redisClient.LRange(ctx, eventsKey, 0, int64(n-1)).Result()
+	if err != nil || len(vals) == 0 {
+		return Events.Last(n)
+	}
+	out := make([]Event, 0, len(vals))
+	for _, v := range vals {
+		var e Event
+		if err := json.Unmarshal([]byte(v), &e); err == nil {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 func redisTrafficSnapshot(ctx context.Context) []TrafficPoint {

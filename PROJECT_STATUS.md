@@ -1,7 +1,7 @@
 # LLM-Firewall (TITAN Gateway) — Project Status Log
 
 > **Auto-maintained log.** Updated at the end of every major session or when significant changes are made.
-> Last updated: 2026-06-06 (Session 3)
+> Last updated: 2026-06-07 (Session 5)
 
 ---
 
@@ -128,6 +128,55 @@
 **Remaining critical items:** #1 (Cedar policy engine), #2 (Firecracker sandbox), #3 (ClickHouse analytics)
 
 **Next suggested action:** Item #3 (ClickHouse) — add audit log write path from Kafka consumer to ClickHouse, and a read path for the dashboard's analytics queries. Kafka consumer already exists in Redpanda; ClickHouse has a native Kafka table engine.
+
+### 2026-06-07 — Phase 3 Deep Reliability & Security Fixes
+**Input:** Phase 3 audit — connection pool exhaustion DoS, admin timing attack, audit N+1, siloed event feed.
+
+**Changes made:**
+
+| File | Change |
+|---|---|
+| `gateway/internal/store/store.go` | Added `keyTouchQueue chan uuid.UUID` field + `uuid` import; initialised queue (buf=2048); started `keyTouchWriter` goroutine; close queue in `Close()` |
+| `gateway/internal/store/api_keys.go` | `TouchAPIKey` now non-blocking channel send (no more unbounded goroutines). Added `keyTouchWriter`: 5s ticker, dedup map, single bulk `UPDATE ... FROM unnest(ids, counts)` per flush |
+| `gateway/internal/api/admin.go` | Replaced `provided != token` with `subtle.ConstantTimeCompare` — fixes timing attack on master admin token |
+| `gateway/internal/store/audit.go` | Replaced N×1 `tx.Exec` loop with `pgx.Batch` + `SendBatch` — all 50 INSERTs pipelined into one TCP round-trip. Removed explicit transaction. |
+| `gateway/internal/metrics/collector.go` | `EventRingBuffer.Push()` now does a non-blocking send to `eventQueue` channel after local write |
+| `gateway/internal/metrics/reporter.go` | Added `eventQueue chan Event`; drain in `flushAll` via LPUSH+LTRIM; added `GlobalEvents(ctx, n)` reading from Redis `gateway:events` list with local fallback |
+| `gateway/cmd/server/main.go` | `eventsHandler` now calls `metrics.GlobalEvents()` — dashboard shows cluster-wide events, not just one replica's view |
+
+**What was fixed and why it matters:**
+- **Connection pool DoS**: 20 concurrent requests no longer spawn 20 DB goroutines. Pool never exhausted.
+- **Timing attack**: Admin token comparison is now constant-time regardless of character position.
+- **Audit N+1**: 50 INSERT queries → 1 pipelined batch = ~50× fewer DB round-trips per flush.
+- **Siloed events**: All gateway replicas now write to `gateway:events` Redis list; dashboard sees cluster-wide threat feed.
+
+**Remaining critical items:** #1 (Cedar policy engine), #2 (Firecracker sandbox), #3 (ClickHouse analytics)
+**Known gap (not fixed):** Audit queue silent drop under sustained DB slowdown — `EnqueueAudit` drops rows when queue hits 4096 capacity. Log warning is emitted but for strict SOC2 compliance a dead-letter channel or back-pressure mechanism is needed.
+
+### 2026-06-07 — Phase 4 "Pitch Perfect" Edge Cases
+**Input:** Phase 4 audit — OOM crash, cache poisoning, plaintext gRPC, missing DB indexes, timeline algorithm corruption.
+
+**Changes made:**
+
+| File | Change |
+|---|---|
+| `gateway/internal/proxy/proxy.go` | `responseCapture` now has `overflowed bool`; `Write()` discards buffer and sets flag if response exceeds 5 MB; Stage 7 only caches when `!rc.overflowed && r.Context().Err() == nil` (OOM guard + disconnect guard) |
+| `gateway/internal/config/config.go` | Added `AnalyzerTLSEnabled bool`, `AnalyzerTLSCertFile string`; added `getEnvBool()` helper |
+| `gateway/internal/analyzer/client.go` | `New()` now accepts `tlsEnabled bool, certFile string`; uses `credentials.NewClientTLSFromFile()` when TLS enabled, `insecure.NewCredentials()` otherwise; logs warning when plaintext |
+| `gateway/cmd/server/main.go` | Updated `analyzer.New()` call to pass TLS config |
+| `ml_engine/analyzer/server.py` | `serve()` reads `GRPC_TLS_ENABLED` env; uses `grpc.ssl_server_credentials()` when true, falls back to plaintext with error log on cert load failure |
+| `gateway/internal/store/sql/001_schema.sql` | Added `idx_api_keys_tenant_created ON api_keys(tenant_id, created_at DESC)` and `idx_policies_tenant_enabled ON policies(tenant_id, enabled, created_at DESC)` |
+| `gateway/internal/metrics/collector.go` | `HourlyBucket.lastHour int` → `lastTick time.Time`; `Record()` computes true elapsed hours via `nowHour.Sub(hb.lastTick)/time.Hour`; loops to zero all skipped slots — gaps longer than 1 hour no longer corrupt the chart |
+
+**What was fixed and why it matters:**
+- **OOM**: A 100 MB LLM response no longer crashes the pod — forwarded to client, never buffered past 5 MB.
+- **Cache poisoning**: Client disconnect mid-response sets `context.Err() != nil` — the partial buffer is never written to Redis or Qdrant.
+- **gRPC PII leak**: All prompt text (including unmasked PII before Presidio runs) can now be encrypted in transit. Enable with `ANALYZER_TLS_ENABLED=true` + cert mount.
+- **Table scans**: `ListAPIKeys` and `ListPolicies` now hit covering indexes instead of full scans.
+- **Timeline corruption**: 3 hours of silence then 1 request no longer shows a spike 3 hours in the past — all skipped slots are explicitly zeroed.
+
+**Remaining items:** #1 (Cedar), #2 (Firecracker), #3 (ClickHouse)
+**To enable gRPC TLS in production:** Mount a cert/key pair into the ml_engine pod at `/etc/certs/tls.crt` + `/etc/certs/tls.key`, set `GRPC_TLS_ENABLED=true` on the ml_engine service, and `ANALYZER_TLS_ENABLED=true` + `ANALYZER_TLS_CERT_FILE=/etc/certs/tls.crt` on the gateway.
 
 ---
 

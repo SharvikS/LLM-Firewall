@@ -126,11 +126,17 @@ func (rb *EventRingBuffer) Push(e Event) {
 		e.EventID = uuid.New().String()
 	}
 	rb.mu.Lock()
-	defer rb.mu.Unlock()
 	if len(rb.events) >= rb.size {
 		rb.events = rb.events[1:]
 	}
 	rb.events = append(rb.events, e)
+	rb.mu.Unlock()
+
+	// Non-blocking send to Redis reporter for cluster-wide visibility.
+	select {
+	case eventQueue <- e:
+	default:
+	}
 }
 
 // Last returns up to n most-recent events in reverse-chronological order.
@@ -156,19 +162,28 @@ type HourlyBucket struct {
 	mu         sync.Mutex
 	buckets    [48]struct{ Requests, Blocked int64 }
 	currentIdx int
-	lastHour   int
+	lastTick   time.Time // wall-clock hour boundary of the last recorded request
 }
 
-var HourlyTraffic = &HourlyBucket{lastHour: time.Now().Hour()}
+var HourlyTraffic = &HourlyBucket{lastTick: time.Now().Truncate(time.Hour)}
 
 func (hb *HourlyBucket) Record(blocked bool) {
 	hb.mu.Lock()
-	now := time.Now().Hour()
-	if now != hb.lastHour {
-		hb.currentIdx = (hb.currentIdx + 1) % 48
-		hb.buckets[hb.currentIdx].Requests = 0
-		hb.buckets[hb.currentIdx].Blocked = 0
-		hb.lastHour = now
+	nowHour := time.Now().Truncate(time.Hour)
+	// Compute true elapsed hours using wall-clock subtraction so that gaps
+	// longer than 1 hour (e.g. low-traffic nights, rolling deployments) zero
+	// out every skipped slot rather than leaving stale data in the chart.
+	elapsed := int(nowHour.Sub(hb.lastTick) / time.Hour)
+	if elapsed > 0 {
+		if elapsed > 48 {
+			elapsed = 48 // full window reset
+		}
+		for i := 0; i < elapsed; i++ {
+			hb.currentIdx = (hb.currentIdx + 1) % 48
+			hb.buckets[hb.currentIdx].Requests = 0
+			hb.buckets[hb.currentIdx].Blocked = 0
+		}
+		hb.lastTick = nowHour
 	}
 	hb.buckets[hb.currentIdx].Requests++
 	if blocked {

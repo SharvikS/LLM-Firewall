@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 
 	pb "github.com/sharvik/llm-firewall/gateway/internal/analyzerpb/analyzer/v1"
@@ -47,14 +48,34 @@ type Client struct {
 
 // New dials the gRPC server at addr.  The connection is lazy — if the server
 // is not yet up, the first RPC will fail and return a fail-open result.
-func New(addr string, timeout time.Duration) (*Client, error) {
-	conn, err := grpc.NewClient(addr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-	)
+//
+// When tlsEnabled is true the client loads the certificate from certFile
+// (a PEM-encoded CA cert or self-signed server cert) and uses TLS transport
+// credentials.  Set ANALYZER_TLS_ENABLED=false explicitly to keep plaintext —
+// the default is plaintext so existing deployments are unaffected.
+func New(addr string, timeout time.Duration, tlsEnabled bool, certFile string) (*Client, error) {
+	var cred grpc.DialOption
+	if tlsEnabled {
+		tlsCreds, err := credentials.NewClientTLSFromFile(certFile, "")
+		if err != nil {
+			return nil, fmt.Errorf("analyzer: load TLS cert %q: %w", certFile, err)
+		}
+		cred = grpc.WithTransportCredentials(tlsCreds)
+		logger.Get().Info("analyzer gRPC using TLS",
+			slog.String("addr", addr),
+			slog.String("cert", certFile),
+		)
+	} else {
+		cred = grpc.WithTransportCredentials(insecure.NewCredentials())
+		logger.Get().Warn("analyzer gRPC using plaintext — set ANALYZER_TLS_ENABLED=true to enable mTLS",
+			slog.String("addr", addr),
+		)
+	}
+
+	conn, err := grpc.NewClient(addr, cred)
 	if err != nil {
 		return nil, fmt.Errorf("analyzer: dial %q: %w", addr, err)
 	}
-	logger.Get().Info("analyzer gRPC client connected", slog.String("addr", addr))
 	return &Client{
 		conn:    conn,
 		stub:    pb.NewAnalyzerServiceClient(conn),

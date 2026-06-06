@@ -92,6 +92,8 @@ func main() {
 	mlClient, err := analyzer.New(
 		cfg.AnalyzerAddr,
 		time.Duration(cfg.AnalyzerTimeoutMs)*time.Millisecond,
+		cfg.AnalyzerTLSEnabled,
+		cfg.AnalyzerTLSCertFile,
 	)
 	if err != nil {
 		log.Warn("ML analyzer unavailable — requests will fail-open on ML gate",
@@ -221,9 +223,13 @@ func eventsHandler(w http.ResponseWriter, r *http.Request) {
 			n = parsed
 		}
 	}
+	// GlobalEvents reads from the cluster-wide Redis list so all gateway
+	// replicas contribute to the dashboard feed; falls back to local ring
+	// buffer when Redis is unavailable.
+	events := metrics.GlobalEvents(r.Context(), n)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
-		"events": metrics.Events.Last(n),
-		"count":  n,
+		"events": events,
+		"count":  len(events),
 	})
 }

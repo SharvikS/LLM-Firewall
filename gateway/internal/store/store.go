@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/sharvik/llm-firewall/gateway/internal/logger"
@@ -21,8 +22,9 @@ var sqlFS embed.FS
 
 // Store wraps the pgxpool and exposes typed repository methods for every table.
 type Store struct {
-	pool       *pgxpool.Pool
-	auditQueue chan AuditRow // buffered → background batch writer
+	pool          *pgxpool.Pool
+	auditQueue    chan AuditRow  // buffered → background batch writer (audit_events)
+	keyTouchQueue chan uuid.UUID // buffered → background batch writer (api_keys stats)
 }
 
 // New opens the pool, runs migrations idempotently, and starts the background
@@ -46,12 +48,17 @@ func New(ctx context.Context, connString string) (*Store, error) {
 		return nil, fmt.Errorf("store: ping failed: %w", err)
 	}
 
-	s := &Store{pool: pool, auditQueue: make(chan AuditRow, 4096)}
+	s := &Store{
+		pool:          pool,
+		auditQueue:    make(chan AuditRow, 4096),
+		keyTouchQueue: make(chan uuid.UUID, 2048),
+	}
 	if err := s.migrate(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
 	}
 	go s.auditBatchWriter()
+	go s.keyTouchWriter()
 
 	logger.Get().Info("store: connected and migrated")
 	return s, nil
@@ -59,6 +66,7 @@ func New(ctx context.Context, connString string) (*Store, error) {
 
 func (s *Store) Close() {
 	close(s.auditQueue)
+	close(s.keyTouchQueue)
 	s.pool.Close()
 	logger.Get().Info("store: pool closed")
 }

@@ -4,6 +4,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -57,7 +58,7 @@ func adminAuth(token string) func(http.Handler) http.Handler {
 				// Also accept Bearer for curl convenience
 				provided = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 			}
-			if provided != token {
+			if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid admin token"})
 				return
 			}

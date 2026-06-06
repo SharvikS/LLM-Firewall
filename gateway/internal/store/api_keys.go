@@ -92,17 +92,65 @@ func (s *Store) RevokeAPIKey(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
-// TouchAPIKey increments request count and updates last_used_at asynchronously.
-// Fire-and-forget: use a background context so it never blocks the request path.
+// TouchAPIKey enqueues a key-ID for a batched stats update.
+// Non-blocking: if the queue is full the touch is silently dropped — the
+// requests counter is advisory, not transactional.
 func (s *Store) TouchAPIKey(keyID uuid.UUID) {
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	select {
+	case s.keyTouchQueue <- keyID:
+	default:
+		// Queue full under extreme load — skip this touch; never block the request.
+	}
+}
+
+// keyTouchWriter drains keyTouchQueue every 5 s, deduplicates key IDs,
+// and issues a single bulk UPDATE instead of one UPDATE per request.
+// Under load a hot key that was touched 1 000 times costs one DB query.
+func (s *Store) keyTouchWriter() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	counts := make(map[uuid.UUID]int64) // dedup: key ID → request count since last flush
+
+	flush := func() {
+		if len(counts) == 0 {
+			return
+		}
+		ids := make([]string, 0, len(counts))
+		incs := make([]int64, 0, len(counts))
+		for id, n := range counts {
+			ids = append(ids, id.String())
+			incs = append(incs, n)
+		}
+		counts = make(map[uuid.UUID]int64)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		s.pool.Exec(ctx, //nolint:errcheck
-			`UPDATE api_keys SET requests=requests+1, last_used_at=now() WHERE id=$1`,
-			keyID,
+		_, err := s.pool.Exec(ctx, `
+			UPDATE api_keys AS k
+			   SET requests     = k.requests + b.cnt,
+			       last_used_at = now()
+			  FROM (SELECT unnest($1::text[]) AS id, unnest($2::bigint[]) AS cnt) AS b
+			 WHERE k.id = b.id::uuid`,
+			ids, incs,
 		)
-	}()
+		if err != nil {
+			logger.Get().Warn("key touch batch failed", slog.String("error", err.Error()))
+		}
+	}
+
+	for {
+		select {
+		case id, ok := <-s.keyTouchQueue:
+			if !ok {
+				flush()
+				return
+			}
+			counts[id]++
+		case <-ticker.C:
+			flush()
+		}
+	}
 }
 
 // HashKey returns the hex-encoded SHA-256 of a raw API key.
