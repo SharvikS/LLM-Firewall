@@ -5,11 +5,11 @@ Layer 1 — Heuristic (fast path, ~0ms):
   Regex signatures for known attack patterns. A match immediately yields a
   high-confidence BLOCK decision without touching the ML layer.
 
-Layer 2 — ML classifier (sklearn, ~5ms):
-  TF-IDF character n-gram vectorizer fed into a Logistic Regression model.
-  Trained at startup on a labeled synthetic dataset that covers the major
-  attack families: role-play jailbreaks, privilege escalation, goal hijacking,
-  system-prompt exfiltration, and encoded bypass attempts.
+Layer 2 — Transformer or TF-IDF fallback (~10-50ms):
+  Primary: HuggingFace `protectai/deberta-v3-base-injection` transformer,
+  loaded at startup if `transformers` and `torch` are installed.
+  Fallback: TF-IDF character n-gram + Logistic Regression trained on the
+  embedded synthetic dataset — always available, no network required.
 
 The two-layer design mirrors how antivirus engines work: cheap signature
 matching gates the majority of obvious attacks; the probabilistic model
@@ -18,7 +18,7 @@ catches novel phrasings that don't match any static rule.
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -106,18 +106,22 @@ _TRAINING_DATA: list[tuple[str, int]] = [
 
 class InjectionDetector:
     """
-    Two-layer classifier: heuristic signatures + TF-IDF + Logistic Regression.
-    Trained at startup on the embedded synthetic dataset.
+    Two-layer classifier: heuristic signatures + transformer (with TF-IDF fallback).
+
+    Layer 2 tries to load `protectai/deberta-v3-base-injection` from HuggingFace.
+    If transformers/torch are absent or the model can't be fetched, it silently
+    falls back to the embedded TF-IDF + Logistic Regression pipeline so the
+    service always starts regardless of network availability.
     """
 
     def __init__(self) -> None:
+        # Always train the TF-IDF fallback — zero external dependencies.
         texts, labels = zip(*_TRAINING_DATA)
-
-        self._pipeline = Pipeline([
+        self._fallback_pipeline = Pipeline([
             (
                 "tfidf",
                 TfidfVectorizer(
-                    analyzer="char_wb",  # character n-grams — robust to spelling variants
+                    analyzer="char_wb",
                     ngram_range=(3, 6),
                     max_features=8000,
                     sublinear_tf=True,
@@ -128,16 +132,38 @@ class InjectionDetector:
                 LogisticRegression(
                     C=2.0,
                     max_iter=1000,
-                    class_weight="balanced",  # training set is slightly imbalanced
+                    class_weight="balanced",
                     random_state=42,
                 ),
             ),
         ])
-        self._pipeline.fit(list(texts), list(labels))
+        self._fallback_pipeline.fit(list(texts), list(labels))
         logger.info(
-            "InjectionDetector trained — %d samples, %d positive",
+            "InjectionDetector fallback trained — %d samples, %d positive",
             len(texts), sum(labels),
         )
+
+        # Attempt to load HuggingFace transformer model as primary Layer 2.
+        self._hf_pipe = None
+        try:
+            from transformers import pipeline as hf_pipeline  # noqa: PLC0415
+            self._hf_pipe = hf_pipeline(
+                "text-classification",
+                model="protectai/deberta-v3-base-injection",
+                device=-1,       # CPU inference; set device=0 for GPU
+                truncation=True,
+                max_length=512,
+            )
+            logger.info(
+                "InjectionDetector Layer 2: HuggingFace model loaded — "
+                "protectai/deberta-v3-base-injection"
+            )
+        except Exception as exc:
+            logger.warning(
+                "HuggingFace model unavailable (%s) — "
+                "Layer 2 falling back to TF-IDF + LogisticRegression",
+                exc,
+            )
 
     def detect(self, text: str) -> DetectionResult:
         if not text or not text.strip():
@@ -162,24 +188,57 @@ class InjectionDetector:
                     risk_score=confidence * 100.0,
                 )
 
-        # --- Layer 2: ML classifier ---
-        proba = self._pipeline.predict_proba([text])[0]
+        # --- Layer 2: transformer (primary) or TF-IDF (fallback) ---
+        if self._hf_pipe is not None:
+            return self._classify_with_transformer(text)
+        return self._classify_with_tfidf(text)
+
+    def _classify_with_transformer(self, text: str) -> DetectionResult:
+        result = self._hf_pipe(text[:512])[0]
+        label: str = result["label"].upper()
+        score: float = float(result["score"])
+
+        # The model returns INJECTION or SAFE; guard against unknown label names.
+        is_injection = "INJECTION" in label or "JAILBREAK" in label
+
+        if is_injection and score >= 0.65:
+            logger.warning(
+                "Transformer BLOCK — label=%s confidence=%.3f", label, score,
+            )
+            return DetectionResult(
+                is_injection=True,
+                confidence=score,
+                threat_type="transformer_detected_injection",
+                description=f"Transformer classifier ({label}) confidence: {score:.1%}",
+                risk_score=score * 100.0,
+            )
+
+        risk_score = score * 40.0 if is_injection else (1.0 - score) * 40.0
+        logger.debug("Transformer ALLOW — label=%s confidence=%.3f", label, score)
+        return DetectionResult(
+            is_injection=False,
+            confidence=score if not is_injection else 1.0 - score,
+            threat_type="none",
+            description="Prompt classified as benign",
+            risk_score=risk_score,
+        )
+
+    def _classify_with_tfidf(self, text: str) -> DetectionResult:
+        proba = self._fallback_pipeline.predict_proba([text])[0]
         injection_prob = float(proba[1])
 
         if injection_prob >= 0.70:
-            logger.warning(
-                "ML BLOCK — injection_probability=%.3f", injection_prob,
-            )
+            logger.warning("TF-IDF BLOCK — injection_probability=%.3f", injection_prob)
             return DetectionResult(
                 is_injection=True,
                 confidence=injection_prob,
                 threat_type="ml_detected_injection",
-                description=f"ML classifier confidence: {injection_prob:.1%}",
+                description=f"TF-IDF classifier confidence: {injection_prob:.1%}",
                 risk_score=injection_prob * 100.0,
             )
 
-        risk_score = injection_prob * 40.0  # scale benign probability to 0–40 range
-        logger.debug("ML ALLOW — injection_probability=%.3f", injection_prob)
+        risk_score = injection_prob * 40.0
+        logger.debug("TF-IDF ALLOW — injection_probability=%.3f", injection_prob)
         return DetectionResult(
             is_injection=False,
             confidence=1.0 - injection_prob,

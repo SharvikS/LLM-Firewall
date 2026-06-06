@@ -36,6 +36,13 @@ type Config struct {
 	AnalyzerAddr      string
 	AnalyzerTimeoutMs int
 
+	// Provider failover — optional secondary upstream for 5xx/transport errors
+	FallbackTargetURL string // e.g. "https://api.openai.com/v1"
+	FallbackAPIKey    string // API key for the fallback provider
+
+	// Token-based rate limiting (Tokens Per Minute); 0 = disabled
+	RateLimitTPM int64
+
 	// Admin API
 	AdminToken string // master secret for /admin/* routes — never NEXT_PUBLIC_
 }
@@ -65,6 +72,10 @@ func Load() (*Config, error) {
 
 		AnalyzerAddr:      getEnv("ANALYZER_ADDR", "localhost:50051"),
 		AnalyzerTimeoutMs: getEnvInt("ANALYZER_TIMEOUT_MS", 150),
+
+		FallbackTargetURL: os.Getenv("FALLBACK_TARGET_URL"),
+		FallbackAPIKey:    os.Getenv("FALLBACK_API_KEY"),
+		RateLimitTPM:      getEnvInt64("RATE_LIMIT_TPM", 0),
 
 		AdminToken: getEnv("ADMIN_TOKEN", "titan-admin-dev-secret"),
 	}

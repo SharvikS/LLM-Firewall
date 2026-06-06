@@ -54,20 +54,22 @@ type Result struct {
 	Remaining int64 // Limit - Current
 }
 
-// RateLimiter is a distributed sliding-window limiter backed by Redis.
-// All calls are atomic via a Lua script, so they are safe across multiple
-// gateway replicas sharing the same Redis instance.
+// RateLimiter is a distributed rate limiter backed by Redis.
+// RPM uses a sliding-window sorted-set; TPM uses a 1-minute tumbling bucket.
+// All operations are atomic via Lua scripts, safe across multiple replicas.
 type RateLimiter struct {
-	client *redis.Client
-	limit  int64
-	window time.Duration
+	client   *redis.Client
+	limit    int64         // RPM limit
+	window   time.Duration // RPM window
+	tpmLimit int64         // tokens per minute; 0 = TPM checking disabled
 }
 
 // New creates a RateLimiter.
-//   limit  — maximum requests allowed in the window
-//   window — the rolling window duration
-func New(client *redis.Client, limit int64, window time.Duration) *RateLimiter {
-	return &RateLimiter{client: client, limit: limit, window: window}
+//   limit    — maximum requests allowed in the RPM window
+//   window   — the rolling RPM window duration
+//   tpmLimit — maximum tokens per minute; 0 disables TPM enforcement
+func New(client *redis.Client, limit int64, window time.Duration, tpmLimit int64) *RateLimiter {
+	return &RateLimiter{client: client, limit: limit, window: window, tpmLimit: tpmLimit}
 }
 
 // Allow checks whether tenantID is within its rate limit.
@@ -91,6 +93,63 @@ func (rl *RateLimiter) Allow(ctx context.Context, tenantID string) (Result, erro
 			slog.String("error", err.Error()),
 		)
 		return Result{Allowed: true, Limit: rl.limit}, err
+	}
+
+	allowed := toInt64(vals[0]) == 1
+	current := toInt64(vals[1])
+	limit := toInt64(vals[2])
+
+	return Result{
+		Allowed:   allowed,
+		Current:   current,
+		Limit:     limit,
+		Remaining: max(0, limit-current),
+	}, nil
+}
+
+// tpmScript is an atomic Lua script for a tumbling-window TPM counter.
+//
+// KEYS[1]  — token bucket key for this tenant+minute  (e.g. "gateway:tpm:tenant_123:28123456")
+// ARGV[1]  — TPM limit
+// ARGV[2]  — tokens consumed by this request
+//
+// Returns {allowed int, current int, limit int}
+var tpmScript = redis.NewScript(`
+local key    = KEYS[1]
+local limit  = tonumber(ARGV[1])
+local tokens = tonumber(ARGV[2])
+
+local current = tonumber(redis.call('INCRBY', key, tokens))
+if current == tokens then
+    -- First write in this minute bucket — set expiry to 2 minutes so the key
+    -- auto-evicts after the window rolls over.
+    redis.call('EXPIRE', key, 120)
+end
+if current > limit then
+    return {0, current, limit}
+end
+return {1, current, limit}
+`)
+
+// AllowTokens checks whether tenantID is within its per-minute token quota.
+// The window is a 1-minute tumbling bucket (key includes the Unix minute).
+// Fails open on Redis error — same policy as Allow.
+func (rl *RateLimiter) AllowTokens(ctx context.Context, tenantID string, tokens int64) (Result, error) {
+	minuteBucket := time.Now().Unix() / 60
+	key := fmt.Sprintf("gateway:tpm:%s:%d", tenantID, minuteBucket)
+
+	vals, err := tpmScript.Run(
+		ctx, rl.client,
+		[]string{key},
+		rl.tpmLimit, tokens,
+	).Slice()
+
+	if err != nil {
+		logger.Get().Warn("tpm limiter redis error — failing open",
+			slog.String("tenant", tenantID),
+			slog.String("error", err.Error()),
+		)
+		return Result{Allowed: true, Limit: rl.tpmLimit}, err
 	}
 
 	allowed := toInt64(vals[0]) == 1

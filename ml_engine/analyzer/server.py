@@ -157,7 +157,10 @@ def _rebuild_body(original_body: str, masked_text: str) -> str:
                 break
         return json.dumps(body)
     except (json.JSONDecodeError, TypeError):
-        return masked_text
+        # Original body was not valid JSON. Wrap masked_text in a valid
+        # OpenAI-compatible structure so the upstream API doesn't reject it.
+        logger.warning("_rebuild_body: original body was not valid JSON; wrapping in fallback structure")
+        return json.dumps({"messages": [{"role": "user", "content": masked_text}]})
 
 
 def serve() -> None:

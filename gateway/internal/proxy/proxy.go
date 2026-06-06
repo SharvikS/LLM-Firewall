@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -28,6 +29,14 @@ import (
 	"github.com/sharvik/llm-firewall/gateway/internal/store"
 )
 
+// reqBodyKey is the context key used to carry the raw request body through
+// the proxy pipeline so the failover handler can replay it to the backup provider.
+type reqBodyKey struct{}
+
+// errUpstreamUnavailable is returned from ModifyResponse when the primary
+// upstream sends a 5xx that warrants a failover attempt.
+var errUpstreamUnavailable = errors.New("upstream returned service unavailable")
+
 type openAIError struct {
 	Error struct {
 		Message string `json:"message"`
@@ -48,14 +57,15 @@ type openAIError struct {
 //  7. Forward           — streaming or capture+cache
 //  8. Audit             — async Kafka + DB enqueue
 type LLMProxy struct {
-	rp       *httputil.ReverseProxy
-	policy   *policy.Engine
-	producer *events.EventProducer
-	limiter  *ratelimit.RateLimiter
-	cache    *cache.Cache
-	mlClient *analyzer.Client
-	st       *store.Store
-	cfg      *config.Config
+	rp         *httputil.ReverseProxy
+	fallbackRP *httputil.ReverseProxy // nil if no fallback configured
+	policy     *policy.Engine
+	producer   *events.EventProducer
+	limiter    *ratelimit.RateLimiter
+	cache      *cache.Cache
+	mlClient   *analyzer.Client
+	st         *store.Store
+	cfg        *config.Config
 }
 
 func NewLLMProxy(
@@ -82,6 +92,37 @@ func NewLLMProxy(
 		cfg:      cfg,
 	}
 
+	// Build optional fallback reverse proxy first so ErrorHandler can close over it.
+	if cfg.FallbackTargetURL != "" {
+		fb, err := url.Parse(cfg.FallbackTargetURL)
+		if err != nil {
+			return nil, fmt.Errorf("invalid fallback target URL %q: %w", cfg.FallbackTargetURL, err)
+		}
+		fbRp := httputil.NewSingleHostReverseProxy(fb)
+		fbRp.FlushInterval = -1
+		fbBase := fbRp.Director
+		fbAPIKey := cfg.FallbackAPIKey
+		fbRp.Director = func(req *http.Request) {
+			fbBase(req)
+			req.Host = fb.Host
+			req.Header.Set("Authorization", "Bearer "+fbAPIKey)
+		}
+		fbRp.ModifyResponse = func(resp *http.Response) error {
+			resp.Header.Del("Server")
+			resp.Header.Del("X-Powered-By")
+			return nil
+		}
+		fbRp.ErrorHandler = func(w http.ResponseWriter, req *http.Request, err error) {
+			logger.Get().Error("fallback upstream error",
+				slog.String("error", err.Error()),
+				slog.String("request_id", chimiddleware.GetReqID(req.Context())),
+			)
+			p.writeError(w, http.StatusBadGateway, "upstream_error", "All upstream LLM providers unavailable")
+		}
+		p.fallbackRP = fbRp
+		logger.Get().Info("provider failover enabled", slog.String("fallback", cfg.FallbackTargetURL))
+	}
+
 	rp := httputil.NewSingleHostReverseProxy(target)
 	rp.FlushInterval = -1
 
@@ -92,15 +133,33 @@ func NewLLMProxy(
 		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
 	}
 	rp.ModifyResponse = func(resp *http.Response) error {
+		// Trigger failover on retriable server errors when a fallback is configured.
+		if p.fallbackRP != nil {
+			switch resp.StatusCode {
+			case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+				resp.Body.Close()
+				return errUpstreamUnavailable
+			}
+		}
 		resp.Header.Del("Server")
 		resp.Header.Del("X-Powered-By")
 		return nil
 	}
 	rp.ErrorHandler = func(w http.ResponseWriter, req *http.Request, err error) {
-		logger.Get().Error("upstream error",
-			slog.String("error", err.Error()),
-			slog.String("request_id", chimiddleware.GetReqID(req.Context())),
-		)
+		log := logger.Get().With(slog.String("request_id", chimiddleware.GetReqID(req.Context())))
+		if p.fallbackRP != nil {
+			log.Warn("primary upstream failed — failing over to backup provider",
+				slog.String("error", err.Error()),
+			)
+			// Restore the request body from context so the fallback can read it.
+			if rawBody, ok := req.Context().Value(reqBodyKey{}).([]byte); ok {
+				req.Body = io.NopCloser(bytes.NewReader(rawBody))
+				req.ContentLength = int64(len(rawBody))
+			}
+			p.fallbackRP.ServeHTTP(w, req)
+			return
+		}
+		log.Error("upstream error", slog.String("error", err.Error()))
 		p.writeError(w, http.StatusBadGateway, "upstream_error", "Upstream LLM provider unavailable")
 	}
 	p.rp = rp
@@ -131,14 +190,18 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	metrics.Global.TotalRequests.Add(1)
 	metrics.HourlyTraffic.Record(false)
 
-	// Stage 3: Rate limiting (per-tenant RPM from auth context).
+	// Store body in context so the failover handler can replay it if the
+	// primary upstream fails after the body has been consumed.
+	r = r.WithContext(context.WithValue(r.Context(), reqBodyKey{}, body))
+
+	// Stage 3: Rate limiting — RPM (sliding window) then TPM (tumbling bucket).
 	rl, rlErr := p.limiter.Allow(r.Context(), tenantID.String())
 	if rlErr == nil {
 		w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", rl.Limit))
 		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", rl.Remaining))
 	}
 	if rlErr == nil && !rl.Allowed {
-		log.Warn("rate limit exceeded",
+		log.Warn("rate limit exceeded (RPM)",
 			slog.String("tenant", tenantName),
 			slog.Int64("current", rl.Current),
 			slog.Int64("limit", rl.Limit),
@@ -146,13 +209,40 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		metrics.Global.RateLimited.Add(1)
 		metrics.Global.BlockedRequests.Add(1)
 		metrics.HourlyTraffic.Record(true)
-		p.pushEvent(reqID, tenantName, "RATE_LIMITED", 0, r.URL.Path, "Rate limit exceeded")
+		p.pushEvent(reqID, tenantName, "RATE_LIMITED", 0, r.URL.Path, "RPM rate limit exceeded")
 		p.writeError(w, http.StatusTooManyRequests, "rate_limit_exceeded",
 			fmt.Sprintf("Rate limit of %d rpm exceeded. Retry later.", rl.Limit))
 		p.enqueueAudit(reqID, tenantID, apiKeyID, "RATE_LIMITED", 0, r.URL.Path,
-			http.StatusTooManyRequests, time.Since(start).Milliseconds(), "Rate limit exceeded")
+			http.StatusTooManyRequests, time.Since(start).Milliseconds(), "RPM rate limit exceeded")
 		p.emitKafka(reqID, tenantName, "RATE_LIMITED", 0, http.StatusTooManyRequests, time.Since(start).Milliseconds())
 		return
+	}
+
+	// TPM check (skipped when tpmLimit == 0 or cfg.RateLimitTPM == 0).
+	if p.cfg.RateLimitTPM > 0 {
+		tokenCount := estimateTokens(body)
+		tpm, tpmErr := p.limiter.AllowTokens(r.Context(), tenantID.String(), tokenCount)
+		if tpmErr == nil && !tpm.Allowed {
+			log.Warn("token rate limit exceeded (TPM)",
+				slog.String("tenant", tenantName),
+				slog.Int64("tokens_this_request", tokenCount),
+				slog.Int64("current_tpm", tpm.Current),
+				slog.Int64("limit_tpm", tpm.Limit),
+			)
+			metrics.Global.RateLimited.Add(1)
+			metrics.Global.BlockedRequests.Add(1)
+			metrics.HourlyTraffic.Record(true)
+			p.pushEvent(reqID, tenantName, "RATE_LIMITED", 0, r.URL.Path, "TPM token limit exceeded")
+			p.writeError(w, http.StatusTooManyRequests, "rate_limit_exceeded",
+				fmt.Sprintf("Token limit of %d tokens/min exceeded. Retry later.", tpm.Limit))
+			p.enqueueAudit(reqID, tenantID, apiKeyID, "RATE_LIMITED", 0, r.URL.Path,
+				http.StatusTooManyRequests, time.Since(start).Milliseconds(), "TPM token limit exceeded")
+			p.emitKafka(reqID, tenantName, "RATE_LIMITED", 0, http.StatusTooManyRequests, time.Since(start).Milliseconds())
+			return
+		}
+		if tpmErr == nil {
+			w.Header().Set("X-RateLimit-Tokens-Remaining", fmt.Sprintf("%d", tpm.Remaining))
+		}
 	}
 
 	// Stage 4: ML Analyzer.
@@ -346,6 +436,34 @@ func (p *LLMProxy) emitKafka(reqID, tenantID, action string, risk float64, statu
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	p.producer.EmitAudit(ctx, event)
+}
+
+// estimateTokens approximates the number of tokens in an OpenAI-format request
+// body using the standard heuristic of 4 characters ≈ 1 token. It also adds
+// max_tokens (output budget) if the caller specified it, making the estimate
+// conservative enough for cost-aware TPM enforcement.
+func estimateTokens(body []byte) int64 {
+	if len(body) == 0 {
+		return 1
+	}
+	var req struct {
+		Messages []struct {
+			Content string `json:"content"`
+		} `json:"messages"`
+		MaxTokens int `json:"max_tokens"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return int64(len(body)/4) + 1
+	}
+	var chars int
+	for _, m := range req.Messages {
+		chars += len(m.Content)
+	}
+	estimate := int64(chars/4) + 1
+	if req.MaxTokens > 0 {
+		estimate += int64(req.MaxTokens)
+	}
+	return estimate
 }
 
 // responseCapture captures the response body for caching while simultaneously

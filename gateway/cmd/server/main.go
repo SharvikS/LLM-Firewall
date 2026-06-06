@@ -69,7 +69,7 @@ func main() {
 	}
 	defer redisClient.Close()
 
-	limiter       := ratelimit.New(redisClient, cfg.RateLimitRPM, time.Duration(cfg.RateLimitWindowSec)*time.Second)
+	limiter       := ratelimit.New(redisClient, cfg.RateLimitRPM, time.Duration(cfg.RateLimitWindowSec)*time.Second, cfg.RateLimitTPM)
 	semanticCache := cache.New(redisClient, time.Duration(cfg.CacheTTLSec)*time.Second)
 
 	// ── Kafka Producer ────────────────────────────────────────────────────────
