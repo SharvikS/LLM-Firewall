@@ -49,11 +49,17 @@ func NewLatencyTracker(maxSize int) *LatencyTracker {
 
 func (lt *LatencyTracker) Record(ms int64) {
 	lt.mu.Lock()
-	defer lt.mu.Unlock()
 	if len(lt.samples) >= lt.maxSize {
 		lt.samples = lt.samples[1:]
 	}
 	lt.samples = append(lt.samples, ms)
+	lt.mu.Unlock()
+
+	// Non-blocking send to Redis reporter; drop if channel full.
+	select {
+	case latencySamples <- ms:
+	default:
+	}
 }
 
 // P99 returns the 99th-percentile latency in milliseconds over the window.
@@ -157,7 +163,6 @@ var HourlyTraffic = &HourlyBucket{lastHour: time.Now().Hour()}
 
 func (hb *HourlyBucket) Record(blocked bool) {
 	hb.mu.Lock()
-	defer hb.mu.Unlock()
 	now := time.Now().Hour()
 	if now != hb.lastHour {
 		hb.currentIdx = (hb.currentIdx + 1) % 48
@@ -168,6 +173,13 @@ func (hb *HourlyBucket) Record(blocked bool) {
 	hb.buckets[hb.currentIdx].Requests++
 	if blocked {
 		hb.buckets[hb.currentIdx].Blocked++
+	}
+	hb.mu.Unlock()
+
+	// Non-blocking send to Redis reporter; drop if channel full.
+	select {
+	case trafficEvents <- blocked:
+	default:
 	}
 }
 

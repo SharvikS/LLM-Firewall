@@ -57,15 +57,16 @@ type openAIError struct {
 //  7. Forward           — streaming or capture+cache
 //  8. Audit             — async Kafka + DB enqueue
 type LLMProxy struct {
-	rp         *httputil.ReverseProxy
-	fallbackRP *httputil.ReverseProxy // nil if no fallback configured
-	policy     *policy.Engine
-	producer   *events.EventProducer
-	limiter    *ratelimit.RateLimiter
-	cache      *cache.Cache
-	mlClient   *analyzer.Client
-	st         *store.Store
-	cfg        *config.Config
+	rp            *httputil.ReverseProxy
+	fallbackRP    *httputil.ReverseProxy // nil if no fallback configured
+	policy        *policy.Engine
+	producer      *events.EventProducer
+	limiter       *ratelimit.RateLimiter
+	cache         *cache.Cache
+	semanticCache *cache.SemanticCache // nil if Qdrant not configured
+	mlClient      *analyzer.Client
+	st            *store.Store
+	cfg           *config.Config
 }
 
 func NewLLMProxy(
@@ -74,6 +75,7 @@ func NewLLMProxy(
 	producer *events.EventProducer,
 	limiter *ratelimit.RateLimiter,
 	c *cache.Cache,
+	semanticCache *cache.SemanticCache,
 	mlClient *analyzer.Client,
 	st *store.Store,
 ) (*LLMProxy, error) {
@@ -83,13 +85,14 @@ func NewLLMProxy(
 	}
 
 	p := &LLMProxy{
-		policy:   policyEngine,
-		producer: producer,
-		limiter:  limiter,
-		cache:    c,
-		mlClient: mlClient,
-		st:       st,
-		cfg:      cfg,
+		policy:        policyEngine,
+		producer:      producer,
+		limiter:       limiter,
+		cache:         c,
+		semanticCache: semanticCache,
+		mlClient:      mlClient,
+		st:            st,
+		cfg:           cfg,
 	}
 
 	// Build optional fallback reverse proxy first so ErrorHandler can close over it.
@@ -297,24 +300,21 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stage 6: Cache lookup.
+	// Stage 6: Cache lookup — exact match first, then semantic.
 	if !isStream {
+		riskF := float64(analysis.RiskScore)
 		if entry, hit, _ := p.cache.Get(r.Context(), cacheKey); hit {
-			log.Info("cache HIT")
-			metrics.Global.CacheHits.Add(1)
-			metrics.Latency.Record(time.Since(start).Milliseconds())
-			p.pushEvent(reqID, tenantName, "CACHE_HIT", float64(analysis.RiskScore), r.URL.Path, "")
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set("X-Cache", "HIT")
-			for k, v := range entry.Headers {
-				w.Header().Set(k, v)
-			}
-			w.WriteHeader(entry.StatusCode)
-			w.Write(entry.Body) //nolint:errcheck
-			p.enqueueAudit(reqID, tenantID, apiKeyID, "CACHE_HIT", float64(analysis.RiskScore), r.URL.Path,
-				entry.StatusCode, time.Since(start).Milliseconds(), "")
-			p.emitKafka(reqID, tenantName, "CACHE_HIT", float64(analysis.RiskScore), entry.StatusCode, time.Since(start).Milliseconds())
+			log.Info("cache HIT (exact)")
+			p.serveCachedEntry(w, r, entry, "HIT", reqID, tenantName, tenantID, apiKeyID, riskF, start)
 			return
+		}
+		// Semantic cache: vector similarity search in Qdrant.
+		if p.semanticCache != nil {
+			if entry, hit := p.semanticCache.Get(r.Context(), body); hit {
+				log.Info("cache HIT (semantic)")
+				p.serveCachedEntry(w, r, entry, "SEMANTIC-HIT", reqID, tenantName, tenantID, apiKeyID, riskF, start)
+				return
+			}
 		}
 		metrics.Global.CacheMisses.Add(1)
 		w.Header().Set("X-Cache", "MISS")
@@ -327,10 +327,12 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		rc := newResponseCapture(w)
 		p.rp.ServeHTTP(rc, r)
 		if rc.statusCode == http.StatusOK && rc.body.Len() > 0 {
-			p.cache.Set(r.Context(), cacheKey, rc.statusCode,
-				map[string]string{"Content-Type": rc.Header().Get("Content-Type")},
-				rc.body.Bytes(),
-			)
+			ct := map[string]string{"Content-Type": rc.Header().Get("Content-Type")}
+			p.cache.Set(r.Context(), cacheKey, rc.statusCode, ct, rc.body.Bytes())
+			// Also store in semantic cache for fuzzy future hits.
+			if p.semanticCache != nil {
+				p.semanticCache.Set(r.Context(), body, rc.statusCode, ct, rc.body.Bytes())
+			}
 		}
 	}
 
@@ -436,6 +438,31 @@ func (p *LLMProxy) emitKafka(reqID, tenantID, action string, risk float64, statu
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	p.producer.EmitAudit(ctx, event)
+}
+
+// serveCachedEntry writes a cached response to the client and records metrics/audit.
+// xCacheVal is the X-Cache header value (e.g. "HIT" or "SEMANTIC-HIT").
+func (p *LLMProxy) serveCachedEntry(
+	w http.ResponseWriter, r *http.Request,
+	entry *cache.Entry, xCacheVal string,
+	reqID, tenantName string, tenantID, apiKeyID uuid.UUID,
+	riskScore float64,
+	start time.Time,
+) {
+	latencyMs := time.Since(start).Milliseconds()
+	metrics.Global.CacheHits.Add(1)
+	metrics.Latency.Record(latencyMs)
+	p.pushEvent(reqID, tenantName, "CACHE_HIT", riskScore, r.URL.Path, xCacheVal)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Cache", xCacheVal)
+	for k, v := range entry.Headers {
+		w.Header().Set(k, v)
+	}
+	w.WriteHeader(entry.StatusCode)
+	w.Write(entry.Body) //nolint:errcheck
+	p.enqueueAudit(reqID, tenantID, apiKeyID, "CACHE_HIT", riskScore, r.URL.Path,
+		entry.StatusCode, latencyMs, xCacheVal)
+	p.emitKafka(reqID, tenantName, "CACHE_HIT", riskScore, entry.StatusCode, latencyMs)
 }
 
 // estimateTokens approximates the number of tokens in an OpenAI-format request

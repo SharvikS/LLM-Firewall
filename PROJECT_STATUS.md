@@ -1,7 +1,7 @@
 # LLM-Firewall (TITAN Gateway) — Project Status Log
 
 > **Auto-maintained log.** Updated at the end of every major session or when significant changes are made.
-> Last updated: 2026-06-06 (Session 2)
+> Last updated: 2026-06-06 (Session 3)
 
 ---
 
@@ -56,7 +56,7 @@
 
 ### Medium Priority
 
-- [ ] **5. Semantic Caching via Qdrant** — Current caching is exact-match SHA-256 only. Semantically similar prompts always miss the cache. Needs embedding model + vector DB.
+- [x] **5. Semantic Caching via Qdrant** — DONE. `cache/semantic.go` uses Qdrant REST API + ML engine embedding endpoint. `all-MiniLM-L6-v2` generates 384-dim vectors; cosine similarity ≥ 0.95 (configurable) triggers a hit. Docker Compose now includes Qdrant. Falls back gracefully if Qdrant/embedding unavailable.
 - [x] **6. Token-Based Rate Limiting** — DONE. Added `AllowTokens()` TPM method to `ratelimit.go` (1-min tumbling Redis bucket). Proxy checks TPM in Stage 3 after RPM. Enable via `RATE_LIMIT_TPM=<n>` env var (0 = disabled). Returns `X-RateLimit-Tokens-Remaining` header.
 - [ ] **7. Toxicity / Sentiment Detection** — Mentioned in README, not implemented. Only injection and PII detection exist.
 - [ ] **8. Source Code Leak Prevention** — Mentioned in README, not implemented.
@@ -101,9 +101,33 @@
 
 **Items completed:** #6 (TPM rate limiting), #9 (Provider failover), ML model gap (audit finding), JSON fallback bug (audit finding)
 
-**Remaining critical items:** #1 (Cedar), #2 (Firecracker), #3 (ClickHouse), #4 (Metrics persistence)
+**Remaining critical items:** #1 (Cedar), #2 (Firecracker), #3 (ClickHouse)
 
-**Next suggested action:** Item #4 (Metrics Persistence) — add Redis-backed persistence for counters so dashboard data survives gateway restarts. Scope is well-defined and self-contained.
+### 2026-06-06 — Phase 2 Production Readiness (Audit Fixes)
+**Input:** Phase 2 code audit identifying 4 critical flaws: TPM starvation bug, in-memory metrics scaling barrier, brittle exact-match cache, missing Qdrant semantic cache.
+
+**Changes made:**
+
+| File | Change |
+|---|---|
+| `gateway/internal/ratelimit/ratelimit.go` | Fixed TPM Lua starvation: `GET` before `INCRBY` — rejected requests no longer consume quota |
+| `gateway/internal/cache/cache.go` | Added `normalizeBody()`: JSON unmarshal→remarshal before hashing so key-order variants get the same cache key |
+| `gateway/internal/cache/semantic.go` | NEW: `SemanticCache` using Qdrant REST API + embedding HTTP service. UUID v5 point IDs, base64 payload, 0.95 cosine threshold |
+| `gateway/internal/metrics/reporter.go` | NEW: Redis reporter — 5s flush loop, counter INCRBY delta pipeline, latency RPUSH+LTRIM, traffic HINCRBY, `GlobalSnapshot()` with local fallback |
+| `gateway/internal/metrics/collector.go` | Added non-blocking channel sends in `LatencyTracker.Record()` and `HourlyBucket.Record()` for reporter to drain |
+| `gateway/internal/config/config.go` | Added `QdrantURL`, `EmbeddingURL`, `SemanticCacheThreshold`, `getEnvFloat64()` |
+| `gateway/internal/proxy/proxy.go` | Added `semanticCache *cache.SemanticCache` field; updated `NewLLMProxy` signature; Stage 6 now checks exact→semantic; Stage 7 stores in both; extracted `serveCachedEntry()` helper |
+| `gateway/cmd/server/main.go` | Added `metrics.Init(redisClient)`, `SemanticCache` creation, updated `NewLLMProxy` call, `metricsHandler` now uses `metrics.GlobalSnapshot()` |
+| `ml_engine/requirements.txt` | Added `sentence-transformers>=2.7.0` |
+| `ml_engine/analyzer/embed.py` | NEW: stdlib HTTP embedding server (daemon thread), loads `all-MiniLM-L6-v2`, exposes `POST /embed` |
+| `ml_engine/analyzer/server.py` | Calls `embed.start()` at startup alongside gRPC |
+| `docker-compose.yml` | Added Qdrant service + `qdrant_data` volume; added `EMBED_PORT:8001` to ml_engine; added `QDRANT_URL`, `EMBEDDING_URL`, `SEMANTIC_CACHE_THRESHOLD` to gateway |
+
+**Items completed:** #4 (Metrics persistence → Redis reporter), #5 (Qdrant semantic cache), TPM starvation bug, JSON normalization bug
+
+**Remaining critical items:** #1 (Cedar policy engine), #2 (Firecracker sandbox), #3 (ClickHouse analytics)
+
+**Next suggested action:** Item #3 (ClickHouse) — add audit log write path from Kafka consumer to ClickHouse, and a read path for the dashboard's analytics queries. Kafka consumer already exists in Redpanda; ClickHouse has a native Kafka table engine.
 
 ---
 

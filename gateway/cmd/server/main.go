@@ -66,11 +66,18 @@ func main() {
 			slog.String("error", err.Error()))
 	} else {
 		log.Info("Redis connected", slog.String("addr", cfg.RedisAddr))
+		metrics.Init(redisClient) // activate distributed metrics flush
 	}
 	defer redisClient.Close()
 
-	limiter       := ratelimit.New(redisClient, cfg.RateLimitRPM, time.Duration(cfg.RateLimitWindowSec)*time.Second, cfg.RateLimitTPM)
-	semanticCache := cache.New(redisClient, time.Duration(cfg.CacheTTLSec)*time.Second)
+	limiter    := ratelimit.New(redisClient, cfg.RateLimitRPM, time.Duration(cfg.RateLimitWindowSec)*time.Second, cfg.RateLimitTPM)
+	exactCache := cache.New(redisClient, time.Duration(cfg.CacheTTLSec)*time.Second)
+
+	// Semantic cache is optional — only created when QDRANT_URL is set.
+	var semCache *cache.SemanticCache
+	if cfg.QdrantURL != "" {
+		semCache = cache.NewSemanticCache(cfg.QdrantURL, cfg.EmbeddingURL, cfg.SemanticCacheThreshold)
+	}
 
 	// ── Kafka Producer ────────────────────────────────────────────────────────
 	producer, err := events.NewProducer(cfg.KafkaBrokers)
@@ -97,7 +104,7 @@ func main() {
 	policyEngine := policy.NewEngine(st)
 
 	// ── Proxy ─────────────────────────────────────────────────────────────────
-	llmProxy, err := proxy.NewLLMProxy(cfg, policyEngine, producer, limiter, semanticCache, mlClient, st)
+	llmProxy, err := proxy.NewLLMProxy(cfg, policyEngine, producer, limiter, exactCache, semCache, mlClient, st)
 	if err != nil {
 		log.Error("proxy init failed", slog.String("error", err.Error()))
 		os.Exit(1)
@@ -177,34 +184,33 @@ func main() {
 
 // ── Dashboard read handlers ───────────────────────────────────────────────────
 
-func metricsHandler(w http.ResponseWriter, _ *http.Request) {
-	g := metrics.Global
-	total := g.TotalRequests.Load()
-	hits  := g.CacheHits.Load()
-	miss  := g.CacheMisses.Load()
-	cr    := hits + miss
+func metricsHandler(w http.ResponseWriter, r *http.Request) {
+	// GlobalSnapshot reads from Redis (aggregate cross-replica view) and
+	// falls back to local in-process counters if Redis is unavailable.
+	snap := metrics.GlobalSnapshot(r.Context())
+	cr := snap.CacheHits + snap.CacheMisses
 	hitRate := 0.0
 	if cr > 0 {
-		hitRate = float64(hits) / float64(cr) * 100
+		hitRate = float64(snap.CacheHits) / float64(cr) * 100
 	}
 	w.Header().Set("Content-Type", "application/json")
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	enc.Encode(map[string]any{ //nolint:errcheck
-		"total_requests":   total,
-		"allowed_requests": g.AllowedRequests.Load(),
-		"blocked_requests": g.BlockedRequests.Load(),
-		"rate_limited":     g.RateLimited.Load(),
-		"cache_hits":       hits,
-		"cache_misses":     miss,
+		"total_requests":   snap.TotalRequests,
+		"allowed_requests": snap.AllowedRequests,
+		"blocked_requests": snap.BlockedRequests,
+		"rate_limited":     snap.RateLimited,
+		"cache_hits":       snap.CacheHits,
+		"cache_misses":     snap.CacheMisses,
 		"cache_hit_rate":   hitRate,
-		"ml_blocked":       g.MLBlocked.Load(),
-		"pii_masked":       g.PIIMasked.Load(),
-		"cedar_blocked":    g.CedarBlocked.Load(),
-		"p99_latency_ms":   metrics.Latency.P99(),
-		"avg_latency_ms":   metrics.Latency.Avg(),
+		"ml_blocked":       snap.MLBlocked,
+		"pii_masked":       snap.PIIMasked,
+		"cedar_blocked":    snap.CedarBlocked,
+		"p99_latency_ms":   snap.P99LatencyMs,
+		"avg_latency_ms":   snap.AvgLatencyMs,
 		"uptime_seconds":   int64(time.Since(metrics.StartTime).Seconds()),
-		"traffic_chart":    metrics.HourlyTraffic.Snapshot(),
+		"traffic_chart":    snap.TrafficChart,
 	})
 }
 

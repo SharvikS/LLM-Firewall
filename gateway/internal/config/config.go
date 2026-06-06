@@ -43,6 +43,11 @@ type Config struct {
 	// Token-based rate limiting (Tokens Per Minute); 0 = disabled
 	RateLimitTPM int64
 
+	// Semantic cache (Qdrant vector DB + embedding service)
+	QdrantURL                string  // e.g. "http://localhost:6333"; empty = disabled
+	EmbeddingURL             string  // embedding HTTP endpoint, e.g. "http://localhost:8001/embed"
+	SemanticCacheThreshold   float64 // cosine similarity threshold (0 < x ≤ 1.0)
+
 	// Admin API
 	AdminToken string // master secret for /admin/* routes — never NEXT_PUBLIC_
 }
@@ -77,6 +82,10 @@ func Load() (*Config, error) {
 		FallbackAPIKey:    os.Getenv("FALLBACK_API_KEY"),
 		RateLimitTPM:      getEnvInt64("RATE_LIMIT_TPM", 0),
 
+		QdrantURL:              os.Getenv("QDRANT_URL"),
+		EmbeddingURL:           getEnv("EMBEDDING_URL", "http://localhost:8001/embed"),
+		SemanticCacheThreshold: getEnvFloat64("SEMANTIC_CACHE_THRESHOLD", 0.95),
+
 		AdminToken: getEnv("ADMIN_TOKEN", "titan-admin-dev-secret"),
 	}
 
@@ -110,6 +119,15 @@ func getEnvInt(key string, defaultVal int) int {
 	if v := os.Getenv(key); v != "" {
 		if i, err := strconv.Atoi(v); err == nil {
 			return i
+		}
+	}
+	return defaultVal
+}
+
+func getEnvFloat64(key string, defaultVal float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
 		}
 	}
 	return defaultVal

@@ -114,21 +114,29 @@ func (rl *RateLimiter) Allow(ctx context.Context, tenantID string) (Result, erro
 // ARGV[2]  — tokens consumed by this request
 //
 // Returns {allowed int, current int, limit int}
+//
+// Correctness note: we GET before INCRBY so that a rejected over-limit
+// request does NOT consume quota.  A single huge rejected request can no
+// longer starve legitimate follow-up traffic within the same minute window.
 var tpmScript = redis.NewScript(`
 local key    = KEYS[1]
 local limit  = tonumber(ARGV[1])
 local tokens = tonumber(ARGV[2])
 
-local current = tonumber(redis.call('INCRBY', key, tokens))
-if current == tokens then
+-- Peek at current usage WITHOUT consuming quota yet.
+local current = tonumber(redis.call('GET', key) or '0')
+if current + tokens > limit then
+    return {0, current, limit}
+end
+
+-- Within budget: commit the increment atomically.
+local new_total = redis.call('INCRBY', key, tokens)
+if new_total == tokens then
     -- First write in this minute bucket — set expiry to 2 minutes so the key
     -- auto-evicts after the window rolls over.
     redis.call('EXPIRE', key, 120)
 end
-if current > limit then
-    return {0, current, limit}
-end
-return {1, current, limit}
+return {1, new_total, limit}
 `)
 
 // AllowTokens checks whether tenantID is within its per-minute token quota.

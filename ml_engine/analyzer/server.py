@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from analyzer.v1 import analyzer_pb2, analyzer_pb2_grpc
 from analyzer.injection_detector import InjectionDetector
 from analyzer.pii_scanner import PIIScanner
+from analyzer import embed
 
 logging.basicConfig(
     level=logging.INFO,
@@ -164,6 +165,9 @@ def _rebuild_body(original_body: str, masked_text: str) -> str:
 
 
 def serve() -> None:
+    # Start embedding HTTP server alongside gRPC (no-op if sentence-transformers absent)
+    embed.start()
+
     port = os.getenv("GRPC_PORT", "50051")
     workers = int(os.getenv("GRPC_WORKERS", "4"))
 

@@ -37,15 +37,36 @@ func New(client *redis.Client, ttl time.Duration) *Cache {
 }
 
 // Key returns a deterministic cache key for the tuple (tenantID, path, body).
-// The SHA-256 digest ensures the key length is bounded regardless of body size.
+// The body is JSON-normalised before hashing so that semantically identical
+// requests with different key ordering (e.g. {"a":1,"b":2} vs {"b":2,"a":1})
+// produce the same key.  The SHA-256 digest bounds the key length regardless
+// of body size.
 func (c *Cache) Key(tenantID, path string, body []byte) string {
 	h := sha256.New()
 	h.Write([]byte(tenantID))
 	h.Write([]byte("|"))
 	h.Write([]byte(path))
 	h.Write([]byte("|"))
-	h.Write(body)
+	h.Write(normalizeBody(body))
 	return fmt.Sprintf("gateway:cache:%x", h.Sum(nil))
+}
+
+// normalizeBody round-trips JSON through encoding/json so map keys are sorted
+// alphabetically, making the hash key-order-independent.  Non-JSON bodies are
+// returned as-is (e.g. plain-text or empty requests).
+func normalizeBody(body []byte) []byte {
+	if len(body) == 0 {
+		return body
+	}
+	var m interface{}
+	if err := json.Unmarshal(body, &m); err != nil {
+		return body
+	}
+	normalized, err := json.Marshal(m)
+	if err != nil {
+		return body
+	}
+	return normalized
 }
 
 // Get retrieves a cached response. Returns (entry, true, nil) on a hit,
