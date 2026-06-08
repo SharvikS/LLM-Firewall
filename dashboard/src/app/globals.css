@@ -69,11 +69,111 @@ body {
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-/* Hide scrollbar */
-.scrollbar-hide::-webkit-scrollbar {
-  display: none;
+/* ── Scrollbar ──────────────────────────────────────────────────────────── */
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+.scrollbar-thin::-webkit-scrollbar { width: 4px; height: 4px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 4px; }
+.scrollbar-thin::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ── Animations ─────────────────────────────────────────────────────────── */
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to   { background-position:  200% 0; }
 }
-.scrollbar-hide {
-  -ms-overflow-style: none;
-  scrollbar-width: none;
+@keyframes live-ping {
+  0%   { transform: scale(1);   opacity: 1; }
+  75%  { transform: scale(2.2); opacity: 0; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0);     }
+}
+@keyframes count-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0)   scale(1);    }
+}
+@keyframes gradient-x {
+  0%   { background-position: 0%   50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0%   50%; }
+}
+
+/* ── Skeleton loader ────────────────────────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--bg-sec) 25%,
+    color-mix(in srgb, var(--border-color) 80%, var(--bg-sec)) 50%,
+    var(--bg-sec) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease infinite;
+}
+
+/* ── Live pulse indicator ───────────────────────────────────────────────── */
+.live-dot {
+  position: relative;
+  display: inline-block;
+}
+.live-dot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: currentColor;
+  animation: live-ping 1.6s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+/* ── Card gradient top border ───────────────────────────────────────────── */
+.card-glow {
+  position: relative;
+}
+.card-glow::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 10%; right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: 0.5;
+  border-radius: 4px;
+}
+
+/* ── Focus ring ─────────────────────────────────────────────────────────── */
+.focus-ring:focus-within {
+  outline: none;
+  box-shadow: 0 0 0 1px var(--border-color), 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+/* ── Number count-in ────────────────────────────────────────────────────── */
+.num-animate {
+  animation: count-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* ── Gradient text ──────────────────────────────────────────────────────── */
+.text-gradient {
+  background: linear-gradient(135deg, var(--text-main), var(--text-muted));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Subtle dot-grid background ─────────────────────────────────────────── */
+.dot-grid {
+  background-image: radial-gradient(circle, var(--border-color) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* ── Smooth entrance ────────────────────────────────────────────────────── */
+.fade-up {
+  animation: fade-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* ── Selection ──────────────────────────────────────────────────────────── */
+::selection {
+  background: color-mix(in srgb, var(--accent) 25%, transparent);
+  color: var(--text-main);
 }

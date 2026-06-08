@@ -1,15 +1,18 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
-import { motion } from 'framer-motion';
+import { useEffect, useState, useCallback, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import {
   ShieldAlert, Eye, Zap, CheckCircle, RefreshCw,
-  TrendingUp, TrendingDown, Minus,
+  TrendingUp, TrendingDown, Minus, Activity,
+  Shield, Lock, Clock,
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
-  Tooltip as RTooltip, ResponsiveContainer, BarChart, Bar,
+  Tooltip as RTooltip, ResponsiveContainer,
 } from 'recharts';
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 interface Metrics {
   total_requests: number; allowed_requests: number; blocked_requests: number;
@@ -26,47 +29,214 @@ interface Event {
   reason?: string; path?: string;
 }
 
-const ACTION_CONFIG: Record<string, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
-  ML_BLOCKED:   { label: 'ML Blocked',   color: 'text-red-400',    bg: 'bg-red-400/10',    icon: <ShieldAlert size={13}/> },
-  CEDAR_BLOCKED:{ label: 'Policy Block', color: 'text-orange-400', bg: 'bg-orange-400/10', icon: <ShieldAlert size={13}/> },
-  RATE_LIMITED: { label: 'Rate Limited', color: 'text-yellow-400', bg: 'bg-yellow-400/10', icon: <Zap size={13}/> },
-  PII_MASKED:   { label: 'PII Masked',   color: 'text-blue-400',  bg: 'bg-blue-400/10',   icon: <Eye size={13}/> },
-  CACHE_HIT:    { label: 'Cache Hit',    color: 'text-purple-400',bg: 'bg-purple-400/10', icon: <CheckCircle size={13}/> },
-  ALLOWED:      { label: 'Allowed',      color: 'text-green-400', bg: 'bg-green-400/10',  icon: <CheckCircle size={13}/> },
+// ─── Constants ───────────────────────────────────────────────────────────────
+
+const ACTION_CONFIG: Record<string, { label: string; color: string; dot: string; icon: React.ReactNode }> = {
+  ML_BLOCKED:    { label: 'ML Blocked',    color: '#f87171', dot: '#f87171', icon: <ShieldAlert size={12}/> },
+  CEDAR_BLOCKED: { label: 'Policy Block',  color: '#fb923c', dot: '#fb923c', icon: <Lock size={12}/> },
+  RATE_LIMITED:  { label: 'Rate Limited',  color: '#facc15', dot: '#facc15', icon: <Zap size={12}/> },
+  PII_MASKED:    { label: 'PII Masked',    color: '#60a5fa', dot: '#60a5fa', icon: <Eye size={12}/> },
+  CACHE_HIT:     { label: 'Cache Hit',     color: '#a78bfa', dot: '#a78bfa', icon: <CheckCircle size={12}/> },
+  ALLOWED:       { label: 'Allowed',       color: '#4ade80', dot: '#4ade80', icon: <CheckCircle size={12}/> },
 };
 
+// ─── Hooks ───────────────────────────────────────────────────────────────────
+
+function useCounter(target: number, duration = 700) {
+  const [val, setVal] = useState(0);
+  const prevRef = useRef(0);
+  useEffect(() => {
+    const from = prevRef.current;
+    prevRef.current = target;
+    if (from === target) return;
+    let raf: number;
+    const start = Date.now();
+    const tick = () => {
+      const t = Math.min((Date.now() - start) / duration, 1);
+      const ease = 1 - Math.pow(1 - t, 3);
+      setVal(Math.round(from + (target - from) * ease));
+      if (t < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, duration]);
+  return val;
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
 function kfmt(n: number) {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000)     return `${(n / 1_000).toFixed(1)}k`;
   return String(n);
 }
 
-function MetricCard({ title, value, sub, trend }: {
-  title: string; value: string; sub: string; trend?: 'up' | 'down' | 'neutral';
+// ─── Skeleton ────────────────────────────────────────────────────────────────
+
+function Skeleton({ className }: { className?: string }) {
+  return <div className={`skeleton rounded-xl ${className}`}/>;
+}
+
+// ─── Metric Card ─────────────────────────────────────────────────────────────
+
+function MetricCard({ title, value, rawValue, sub, trend, accentColor }: {
+  title: string; value: string; rawValue?: number; sub: string;
+  trend?: 'up' | 'down' | 'neutral'; accentColor?: string;
 }) {
+  const animated = useCounter(rawValue ?? 0);
+  const displayValue = rawValue !== undefined ? kfmt(animated) : value;
+  const color = accentColor ?? 'var(--accent)';
+
   return (
-    <div className="border border-base-border bg-base-card rounded-xl p-5 shadow-sm hover:border-base-muted/40 transition-colors">
-      <div className="text-[12px] font-medium text-base-muted mb-3 uppercase tracking-widest">{title}</div>
-      <div className="text-3xl font-semibold tracking-tight text-base-text">{value}</div>
-      <div className="mt-2 flex items-center gap-2">
-        {trend === 'up'      && <TrendingUp  size={12} className="text-green-400"/>}
-        {trend === 'down'    && <TrendingDown size={12} className="text-red-400"/>}
-        {trend === 'neutral' && <Minus        size={12} className="text-base-muted"/>}
-        <span className="text-xs text-base-muted">{sub}</span>
+    <motion.div
+      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+      className="relative overflow-hidden rounded-xl border p-5 group transition-all duration-200 cursor-default"
+      style={{
+        background: 'var(--bg-card)',
+        borderColor: 'var(--border-color)',
+      }}
+      whileHover={{ borderColor: `color-mix(in srgb, ${color} 30%, var(--border-color))` }}
+    >
+      {/* Gradient top line */}
+      <div className="absolute top-0 left-0 right-0 h-px"
+        style={{ background: `linear-gradient(90deg, transparent 10%, ${color}60 50%, transparent 90%)` }}/>
+      {/* Ambient bg glow */}
+      <div className="absolute -top-8 -right-8 w-20 h-20 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-500 blur-2xl"
+        style={{ background: `color-mix(in srgb, ${color} 15%, transparent)` }}/>
+
+      <div className="relative z-10">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.1em] mb-3" style={{ color: 'var(--text-muted)' }}>
+          {title}
+        </div>
+        <div className="text-[28px] font-bold tracking-tight leading-none mb-2.5" style={{ color: 'var(--text-main)' }}>
+          {displayValue}
+        </div>
+        <div className="flex items-center gap-1.5">
+          {trend === 'up'      && <TrendingUp  size={11} style={{ color: '#4ade80' }}/>}
+          {trend === 'down'    && <TrendingDown size={11} style={{ color: '#f87171' }}/>}
+          {trend === 'neutral' && <Minus        size={11} style={{ color: 'var(--text-muted)' }}/>}
+          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{sub}</span>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+// ─── Custom Chart Tooltip ─────────────────────────────────────────────────────
+
+function ChartTooltip({ active, payload }: { active?: boolean; payload?: any[] }) {
+  if (!active || !payload?.length) return null;
+  const label = payload[0]?.payload?.label ?? '';
+  const requests = payload[0]?.value ?? 0;
+  const blocked  = payload[1]?.value ?? 0;
+  const blockPct = requests > 0 ? ((blocked / requests) * 100).toFixed(1) : '0.0';
+  return (
+    <div className="rounded-xl shadow-2xl overflow-hidden text-xs"
+      style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', minWidth: 160 }}>
+      <div className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wider"
+        style={{ background: 'var(--bg-sec)', color: 'var(--text-muted)', borderBottom: '1px solid var(--border-color)' }}>
+        {label}
+      </div>
+      <div className="px-3 py-2.5 space-y-1.5">
+        <div className="flex justify-between items-center gap-6">
+          <div className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full" style={{ background: 'var(--accent)' }}/>
+            <span style={{ color: 'var(--text-muted)' }}>Requests</span>
+          </div>
+          <span className="font-semibold tabular-nums">{requests.toLocaleString()}</span>
+        </div>
+        <div className="flex justify-between items-center gap-6">
+          <div className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-red-400"/>
+            <span style={{ color: 'var(--text-muted)' }}>Blocked</span>
+          </div>
+          <span className="font-semibold tabular-nums text-red-400">{blocked.toLocaleString()}</span>
+        </div>
+        <div className="pt-1.5 border-t flex justify-between" style={{ borderColor: 'var(--border-color)' }}>
+          <span style={{ color: 'var(--text-muted)' }}>Block rate</span>
+          <span className="font-semibold">{blockPct}%</span>
+        </div>
       </div>
     </div>
   );
 }
 
-function Skeleton({ className }: { className?: string }) {
-  return <div className={`animate-pulse bg-base-sec rounded-lg ${className}`}/>;
+// ─── Secondary Stat ───────────────────────────────────────────────────────────
+
+function SecondaryStat({ label, value, color }: { label: string; value: number; color: string }) {
+  const animated = useCounter(value);
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
+      className="relative overflow-hidden rounded-xl border p-4 group transition-all duration-200"
+      style={{ background: 'var(--bg-card)', borderColor: 'var(--border-color)' }}
+    >
+      <div className="absolute top-0 left-0 right-0 h-px"
+        style={{ background: `linear-gradient(90deg, transparent 20%, ${color}50 50%, transparent 80%)` }}/>
+      <div className="text-[10px] font-semibold uppercase tracking-[0.1em] mb-2" style={{ color: 'var(--text-muted)' }}>
+        {label}
+      </div>
+      <div className="text-2xl font-bold tracking-tight" style={{ color }}>
+        {kfmt(animated)}
+      </div>
+    </motion.div>
+  );
 }
 
+// ─── Threat Feed Item ─────────────────────────────────────────────────────────
+
+function ThreatItem({ ev, index }: { ev: Event; index: number }) {
+  const cfg = ACTION_CONFIG[ev.action] ?? ACTION_CONFIG['ALLOWED'];
+  const time = new Date(ev.timestamp).toLocaleTimeString([], {
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  return (
+    <motion.li
+      initial={{ opacity: 0, x: 10 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ duration: 0.3, delay: index * 0.04, ease: [0.16, 1, 0.3, 1] }}
+      className="relative px-4 py-3 transition-colors cursor-default group"
+      style={{ borderBottom: '1px solid var(--border-color)' }}
+    >
+      <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150"
+        style={{ background: 'var(--bg-sec)' }}/>
+      <div className="relative flex items-center gap-3">
+        {/* Color dot */}
+        <div className="w-1.5 h-1.5 rounded-full shrink-0 live-dot"
+          style={{ color: cfg.dot, background: cfg.dot, boxShadow: `0 0 6px ${cfg.dot}60` }}/>
+        {/* Icon */}
+        <div className="p-1.5 rounded-md shrink-0"
+          style={{ background: `color-mix(in srgb, ${cfg.color} 10%, transparent)`, color: cfg.color }}>
+          {cfg.icon}
+        </div>
+        {/* Text */}
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-semibold leading-tight" style={{ color: cfg.color }}>
+            {cfg.label}
+          </div>
+          <div className="text-[10px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
+            {ev.path ?? '/'} {ev.reason ? `· ${ev.reason}` : ''}
+          </div>
+        </div>
+        {/* Time */}
+        <div className="shrink-0 text-[10px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
+          {time}
+        </div>
+      </div>
+    </motion.li>
+  );
+}
+
+// ─── Main Export ──────────────────────────────────────────────────────────────
+
 export default function OverviewTab() {
-  const [metrics, setMetrics]   = useState<Metrics | null>(null);
-  const [events, setEvents]     = useState<Event[]>([]);
-  const [loading, setLoading]   = useState(true);
-  const [lastRefresh, setLast]  = useState<Date | null>(null);
+  const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const [events, setEvents]   = useState<Event[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [lastRefresh, setLast] = useState<Date | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const fetchData = useCallback(async () => {
     const [mRes, eRes] = await Promise.all([
@@ -79,158 +249,190 @@ export default function OverviewTab() {
     setLast(new Date());
   }, []);
 
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchData();
+    setTimeout(() => setRefreshing(false), 400);
+  }, [fetchData]);
+
   useEffect(() => {
     fetchData();
     const id = setInterval(fetchData, 5000);
     return () => clearInterval(id);
   }, [fetchData]);
 
+  // Chart data
   const chartData = metrics?.traffic_chart?.filter(p => p.requests > 0 || p.blocked > 0) ?? [];
-  // Pad with demo data if gateway just started and has no history
   const chartDisplay = chartData.length > 2 ? chartData :
     Array.from({ length: 24 }, (_, i) => ({
-      label: `${i}:00`,
-      requests: Math.floor(Math.sin(i / 3) * 800 + 1200 + Math.random() * 400),
-      blocked:  Math.floor(Math.cos(i / 4) * 60  + 80  + Math.random() * 30),
+      label: `${i.toString().padStart(2, '0')}:00`,
+      requests: Math.floor(Math.sin(i / 3) * 800 + 1200),
+      blocked:  Math.floor(Math.cos(i / 4) * 60  + 80),
     }));
-
   const isDemo = chartData.length <= 2;
 
+  const totalReq    = metrics?.total_requests    ?? 0;
+  const blocked     = metrics?.blocked_requests  ?? 0;
+  const hitRate     = metrics?.cache_hit_rate    ?? 0;
+  const p99         = metrics?.p99_latency_ms    ?? 0;
+  const avgLat      = metrics?.avg_latency_ms    ?? 0;
+  const hits        = metrics?.cache_hits        ?? 0;
+  const mlBlocked   = metrics?.ml_blocked        ?? 0;
+  const cedarBlocked= metrics?.cedar_blocked     ?? 0;
+  const piiMasked   = metrics?.pii_masked        ?? 0;
+  const rateLimited = metrics?.rate_limited      ?? 0;
+  const cacheMisses = metrics?.cache_misses      ?? 0;
+
+  const threatEvents = events.filter(e => e.action !== 'ALLOWED').slice(0, 12);
+
   return (
-    <div className="max-w-6xl mx-auto space-y-8">
+    <div className="max-w-6xl mx-auto space-y-6">
+      {/* Page header */}
       <div className="flex justify-between items-end">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
-          <p className="text-sm text-base-muted mt-1">
-            Live gateway telemetry.
-            {metrics?._offline && <span className="ml-2 text-yellow-500 font-medium">Gateway offline</span>}
+          <h1 className="text-[22px] font-bold tracking-tight">Overview</h1>
+          <p className="text-sm mt-1 flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
+            Live gateway telemetry
+            {metrics?._offline && (
+              <span className="inline-flex items-center gap-1 text-yellow-500 font-medium text-xs px-2 py-0.5 rounded-md"
+                style={{ background: 'rgba(234,179,8,0.1)', border: '1px solid rgba(234,179,8,0.2)' }}>
+                <Zap size={10}/> Gateway offline
+              </span>
+            )}
             {lastRefresh && !metrics?._offline && (
-              <span className="ml-2 opacity-60">Updated {lastRefresh.toLocaleTimeString()}</span>
+              <span className="text-[11px] opacity-50">· {lastRefresh.toLocaleTimeString()}</span>
             )}
           </p>
         </div>
-        <button onClick={fetchData} className="flex items-center gap-2 px-3 py-1.5 border border-base-border rounded-lg text-xs text-base-muted hover:text-base-text hover:bg-base-sec transition-colors">
-          <RefreshCw size={12}/> Refresh
+        <button onClick={handleRefresh}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-all hover:bg-white/[0.06]"
+          style={{ border: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
+          <RefreshCw size={11} className={refreshing ? 'animate-spin' : ''}/>
+          Refresh
         </button>
       </div>
 
-      {/* KPI Cards */}
+      {/* KPI row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {loading ? (
-          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-32"/>)
-        ) : (<>
-          <MetricCard title="Total Requests"  value={kfmt(metrics?.total_requests ?? 0)}    sub="since startup"         trend="neutral"/>
-          <MetricCard title="Threats Blocked" value={kfmt(metrics?.blocked_requests ?? 0)}  sub={`${metrics?.ml_blocked ?? 0} ML · ${metrics?.cedar_blocked ?? 0} policy`} trend="down"/>
-          <MetricCard title="Cache Hit Rate"  value={`${(metrics?.cache_hit_rate ?? 0).toFixed(1)}%`} sub={`${kfmt(metrics?.cache_hits ?? 0)} hits saved`} trend="up"/>
-          <MetricCard title="P99 Latency"     value={`${metrics?.p99_latency_ms ?? 0}ms`}   sub={`avg ${(metrics?.avg_latency_ms ?? 0).toFixed(0)}ms`} trend="neutral"/>
-        </>)}
+          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[110px]"/>)
+        ) : (
+          <>
+            <MetricCard title="Total Requests"  rawValue={totalReq}   value={kfmt(totalReq)}
+              sub="since startup" trend="neutral" accentColor="var(--accent)"/>
+            <MetricCard title="Threats Blocked" rawValue={blocked}    value={kfmt(blocked)}
+              sub={`${mlBlocked} ML · ${cedarBlocked} policy`} trend="down" accentColor="#f87171"/>
+            <MetricCard title="Cache Hit Rate"  value={`${hitRate.toFixed(1)}%`}
+              sub={`${kfmt(hits)} hits saved`} trend="up" accentColor="#a78bfa"/>
+            <MetricCard title="P99 Latency"     value={`${p99}ms`}
+              sub={`avg ${avgLat.toFixed(0)}ms`} trend="neutral" accentColor="#60a5fa"/>
+          </>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Traffic Chart */}
-        <div className="lg:col-span-2 border border-base-border bg-base-card rounded-xl p-6 shadow-sm flex flex-col h-[360px]">
-          <div className="flex justify-between items-center mb-4">
+      {/* Chart + Threat feed */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        {/* Traffic chart */}
+        <div className="lg:col-span-2 relative overflow-hidden rounded-xl border flex flex-col"
+          style={{ background: 'var(--bg-card)', borderColor: 'var(--border-color)', height: 360 }}>
+          {/* Top gradient line */}
+          <div className="absolute top-0 left-0 right-0 h-px"
+            style={{ background: 'linear-gradient(90deg, transparent 10%, var(--accent) 50%, transparent 90%)', opacity: 0.4 }}/>
+
+          <div className="px-6 pt-5 pb-4 flex justify-between items-start shrink-0">
             <div>
               <h3 className="text-sm font-semibold">Traffic & Interceptions</h3>
-              {isDemo && <span className="text-[10px] text-yellow-500/80 font-medium">Demo data — send requests to populate</span>}
+              {isDemo && (
+                <span className="text-[10px] font-medium" style={{ color: 'rgba(234,179,8,0.8)' }}>
+                  Demo data — send requests to populate
+                </span>
+              )}
             </div>
-            <div className="flex items-center gap-4 text-xs text-base-muted">
-              <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-base-accent inline-block"/>Requests</span>
-              <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-400 inline-block"/>Blocked</span>
+            <div className="flex items-center gap-4 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full" style={{ background: 'var(--accent)' }}/>
+                Requests
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-red-400"/>
+                Blocked
+              </span>
             </div>
           </div>
-          <div className="flex-1">
+
+          <div className="flex-1 px-3 pb-4">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartDisplay} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+              <AreaChart data={chartDisplay} margin={{ top: 4, right: 4, left: -18, bottom: 0 }}>
                 <defs>
                   <linearGradient id="gReq" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.2}/>
+                    <stop offset="0%"   stopColor="var(--accent)" stopOpacity={0.25}/>
+                    <stop offset="70%"  stopColor="var(--accent)" stopOpacity={0.05}/>
                     <stop offset="100%" stopColor="var(--accent)" stopOpacity={0}/>
                   </linearGradient>
                   <linearGradient id="gBlk" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#f87171" stopOpacity={0.2}/>
+                    <stop offset="0%"   stopColor="#f87171" stopOpacity={0.3}/>
+                    <stop offset="70%"  stopColor="#f87171" stopOpacity={0.05}/>
                     <stop offset="100%" stopColor="#f87171" stopOpacity={0}/>
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} opacity={0.4}/>
-                <XAxis dataKey="label" stroke="var(--text-muted)" fontSize={10} tickLine={false} axisLine={false} minTickGap={30}/>
-                <YAxis stroke="var(--text-muted)" fontSize={10} tickLine={false} axisLine={false} tickFormatter={v => kfmt(v)}/>
-                <RTooltip content={({ active, payload }) => {
-                  if (!active || !payload?.length) return null;
-                  return (
-                    <div className="bg-base-card border border-base-border p-3 rounded-lg shadow-xl text-xs">
-                      <div className="text-base-muted mb-1.5">{payload[0]?.payload?.label}</div>
-                      <div className="flex justify-between gap-4"><span className="text-base-text">Requests</span><span className="font-semibold">{payload[0]?.value?.toLocaleString()}</span></div>
-                      <div className="flex justify-between gap-4 mt-1"><span className="text-red-400">Blocked</span><span className="font-semibold">{payload[1]?.value?.toLocaleString()}</span></div>
-                    </div>
-                  );
-                }} cursor={{ stroke: 'var(--text-muted)', strokeWidth: 1, strokeDasharray: '4 4' }}/>
-                <Area type="monotone" dataKey="requests" stroke="var(--accent)" strokeWidth={2} fill="url(#gReq)"/>
-                <Area type="monotone" dataKey="blocked"  stroke="#f87171"       strokeWidth={2} fill="url(#gBlk)"/>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} opacity={0.5}/>
+                <XAxis dataKey="label" stroke="var(--text-muted)" fontSize={9} tickLine={false} axisLine={false} minTickGap={32}/>
+                <YAxis stroke="var(--text-muted)" fontSize={9} tickLine={false} axisLine={false} tickFormatter={kfmt}/>
+                <RTooltip content={<ChartTooltip/>}
+                  cursor={{ stroke: 'var(--text-muted)', strokeWidth: 1, strokeDasharray: '4 3', opacity: 0.4 }}/>
+                <Area type="monotone" dataKey="requests" stroke="var(--accent)" strokeWidth={1.5} fill="url(#gReq)" dot={false}/>
+                <Area type="monotone" dataKey="blocked"  stroke="#f87171"       strokeWidth={1.5} fill="url(#gBlk)" dot={false}/>
               </AreaChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* Live Threat Feed */}
-        <div className="border border-base-border bg-base-card rounded-xl flex flex-col h-[360px] overflow-hidden shadow-sm">
-          <div className="px-5 py-4 border-b border-base-border flex justify-between items-center">
-            <h3 className="text-sm font-semibold">Live Threat Feed</h3>
-            <div className="flex items-center gap-2">
-              <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"/>
-              <span className="text-[10px] text-base-muted">Live</span>
+        {/* Live threat feed */}
+        <div className="relative overflow-hidden rounded-xl border flex flex-col"
+          style={{ background: 'var(--bg-card)', borderColor: 'var(--border-color)', height: 360 }}>
+          <div className="absolute top-0 left-0 right-0 h-px"
+            style={{ background: 'linear-gradient(90deg, transparent 10%, #f87171 50%, transparent 90%)', opacity: 0.4 }}/>
+          {/* Header */}
+          <div className="px-5 py-4 shrink-0 flex justify-between items-center"
+            style={{ borderBottom: '1px solid var(--border-color)' }}>
+            <h3 className="text-sm font-semibold">Live Threats</h3>
+            <div className="flex items-center gap-1.5">
+              <span className="live-dot w-1.5 h-1.5 rounded-full text-green-400" style={{ color: '#4ade80', background: '#4ade80' }}/>
+              <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>Live</span>
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto scrollbar-hide">
-            {events.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full text-base-muted text-sm">
-                <CheckCircle size={24} className="mb-2 opacity-30"/>
-                <span>No recent events</span>
+
+          {/* Feed */}
+          <div className="flex-1 overflow-y-auto scrollbar-thin">
+            {threatEvents.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full gap-2" style={{ color: 'var(--text-muted)' }}>
+                <Shield size={28} className="opacity-20"/>
+                <span className="text-xs">No threats detected</span>
               </div>
             ) : (
               <ul>
-                {events.filter(e => e.action !== 'ALLOWED').slice(0, 12).map(ev => {
-                  const cfg = ACTION_CONFIG[ev.action] ?? ACTION_CONFIG['ALLOWED'];
-                  return (
-                    <motion.li key={ev.event_id} initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }}
-                      className="px-4 py-3 border-b border-base-border/50 hover:bg-base-sec/50 transition-colors cursor-default"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className={`p-1.5 rounded-md ${cfg.bg} ${cfg.color} shrink-0`}>{cfg.icon}</div>
-                        <div className="min-w-0">
-                          <div className={`text-xs font-semibold ${cfg.color}`}>{cfg.label}</div>
-                          <div className="text-[11px] text-base-muted truncate">{ev.path ?? '/'} · {ev.reason ?? ev.tenant_id}</div>
-                        </div>
-                        <div className="ml-auto shrink-0 text-[10px] text-base-muted">
-                          {new Date(ev.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                        </div>
-                      </div>
-                    </motion.li>
-                  );
-                })}
+                {threatEvents.map((ev, i) => <ThreatItem key={ev.event_id} ev={ev} index={i}/>)}
               </ul>
             )}
           </div>
-          <div className="px-4 py-2.5 border-t border-base-border text-center">
-            <span className="text-[11px] text-base-muted">{events.length} events tracked this session</span>
+
+          {/* Footer */}
+          <div className="px-4 py-2.5 shrink-0 text-center"
+            style={{ borderTop: '1px solid var(--border-color)' }}>
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+              {events.length} events this session
+            </span>
           </div>
         </div>
       </div>
 
-      {/* Secondary metrics row */}
+      {/* Secondary stats */}
       {metrics && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {[
-            { label: 'PII Masked',    value: metrics.pii_masked,    color: 'text-blue-400' },
-            { label: 'ML Blocked',    value: metrics.ml_blocked,    color: 'text-red-400' },
-            { label: 'Rate Limited',  value: metrics.rate_limited,  color: 'text-yellow-400' },
-            { label: 'Cache Misses',  value: metrics.cache_misses,  color: 'text-base-muted' },
-          ].map(({ label, value, color }) => (
-            <div key={label} className="border border-base-border bg-base-card rounded-xl p-4 shadow-sm">
-              <div className="text-[11px] text-base-muted uppercase tracking-widest mb-2">{label}</div>
-              <div className={`text-2xl font-semibold ${color}`}>{kfmt(value)}</div>
-            </div>
-          ))}
+          <SecondaryStat label="PII Masked"   value={piiMasked}   color="#60a5fa"/>
+          <SecondaryStat label="ML Blocked"   value={mlBlocked}   color="#f87171"/>
+          <SecondaryStat label="Rate Limited" value={rateLimited} color="#facc15"/>
+          <SecondaryStat label="Cache Misses" value={cacheMisses} color="var(--text-muted)"/>
         </div>
       )}
     </div>
