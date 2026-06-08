@@ -457,9 +457,11 @@ func (p *LLMProxy) emitKafka(reqID, tenantID, action string, risk float64, statu
 		LatencyMs:  latencyMs,
 		Timestamp:  time.Now().UTC(),
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	p.producer.EmitAudit(ctx, event)
+	// Pass context.Background() so the async Kafka produce callback is not
+	// aborted when this function returns. Franz-go manages its own retries
+	// and delivery timeouts internally; binding it to a 2s function-scoped
+	// context guaranteed the in-flight batch was canceled before it flushed.
+	p.producer.EmitAudit(context.Background(), event)
 }
 
 // serveCachedEntry writes a cached response to the client and records metrics/audit.

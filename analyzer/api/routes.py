@@ -12,6 +12,21 @@ sandbox = FirecrackerSandboxManager()
 prompt_firewall = PromptFirewall()
 response_firewall = ResponseFirewall()
 
+# Tools that require sandboxed OS execution. Any name that can invoke a shell,
+# interpreter, or OS command must be listed here.
+_SANDBOX_EXECUTION_TOOLS: frozenset[str] = frozenset({
+    "run_bash", "execute_shell", "cmd",
+    "bash", "sh", "zsh", "fish",
+    "python", "python3", "node", "ruby", "perl",
+    "exec", "system", "subprocess",
+})
+
+# Tools that are safe to invoke directly without sandboxing. Extend this as
+# read-only or side-effect-free tools are added to the agent toolkit.
+_KNOWN_SAFE_TOOLS: frozenset[str] = frozenset({
+    "read_file", "list_files", "search_web", "get_weather",
+})
+
 # --- ASR Models ---
 class AgentContext(BaseModel):
     execution_loop_count: int = 0
@@ -54,16 +69,32 @@ async def evaluate_and_execute(req: ToolExecutionRequest):
     elif overall_risk >= 5.0:
         return ExecutionResponse(allowed=False, risk_scores=risk, human_approval_required=True, reason="MEDIUM RISK: HITL suspended.")
         
-    # Sandbox Execution
-    output = None
-    if req.tool_name in ["run_bash", "execute_shell", "cmd"]:
+    # Dispatch by tool category — fail-closed for anything unrecognised.
+    if req.tool_name in _SANDBOX_EXECUTION_TOOLS:
         cmd = req.tool_arguments.get("command", "")
         sandbox_res = sandbox.execute_in_sandbox(cmd)
         if sandbox_res["status"] == "error":
-            return ExecutionResponse(allowed=False, risk_scores=risk, reason=f"Sandbox Error: {sandbox_res.get('error')}")
-        output = sandbox_res["output"]
-        
-    return ExecutionResponse(allowed=True, risk_scores=risk, sandbox_output=output, reason="Execution allowed in sandbox.")
+            return ExecutionResponse(
+                allowed=False, risk_scores=risk,
+                reason=f"Sandbox Error: {sandbox_res.get('error')}",
+            )
+        return ExecutionResponse(
+            allowed=True, risk_scores=risk,
+            sandbox_output=sandbox_res["output"],
+            reason="Executed inside sandbox.",
+        )
+
+    if req.tool_name in _KNOWN_SAFE_TOOLS:
+        return ExecutionResponse(
+            allowed=True, risk_scores=risk,
+            reason="Tool is in known-safe allowlist.",
+        )
+
+    # Unknown tool — deny. Never assume safety for tools not explicitly listed.
+    return ExecutionResponse(
+        allowed=False, risk_scores=risk,
+        reason=f"Unknown tool '{req.tool_name}' — not in sandbox or safe allowlist.",
+    )
 
 
 @router.post("/firewall/prompt")

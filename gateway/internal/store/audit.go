@@ -25,13 +25,18 @@ type AuditRow struct {
 }
 
 // EnqueueAudit pushes a row onto the background write queue.
-// Non-blocking: if the queue is full the row is dropped rather than stalling the request.
+// Applies backpressure: blocks for up to 50ms before discarding so brief
+// congestion drains without stalling the proxy. A discard is logged at ERROR
+// (not WARN) to trigger alerting — it indicates the batch writer is stalled,
+// usually because the database is unavailable.
 func (s *Store) EnqueueAudit(row AuditRow) {
 	select {
 	case s.auditQueue <- row:
-	default:
-		logger.Get().Warn("audit queue full — row dropped",
-			slog.String("request_id", row.RequestID))
+	case <-time.After(50 * time.Millisecond):
+		logger.Get().Error("audit queue saturated — row dropped; DB batch writer may be stalled",
+			slog.String("request_id", row.RequestID),
+			slog.String("action", row.Action),
+		)
 	}
 }
 

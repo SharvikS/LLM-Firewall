@@ -6,10 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/sharvik/llm-firewall/gateway/internal/logger"
 )
 
 // APIKey mirrors the api_keys table. Raw key is never stored here.
@@ -74,7 +77,10 @@ func (s *Store) GenerateAPIKey(ctx context.Context, tenantID uuid.UUID, name str
 		return "", nil, fmt.Errorf("generate key: %w", err)
 	}
 	hash := HashKey(raw)
-	prefix := raw[:8]
+	// raw = "titan_" + 64 hex chars. raw[:8] yielded only "titan_XX" — 256 unique
+	// values — making keys indistinguishable in the UI. raw[:14] gives
+	// "titan_" + 8 hex chars = 4 billion unique prefixes while remaining readable.
+	prefix := raw[:14]
 
 	k := &APIKey{}
 	err = s.pool.QueryRow(ctx,
@@ -122,8 +128,9 @@ func (s *Store) keyTouchWriter() {
 			ids = append(ids, id.String())
 			incs = append(incs, n)
 		}
-		counts = make(map[uuid.UUID]int64)
-
+		// Do NOT clear counts before the DB write. If the exec fails due to a
+		// transient error, accumulated values remain in the map and are included
+		// in the next flush window rather than being silently lost.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_, err := s.pool.Exec(ctx, `
@@ -135,8 +142,11 @@ func (s *Store) keyTouchWriter() {
 			ids, incs,
 		)
 		if err != nil {
-			logger.Get().Warn("key touch batch failed", slog.String("error", err.Error()))
+			logger.Get().Warn("key touch batch failed — counts retained for next flush",
+				slog.String("error", err.Error()))
+			return
 		}
+		counts = make(map[uuid.UUID]int64)
 	}
 
 	for {
