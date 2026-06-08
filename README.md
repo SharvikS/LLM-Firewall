@@ -130,8 +130,8 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
 │                  │  │  PII Masker (Presidio + spaCy)  │ │               │
 │                  │  └─────────────────────────────────┘ │               │
 │                  │  ┌─────────────────────────────────┐ │               │
-│                  │  │  Embedding Service (MiniLM-L6)   │ │              │
-│                  │  │  ThreadingHTTPServer :8001       │ │              │
+│                  │  │  Embedding Service (MiniLM-L6)  │ │               │
+│                  │  │  ThreadingHTTPServer :8001      │ │               │
 │                  │  └─────────────────────────────────┘ │               │
 │                  └──────────────────────────────────────┘               │
 └─────────────────────────────────────────────────────────────────────────┘
