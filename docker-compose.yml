@@ -34,10 +34,16 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # ── CockroachDB (single-node, Postgres-wire) ──────────────────────────────
+  # ── CockroachDB (single-node, Postgres-wire, locality-tagged) ───────────────
+  # Locality flags expose region/zone metadata in CRDB's built-in dashboards and
+  # prepare the schema for a future 3-node multi-region topology without any
+  # application-layer changes. True REGIONAL BY ROW geo-partitioning requires an
+  # enterprise licence and bare-metal; this single-node config is local-dev safe.
   cockroachdb:
     image: cockroachdb/cockroach:v23.1.10
-    command: start-single-node --insecure
+    command: >
+      start-single-node --insecure
+      --locality=region=local,zone=local-a
     volumes:
       - cockroach_data:/cockroach/cockroach-data
     ports:

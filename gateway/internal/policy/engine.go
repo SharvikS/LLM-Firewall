@@ -1,6 +1,7 @@
-// Package policy evaluates Cedar-style ABAC rules loaded from the database.
-// Policies are cached in memory and refreshed every 30 seconds so the
-// evaluation path never hits the DB.
+// Package policy evaluates ABAC rules using the AWS Cedar policy language SDK.
+// Policies are stored in the database as structured fields; Cedar text is
+// auto-generated at evaluation time (or loaded from the cedar_text column when
+// pre-computed). The cache is refreshed every 30 seconds.
 package policy
 
 import (
@@ -11,14 +12,16 @@ import (
 	"sync"
 	"time"
 
+	cedar "github.com/cedar-policy/cedar-go"
+	"github.com/cedar-policy/cedar-go/types"
 	"github.com/google/uuid"
 
 	"github.com/sharvik/llm-firewall/gateway/internal/logger"
 	"github.com/sharvik/llm-firewall/gateway/internal/store"
 )
 
-// Engine evaluates ABAC policies against request context data.
-// It replaces the old CedarEngine stub and is backed by the database.
+// Engine evaluates Cedar ABAC policies against request context data.
+// It caches the full policy set in memory and refreshes every 30 seconds.
 type Engine struct {
 	st      *store.Store
 	mu      sync.RWMutex
@@ -38,108 +41,189 @@ func NewEngine(st *store.Store) *Engine {
 	return e
 }
 
-// Evaluate checks the loaded policies for a match.
-// Returns (allowed, reason).
-// Decision logic:
-//  1. DENY rules win over ALLOW rules (deny-biased).
-//  2. A policy matches if principal/action/condition all match.
-//  3. No matching ALLOW policy → DENY (default-deny; Zero-Trust posture).
+// Evaluate checks Cedar policies for the given tenant/action/resource/context.
+// Decision contract (preserved from the custom DSL evaluator):
+//  1. DENY (forbid) rules win over ALLOW (permit).
+//  2. No matching permit → DENY (default-deny; Zero-Trust posture).
+//  3. Tenant scoping: only policies whose tenant matches OR global policies apply.
 func (e *Engine) Evaluate(
 	_ context.Context,
 	tenantID uuid.UUID,
 	action, resource string,
-	ctx map[string]interface{},
+	reqCtx map[string]interface{},
 ) (bool, string) {
 	e.mu.RLock()
-	policies := e.cache
+	all := e.cache
 	e.mu.RUnlock()
 
 	log := logger.Get()
-	var hasAllow bool
-	for _, p := range policies {
+
+	// Scope: keep global (nil TenantID) + this tenant's policies only.
+	scoped := make([]store.Policy, 0, len(all))
+	for _, p := range all {
 		if !p.Enabled {
 			continue
 		}
-		// Scope: global (TenantID==nil) or matches the request tenant
 		if p.TenantID != nil && *p.TenantID != tenantID {
 			continue
 		}
-		if !matchesField(p.Action, action) {
-			continue
-		}
-		if !evaluateCondition(p.Condition, ctx) {
-			continue
-		}
-		// DENY wins immediately; ALLOW is noted but deferred so a later DENY wins.
-		if p.Effect == "DENY" {
-			log.Warn("policy DENY",
-				slog.String("policy", p.Name),
-				slog.String("tenant", tenantID.String()),
-			)
-			return false, "Denied by policy: " + p.Name
-		}
-		if p.Effect == "ALLOW" {
-			hasAllow = true
-		}
+		scoped = append(scoped, p)
 	}
 
-	if hasAllow {
-		log.Info("policy ALLOW", slog.String("tenant", tenantID.String()))
+	if len(scoped) == 0 {
+		log.Warn("policy DEFAULT DENY — no policies in scope",
+			slog.String("tenant", tenantID.String()),
+			slog.String("action", action),
+		)
+		return false, "Default deny: no policies in scope"
+	}
+
+	// Build a Cedar PolicySet from scoped policies.
+	ps, err := buildPolicySet(scoped)
+	if err != nil {
+		log.Error("policy: Cedar compile error — denying (fail-closed)",
+			slog.String("error", err.Error()),
+			slog.String("tenant", tenantID.String()),
+		)
+		return false, "policy compile error: " + err.Error()
+	}
+
+	// Build Cedar Request.
+	req := types.Request{
+		Principal: types.NewEntityUID(types.EntityType("Tenant"), types.String(tenantID.String())),
+		Action:    types.NewEntityUID(types.EntityType("Action"), types.String(action)),
+		Resource:  types.NewEntityUID(types.EntityType("Resource"), types.String(resource)),
+		Context:   buildContext(reqCtx),
+	}
+
+	decision, diag := ps.IsAuthorized(types.EntityMap{}, req)
+
+	if decision == cedar.Allow {
+		log.Info("policy ALLOW",
+			slog.String("tenant", tenantID.String()),
+			slog.String("action", action),
+		)
 		return true, "allowed"
 	}
 
-	log.Warn("policy DEFAULT DENY — no matching allow policy",
+	// Collect policy names that fired a forbid.
+	var reasons []string
+	for _, r := range diag.Reasons {
+		reasons = append(reasons, string(r.PolicyID))
+	}
+	if len(reasons) > 0 {
+		msg := "Denied by policy: " + strings.Join(reasons, ", ")
+		log.Warn("policy DENY", slog.String("tenant", tenantID.String()), slog.String("reason", msg))
+		return false, msg
+	}
+
+	log.Warn("policy DEFAULT DENY — no matching permit",
 		slog.String("tenant", tenantID.String()),
 		slog.String("action", action),
 	)
 	return false, "Default deny: no matching allow policy"
 }
 
-// matchesField returns true if pattern is "*" or equals value (case-insensitive prefix).
-func matchesField(pattern, value string) bool {
-	return pattern == "*" || strings.EqualFold(pattern, value)
+// buildPolicySet compiles scoped policies into a Cedar PolicySet.
+// Uses cedar_text from the DB when available; falls back to auto-generation.
+func buildPolicySet(policies []store.Policy) (*cedar.PolicySet, error) {
+	var buf strings.Builder
+	for i, p := range policies {
+		var text string
+		if p.CedarText != nil && *p.CedarText != "" {
+			text = *p.CedarText
+		} else {
+			text = toCedarText(p)
+		}
+		// Annotate with the policy DB ID so Diagnostic.Reasons maps back to names.
+		fmt.Fprintf(&buf, "@id(%q)\n%s", p.ID.String(), text)
+		if i < len(policies)-1 {
+			buf.WriteString("\n\n")
+		}
+	}
+	return cedar.NewPolicySetFromBytes("titan", []byte(buf.String()))
 }
 
-// evaluateCondition parses and evaluates the simple condition DSL:
-//   risk_score > N   (float comparison)
-//   region == "X"    (string equality)
-//   empty condition  → always true
-func evaluateCondition(condition string, ctx map[string]interface{}) bool {
-	if condition == "" {
-		return true
+// toCedarText auto-generates a Cedar policy statement from structured fields.
+//
+// Mapping:
+//
+//	effect   ALLOW → permit, DENY → forbid
+//	principal "*"  → unbounded principal clause
+//	action   "*"  → unbounded action clause
+//	condition     → when { <condition> } block
+func toCedarText(p store.Policy) string {
+	effect := "permit"
+	if p.Effect == "DENY" {
+		effect = "forbid"
 	}
-	// risk_score > N
-	if strings.HasPrefix(condition, "risk_score >") {
-		var threshold float64
-		if _, err := parseFloat(condition, "risk_score >", &threshold); err == nil {
-			if rs, ok := ctx["risk_score"].(float64); ok {
-				return rs > threshold
-			}
-		}
+
+	principalClause := "principal"
+	if p.Principal != "" && p.Principal != "*" {
+		principalClause = fmt.Sprintf(`principal == Tenant::"%s"`, p.Principal)
 	}
-	// region == "X"
-	if strings.HasPrefix(condition, "region ==") {
-		target := strings.Trim(strings.TrimPrefix(condition, `region ==`), ` "`)
-		if r, ok := ctx["region"].(string); ok {
-			return strings.EqualFold(r, target)
-		}
+
+	actionClause := "action"
+	if p.Action != "" && p.Action != "*" {
+		actionClause = fmt.Sprintf(`action == Action::"%s"`, p.Action)
 	}
-	// model == "X"
-	if strings.HasPrefix(condition, "model ==") {
-		target := strings.Trim(strings.TrimPrefix(condition, `model ==`), ` "`)
-		if m, ok := ctx["model"].(string); ok {
-			return strings.EqualFold(m, target)
-		}
-		return false // model not in context → condition doesn't match
+
+	when := ""
+	if translated := translateCondition(p.Condition); translated != "" {
+		when = fmt.Sprintf("\nwhen {\n  %s\n}", translated)
 	}
-	// Unknown condition → false (safe default: don't block on unrecognised syntax)
-	return false
+
+	return fmt.Sprintf("%s (\n  %s,\n  %s,\n  resource\n)%s;", effect, principalClause, actionClause, when)
 }
 
-func parseFloat(s, prefix string, out *float64) (string, error) {
-	tail := strings.TrimSpace(strings.TrimPrefix(s, prefix))
-	_, err := fmt.Sscanf(tail, "%f", out)
-	return tail, err
+// translateCondition converts the simple DSL condition into Cedar syntax.
+// Supported: "risk_score > N", "region == \"X\"", "model == \"X\""
+func translateCondition(cond string) string {
+	cond = strings.TrimSpace(cond)
+	if cond == "" {
+		return ""
+	}
+	// risk_score > N  →  context.risk_score > N  (Long comparison)
+	if strings.HasPrefix(cond, "risk_score >") {
+		tail := strings.TrimSpace(strings.TrimPrefix(cond, "risk_score >"))
+		var f float64
+		if _, err := fmt.Sscanf(tail, "%f", &f); err == nil {
+			return fmt.Sprintf("context.risk_score > %d", int64(f))
+		}
+	}
+	// region == "X"  →  context.region == "X"
+	if strings.HasPrefix(cond, "region ==") {
+		tail := strings.TrimSpace(strings.TrimPrefix(cond, "region =="))
+		return "context.region == " + tail
+	}
+	// model == "X"  →  context.model == "X"
+	if strings.HasPrefix(cond, "model ==") {
+		tail := strings.TrimSpace(strings.TrimPrefix(cond, "model =="))
+		return "context.model == " + tail
+	}
+	return "" // unknown condition syntax → no when clause (safe: doesn't gate permit)
+}
+
+// buildContext converts the proxy request map into a Cedar Record.
+// float64 values (risk_score) are truncated to Long; strings are Cedar String.
+func buildContext(ctx map[string]interface{}) types.Record {
+	m := types.RecordMap{}
+	for k, v := range ctx {
+		key := types.String(k)
+		switch val := v.(type) {
+		case float64:
+			m[key] = types.Long(int64(val))
+		case string:
+			m[key] = types.String(val)
+		case int64:
+			m[key] = types.Long(val)
+		case int:
+			m[key] = types.Long(int64(val))
+		case bool:
+			m[key] = types.Boolean(val)
+		}
+	}
+	return types.NewRecord(m)
 }
 
 func (e *Engine) reload(ctx context.Context) error {

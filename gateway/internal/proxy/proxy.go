@@ -190,6 +190,16 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	isStream := cache.IsStreaming(body)
 	cacheKey := p.cache.Key(tenantID.String(), r.URL.Path, body)
 
+	// Resolve request region from Cloudflare or a custom header early so every
+	// audit event carries it regardless of where in the pipeline the request exits.
+	region := r.Header.Get("CF-IPCountry")
+	if region == "" {
+		region = r.Header.Get("X-Region")
+	}
+	if region == "" {
+		region = "unknown"
+	}
+
 	metrics.Global.TotalRequests.Add(1)
 	metrics.HourlyTraffic.Record(false)
 
@@ -212,7 +222,7 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.writeError(w, http.StatusTooManyRequests, "rate_limit_exceeded",
 			fmt.Sprintf("Rate limit of %d rpm exceeded. Retry later.", rl.Limit))
 		p.enqueueAudit(reqID, tenantID, apiKeyID, "RATE_LIMITED", 0, r.URL.Path,
-			http.StatusTooManyRequests, time.Since(start).Milliseconds(), "RPM rate limit exceeded")
+			http.StatusTooManyRequests, time.Since(start).Milliseconds(), "RPM rate limit exceeded", region)
 		p.emitKafka(reqID, tenantName, "RATE_LIMITED", 0, http.StatusTooManyRequests, time.Since(start).Milliseconds())
 		return
 	}
@@ -235,7 +245,7 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			p.writeError(w, http.StatusTooManyRequests, "rate_limit_exceeded",
 				fmt.Sprintf("Token limit of %d tokens/min exceeded. Retry later.", tpm.Limit))
 			p.enqueueAudit(reqID, tenantID, apiKeyID, "RATE_LIMITED", 0, r.URL.Path,
-				http.StatusTooManyRequests, time.Since(start).Milliseconds(), "TPM token limit exceeded")
+				http.StatusTooManyRequests, time.Since(start).Milliseconds(), "TPM token limit exceeded", region)
 			p.emitKafka(reqID, tenantName, "RATE_LIMITED", 0, http.StatusTooManyRequests, time.Since(start).Milliseconds())
 			return
 		}
@@ -260,7 +270,7 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Titan-Decision", "BLOCK")
 		p.writeError(w, http.StatusForbidden, "policy_violation", analysis.Reason)
 		p.enqueueAudit(reqID, tenantID, apiKeyID, "ML_BLOCKED", float64(analysis.RiskScore), r.URL.Path,
-			http.StatusForbidden, time.Since(start).Milliseconds(), analysis.Reason)
+			http.StatusForbidden, time.Since(start).Milliseconds(), analysis.Reason, region)
 		p.emitKafka(reqID, tenantName, "ML_BLOCKED", float64(analysis.RiskScore), http.StatusForbidden, time.Since(start).Milliseconds())
 		return
 
@@ -284,14 +294,6 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r = r.WithContext(context.WithValue(r.Context(), reqBodyKey{}, body))
 
 	// Stage 5: Policy gate.
-	// Resolve request region from Cloudflare or a custom header; never hardcode.
-	region := r.Header.Get("CF-IPCountry")
-	if region == "" {
-		region = r.Header.Get("X-Region")
-	}
-	if region == "" {
-		region = "unknown"
-	}
 	ctxData := map[string]interface{}{
 		"risk_score": float64(analysis.RiskScore),
 		"region":     region,
@@ -304,7 +306,7 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.pushEvent(reqID, tenantName, "CEDAR_BLOCKED", float64(analysis.RiskScore), r.URL.Path, reason)
 		p.writeError(w, http.StatusForbidden, "policy_violation", reason)
 		p.enqueueAudit(reqID, tenantID, apiKeyID, "CEDAR_BLOCKED", float64(analysis.RiskScore), r.URL.Path,
-			http.StatusForbidden, time.Since(start).Milliseconds(), reason)
+			http.StatusForbidden, time.Since(start).Milliseconds(), reason, region)
 		p.emitKafka(reqID, tenantName, "CEDAR_BLOCKED", float64(analysis.RiskScore), http.StatusForbidden, time.Since(start).Milliseconds())
 		return
 	}
@@ -314,14 +316,14 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		riskF := float64(analysis.RiskScore)
 		if entry, hit, _ := p.cache.Get(r.Context(), cacheKey); hit {
 			log.Info("cache HIT (exact)")
-			p.serveCachedEntry(w, r, entry, "HIT", reqID, tenantName, tenantID, apiKeyID, riskF, start)
+			p.serveCachedEntry(w, r, entry, "HIT", reqID, tenantName, tenantID, apiKeyID, riskF, start, region)
 			return
 		}
 		// Semantic cache: vector similarity search in Qdrant.
 		if p.semanticCache != nil {
 			if entry, hit := p.semanticCache.Get(r.Context(), body); hit {
 				log.Info("cache HIT (semantic)")
-				p.serveCachedEntry(w, r, entry, "SEMANTIC-HIT", reqID, tenantName, tenantID, apiKeyID, riskF, start)
+				p.serveCachedEntry(w, r, entry, "SEMANTIC-HIT", reqID, tenantName, tenantID, apiKeyID, riskF, start, region)
 				return
 			}
 		}
@@ -359,7 +361,7 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	metrics.Latency.Record(latencyMs)
 	p.pushEvent(reqID, tenantName, "ALLOWED", float64(analysis.RiskScore), r.URL.Path, "")
 	p.enqueueAudit(reqID, tenantID, apiKeyID, "ALLOWED", float64(analysis.RiskScore), r.URL.Path,
-		http.StatusOK, latencyMs, "")
+		http.StatusOK, latencyMs, "", region)
 	p.emitKafka(reqID, tenantName, "ALLOWED", float64(analysis.RiskScore), http.StatusOK, latencyMs)
 }
 
@@ -415,7 +417,7 @@ func (p *LLMProxy) pushEvent(reqID, tenantName, action string, risk float64, pat
 }
 
 func (p *LLMProxy) enqueueAudit(reqID string, tenantID, apiKeyID uuid.UUID, action string,
-	risk float64, path string, status int, latencyMs int64, reason string) {
+	risk float64, path string, status int, latencyMs int64, reason, region string) {
 	if p.st == nil {
 		return
 	}
@@ -437,6 +439,7 @@ func (p *LLMProxy) enqueueAudit(reqID string, tenantID, apiKeyID uuid.UUID, acti
 		LatencyMs:  latencyMs,
 		StatusCode: status,
 		Reason:     reason,
+		Region:     region,
 	})
 }
 
@@ -472,6 +475,7 @@ func (p *LLMProxy) serveCachedEntry(
 	reqID, tenantName string, tenantID, apiKeyID uuid.UUID,
 	riskScore float64,
 	start time.Time,
+	region string,
 ) {
 	latencyMs := time.Since(start).Milliseconds()
 	metrics.Global.CacheHits.Add(1)
@@ -485,7 +489,7 @@ func (p *LLMProxy) serveCachedEntry(
 	w.WriteHeader(entry.StatusCode)
 	w.Write(entry.Body) //nolint:errcheck
 	p.enqueueAudit(reqID, tenantID, apiKeyID, "CACHE_HIT", riskScore, r.URL.Path,
-		entry.StatusCode, latencyMs, xCacheVal)
+		entry.StatusCode, latencyMs, xCacheVal, region)
 	p.emitKafka(reqID, tenantName, "CACHE_HIT", riskScore, entry.StatusCode, latencyMs)
 }
 

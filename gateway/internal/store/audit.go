@@ -22,6 +22,7 @@ type AuditRow struct {
 	LatencyMs  int64
 	StatusCode int
 	Reason     string
+	Region     string
 }
 
 // EnqueueAudit pushes a row onto the background write queue.
@@ -47,8 +48,9 @@ func (s *Store) ListAuditEvents(ctx context.Context, tenantID *uuid.UUID, limit,
 		rows  interface{ Scan(...any) error }
 	)
 
+	const cols = `id,request_id,tenant_id,api_key_id,action,risk_score,path,latency_ms,status_code,reason,region,created_at`
 	countQ := `SELECT COUNT(*) FROM audit_events`
-	listQ  := `SELECT id,request_id,tenant_id,api_key_id,action,risk_score,path,latency_ms,status_code,reason,created_at FROM audit_events`
+	listQ  := `SELECT ` + cols + ` FROM audit_events`
 	args   := []any{}
 	if tenantID != nil {
 		countQ += ` WHERE tenant_id=$1`
@@ -75,8 +77,11 @@ func (s *Store) ListAuditEvents(ctx context.Context, tenantID *uuid.UUID, limit,
 	var out []AuditEventRow
 	for pgRows.Next() {
 		var e AuditEventRow
-		err := pgRows.Scan(&e.ID, &e.RequestID, &e.TenantID, &e.APIKeyID, &e.Action,
-			&e.RiskScore, &e.Path, &e.LatencyMs, &e.StatusCode, &e.Reason, &e.CreatedAt)
+		err := pgRows.Scan(
+			&e.ID, &e.RequestID, &e.TenantID, &e.APIKeyID, &e.Action,
+			&e.RiskScore, &e.Path, &e.LatencyMs, &e.StatusCode, &e.Reason,
+			&e.Region, &e.CreatedAt,
+		)
 		if err != nil {
 			return nil, total, err
 		}
@@ -98,6 +103,7 @@ type AuditEventRow struct {
 	LatencyMs  *int64     `json:"latency_ms"`
 	StatusCode *int       `json:"status_code"`
 	Reason     *string    `json:"reason"`
+	Region     string     `json:"region"`
 	CreatedAt  time.Time  `json:"created_at"`
 }
 
@@ -141,21 +147,23 @@ func (s *Store) auditBatchWriter() {
 
 // insertAuditBatch writes all rows in a single network round-trip using
 // pgx.SendBatch (PostgreSQL pipelined extended query protocol).
-// This replaces the previous N×(BEGIN + INSERT + COMMIT) pattern with
-// a single pipeline flush — one TCP round-trip for any batch size.
 func (s *Store) insertAuditBatch(ctx context.Context, rows []AuditRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
 	const q = `INSERT INTO audit_events
-		(request_id,tenant_id,api_key_id,action,risk_score,path,latency_ms,status_code,reason)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`
+		(request_id,tenant_id,api_key_id,action,risk_score,path,latency_ms,status_code,reason,region)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`
 
 	batch := &pgx.Batch{}
 	for _, r := range rows {
+		region := r.Region
+		if region == "" {
+			region = "unknown"
+		}
 		batch.Queue(q,
 			r.RequestID, r.TenantID, r.APIKeyID, r.Action, r.RiskScore,
-			r.Path, r.LatencyMs, r.StatusCode, r.Reason,
+			r.Path, r.LatencyMs, r.StatusCode, r.Reason, region,
 		)
 	}
 	results := s.pool.SendBatch(ctx, batch)
