@@ -2,17 +2,16 @@ package store
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-
-	"github.com/sharvik/llm-firewall/gateway/internal/logger"
 )
 
-// AuditRow is the struct written to the audit_events table.
+// AuditRow is the write-side DTO for a single audit event. EventID maps to the
+// Kafka AuditEvent.EventID and is used for idempotent consumer inserts.
 type AuditRow struct {
+	EventID    string
 	RequestID  string
 	TenantID   *uuid.UUID
 	APIKeyID   *uuid.UUID
@@ -23,22 +22,6 @@ type AuditRow struct {
 	StatusCode int
 	Reason     string
 	Region     string
-}
-
-// EnqueueAudit pushes a row onto the background write queue.
-// Applies backpressure: blocks for up to 50ms before discarding so brief
-// congestion drains without stalling the proxy. A discard is logged at ERROR
-// (not WARN) to trigger alerting — it indicates the batch writer is stalled,
-// usually because the database is unavailable.
-func (s *Store) EnqueueAudit(row AuditRow) {
-	select {
-	case s.auditQueue <- row:
-	case <-time.After(50 * time.Millisecond):
-		logger.Get().Error("audit queue saturated — row dropped; DB batch writer may be stalled",
-			slog.String("request_id", row.RequestID),
-			slog.String("action", row.Action),
-		)
-	}
 }
 
 // ListAuditEvents returns paginated audit events newest-first.
@@ -107,53 +90,17 @@ type AuditEventRow struct {
 	CreatedAt  time.Time  `json:"created_at"`
 }
 
-// auditBatchWriter drains auditQueue in micro-batches of up to 50 rows or
-// every 500ms, whichever comes first.  Off the hot path entirely.
-func (s *Store) auditBatchWriter() {
-	const batchSize = 50
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-
-	batch := make([]AuditRow, 0, batchSize)
-
-	flush := func() {
-		if len(batch) == 0 {
-			return
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := s.insertAuditBatch(ctx, batch); err != nil {
-			logger.Get().Error("audit batch write failed", slog.String("error", err.Error()))
-		}
-		batch = batch[:0]
-	}
-
-	for {
-		select {
-		case row, ok := <-s.auditQueue:
-			if !ok {
-				flush()
-				return
-			}
-			batch = append(batch, row)
-			if len(batch) >= batchSize {
-				flush()
-			}
-		case <-ticker.C:
-			flush()
-		}
-	}
-}
-
-// insertAuditBatch writes all rows in a single network round-trip using
+// InsertAuditBatch writes all rows in a single network round-trip using
 // pgx.SendBatch (PostgreSQL pipelined extended query protocol).
-func (s *Store) insertAuditBatch(ctx context.Context, rows []AuditRow) error {
+// ON CONFLICT DO NOTHING makes inserts idempotent — safe for Kafka at-least-once redelivery.
+func (s *Store) InsertAuditBatch(ctx context.Context, rows []AuditRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
 	const q = `INSERT INTO audit_events
-		(request_id,tenant_id,api_key_id,action,risk_score,path,latency_ms,status_code,reason,region)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`
+		(event_id,request_id,tenant_id,api_key_id,action,risk_score,path,latency_ms,status_code,reason,region)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		ON CONFLICT DO NOTHING`
 
 	batch := &pgx.Batch{}
 	for _, r := range rows {
@@ -161,8 +108,13 @@ func (s *Store) insertAuditBatch(ctx context.Context, rows []AuditRow) error {
 		if region == "" {
 			region = "unknown"
 		}
+		var eventID *string
+		if r.EventID != "" {
+			s := r.EventID
+			eventID = &s
+		}
 		batch.Queue(q,
-			r.RequestID, r.TenantID, r.APIKeyID, r.Action, r.RiskScore,
+			eventID, r.RequestID, r.TenantID, r.APIKeyID, r.Action, r.RiskScore,
 			r.Path, r.LatencyMs, r.StatusCode, r.Reason, region,
 		)
 	}

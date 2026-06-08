@@ -3,16 +3,10 @@ package store
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 )
 
-// waitForBatchFlush sleeps slightly longer than the 500ms batch flush interval.
-func waitForBatchFlush(t *testing.T) {
-	t.Helper()
-	time.Sleep(650 * time.Millisecond)
-}
 
 // ── HashKey ───────────────────────────────────────────────────────────────────
 
@@ -180,16 +174,17 @@ func TestIdempotentMigrations(t *testing.T) {
 	}
 }
 
-func TestAuditEnqueueAndBatchWrite(t *testing.T) {
+func TestInsertAuditBatch(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
 
 	tenant, _ := st.CreateTenant(ctx, "audit-tenant", "standard", 60)
 	tid := tenant.ID
 
-	// Enqueue 5 rows — they land in the buffered channel.
-	for i := 0; i < 5; i++ {
-		st.EnqueueAudit(AuditRow{
+	rows := make([]AuditRow, 5)
+	for i := range rows {
+		rows[i] = AuditRow{
+			EventID:    uuid.New().String(),
 			RequestID:  uuid.New().String(),
 			TenantID:   &tid,
 			Action:     "ALLOWED",
@@ -197,18 +192,56 @@ func TestAuditEnqueueAndBatchWrite(t *testing.T) {
 			Path:       "/v1/chat/completions",
 			LatencyMs:  int64(i * 10),
 			StatusCode: 200,
-		})
+			Region:     "US",
+		}
 	}
 
-	// The batch writer flushes every 500ms. Wait long enough for one flush cycle.
-	// Do NOT close the store here — openTestStore registered a Cleanup that does it.
-	waitForBatchFlush(t)
+	if err := st.InsertAuditBatch(ctx, rows); err != nil {
+		t.Fatalf("InsertAuditBatch: %v", err)
+	}
 
 	_, total, err := st.ListAuditEvents(ctx, &tid, 20, 0)
 	if err != nil {
 		t.Fatalf("ListAuditEvents: %v", err)
 	}
 	if total < 5 {
-		t.Errorf("audit_events count = %d; want >= 5 (batch writer may not have flushed)", total)
+		t.Errorf("audit_events count = %d; want >= 5", total)
+	}
+}
+
+func TestInsertAuditBatch_Idempotent(t *testing.T) {
+	st := openTestStore(t)
+	ctx := context.Background()
+
+	tenant, _ := st.CreateTenant(ctx, "audit-idempotent", "standard", 60)
+	tid := tenant.ID
+	eventID := uuid.New().String()
+
+	row := AuditRow{
+		EventID:    eventID,
+		RequestID:  uuid.New().String(),
+		TenantID:   &tid,
+		Action:     "ALLOWED",
+		RiskScore:  5.0,
+		Path:       "/v1/chat/completions",
+		LatencyMs:  100,
+		StatusCode: 200,
+		Region:     "EU",
+	}
+
+	// Insert twice — simulates Kafka redelivery.
+	if err := st.InsertAuditBatch(ctx, []AuditRow{row}); err != nil {
+		t.Fatalf("first insert: %v", err)
+	}
+	if err := st.InsertAuditBatch(ctx, []AuditRow{row}); err != nil {
+		t.Fatalf("second insert (should be idempotent): %v", err)
+	}
+
+	_, total, err := st.ListAuditEvents(ctx, &tid, 20, 0)
+	if err != nil {
+		t.Fatalf("ListAuditEvents: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("got %d rows; want exactly 1 (duplicate must be ignored)", total)
 	}
 }

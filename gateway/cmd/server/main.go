@@ -80,12 +80,44 @@ func main() {
 	}
 
 	// ── Kafka Producer ────────────────────────────────────────────────────────
-	producer, err := events.NewProducer(cfg.KafkaBrokers)
-	if err != nil {
-		log.Warn("Kafka producer unavailable — audit streaming disabled",
-			slog.String("error", err.Error()))
-	} else {
-		defer producer.Close()
+	var producer *events.EventProducer
+	if len(cfg.KafkaBrokers) > 0 {
+		producer, err = events.NewProducer(cfg.KafkaBrokers)
+		if err != nil {
+			log.Warn("Kafka producer unavailable — audit events will be dropped",
+				slog.String("error", err.Error()))
+		} else {
+			defer producer.Close()
+		}
+	}
+
+	// ── Kafka Consumer (audit durability) ─────────────────────────────────────
+	// The consumer owns the Kafka→DB write path. It is only started when a
+	// producer is available (same brokers). Shutdown sequence: cancel context
+	// so the poll loop exits, then close the client for a graceful group leave,
+	// then wait for the goroutine to return before the DB pool is closed.
+	consumerCtx, cancelConsumer := context.WithCancel(context.Background())
+	consumerDone := make(chan struct{})
+	close(consumerDone) // default: already done (no-op wait if consumer not started)
+	defer cancelConsumer()
+
+	if producer != nil {
+		consumer, consErr := events.NewConsumer(cfg.KafkaBrokers, st)
+		if consErr != nil {
+			log.Warn("Kafka consumer unavailable — audit DB persistence disabled",
+				slog.String("error", consErr.Error()))
+		} else {
+			consumerDone = make(chan struct{})
+			go func() {
+				defer close(consumerDone)
+				consumer.Start(consumerCtx)
+			}()
+			defer func() {
+				cancelConsumer()
+				consumer.Close()
+				<-consumerDone
+			}()
+		}
 	}
 
 	// ── ML Analyzer gRPC Client ───────────────────────────────────────────────

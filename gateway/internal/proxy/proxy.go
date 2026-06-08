@@ -221,9 +221,8 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.pushEvent(reqID, tenantName, "RATE_LIMITED", 0, r.URL.Path, "RPM rate limit exceeded")
 		p.writeError(w, http.StatusTooManyRequests, "rate_limit_exceeded",
 			fmt.Sprintf("Rate limit of %d rpm exceeded. Retry later.", rl.Limit))
-		p.enqueueAudit(reqID, tenantID, apiKeyID, "RATE_LIMITED", 0, r.URL.Path,
+		p.emitKafka(reqID, tenantID, apiKeyID, "RATE_LIMITED", 0, r.URL.Path,
 			http.StatusTooManyRequests, time.Since(start).Milliseconds(), "RPM rate limit exceeded", region)
-		p.emitKafka(reqID, tenantName, "RATE_LIMITED", 0, http.StatusTooManyRequests, time.Since(start).Milliseconds())
 		return
 	}
 
@@ -244,9 +243,8 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			p.pushEvent(reqID, tenantName, "RATE_LIMITED", 0, r.URL.Path, "TPM token limit exceeded")
 			p.writeError(w, http.StatusTooManyRequests, "rate_limit_exceeded",
 				fmt.Sprintf("Token limit of %d tokens/min exceeded. Retry later.", tpm.Limit))
-			p.enqueueAudit(reqID, tenantID, apiKeyID, "RATE_LIMITED", 0, r.URL.Path,
+			p.emitKafka(reqID, tenantID, apiKeyID, "RATE_LIMITED", 0, r.URL.Path,
 				http.StatusTooManyRequests, time.Since(start).Milliseconds(), "TPM token limit exceeded", region)
-			p.emitKafka(reqID, tenantName, "RATE_LIMITED", 0, http.StatusTooManyRequests, time.Since(start).Milliseconds())
 			return
 		}
 		if tpmErr == nil {
@@ -269,9 +267,8 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.pushEvent(reqID, tenantName, "ML_BLOCKED", float64(analysis.RiskScore), r.URL.Path, analysis.Reason)
 		w.Header().Set("X-Titan-Decision", "BLOCK")
 		p.writeError(w, http.StatusForbidden, "policy_violation", analysis.Reason)
-		p.enqueueAudit(reqID, tenantID, apiKeyID, "ML_BLOCKED", float64(analysis.RiskScore), r.URL.Path,
+		p.emitKafka(reqID, tenantID, apiKeyID, "ML_BLOCKED", float64(analysis.RiskScore), r.URL.Path,
 			http.StatusForbidden, time.Since(start).Milliseconds(), analysis.Reason, region)
-		p.emitKafka(reqID, tenantName, "ML_BLOCKED", float64(analysis.RiskScore), http.StatusForbidden, time.Since(start).Milliseconds())
 		return
 
 	case analyzer.ActionMask:
@@ -305,9 +302,8 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		metrics.HourlyTraffic.Record(true)
 		p.pushEvent(reqID, tenantName, "CEDAR_BLOCKED", float64(analysis.RiskScore), r.URL.Path, reason)
 		p.writeError(w, http.StatusForbidden, "policy_violation", reason)
-		p.enqueueAudit(reqID, tenantID, apiKeyID, "CEDAR_BLOCKED", float64(analysis.RiskScore), r.URL.Path,
+		p.emitKafka(reqID, tenantID, apiKeyID, "CEDAR_BLOCKED", float64(analysis.RiskScore), r.URL.Path,
 			http.StatusForbidden, time.Since(start).Milliseconds(), reason, region)
-		p.emitKafka(reqID, tenantName, "CEDAR_BLOCKED", float64(analysis.RiskScore), http.StatusForbidden, time.Since(start).Milliseconds())
 		return
 	}
 
@@ -360,9 +356,8 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	metrics.Global.AllowedRequests.Add(1)
 	metrics.Latency.Record(latencyMs)
 	p.pushEvent(reqID, tenantName, "ALLOWED", float64(analysis.RiskScore), r.URL.Path, "")
-	p.enqueueAudit(reqID, tenantID, apiKeyID, "ALLOWED", float64(analysis.RiskScore), r.URL.Path,
+	p.emitKafka(reqID, tenantID, apiKeyID, "ALLOWED", float64(analysis.RiskScore), r.URL.Path,
 		http.StatusOK, latencyMs, "", region)
-	p.emitKafka(reqID, tenantName, "ALLOWED", float64(analysis.RiskScore), http.StatusOK, latencyMs)
 }
 
 // inspectPayload reads body once, enforces structural invariants, restores r.Body.
@@ -416,41 +411,32 @@ func (p *LLMProxy) pushEvent(reqID, tenantName, action string, risk float64, pat
 	})
 }
 
-func (p *LLMProxy) enqueueAudit(reqID string, tenantID, apiKeyID uuid.UUID, action string,
-	risk float64, path string, status int, latencyMs int64, reason, region string) {
-	if p.st == nil {
-		return
-	}
-	tid := &tenantID
-	kid := &apiKeyID
-	if tenantID == uuid.Nil {
-		tid = nil
-	}
-	if apiKeyID == uuid.Nil {
-		kid = nil
-	}
-	p.st.EnqueueAudit(store.AuditRow{
-		RequestID:  reqID,
-		TenantID:   tid,
-		APIKeyID:   kid,
-		Action:     action,
-		RiskScore:  risk,
-		Path:       path,
-		LatencyMs:  latencyMs,
-		StatusCode: status,
-		Reason:     reason,
-		Region:     region,
-	})
-}
-
-func (p *LLMProxy) emitKafka(reqID, tenantID, action string, risk float64, statusCode int, latencyMs int64) {
+// emitKafka is the single write path for audit events. It replaces the old
+// enqueueAudit + emitKafka pair: the Kafka consumer owns the DB write, so the
+// request path only needs to fire-and-forget to Kafka. tenantID and apiKeyID
+// are the real UUIDs (not display names), fixing the prior tenantName bug.
+func (p *LLMProxy) emitKafka(
+	reqID string,
+	tenantID, apiKeyID uuid.UUID,
+	action string,
+	risk float64,
+	path string,
+	statusCode int,
+	latencyMs int64,
+	reason, region string,
+) {
 	if p.producer == nil {
 		return
+	}
+	apiKeyStr := ""
+	if apiKeyID != uuid.Nil {
+		apiKeyStr = apiKeyID.String()
 	}
 	event := events.AuditEvent{
 		EventID:    uuid.New().String(),
 		RequestID:  reqID,
-		TenantID:   tenantID,
+		TenantID:   tenantID.String(),
+		APIKeyID:   apiKeyStr,
 		Action:     action,
 		RiskScore:  risk,
 		Provider:   "Groq",
@@ -458,12 +444,13 @@ func (p *LLMProxy) emitKafka(reqID, tenantID, action string, risk float64, statu
 		Prompt:     "[REDACTED]",
 		StatusCode: statusCode,
 		LatencyMs:  latencyMs,
+		Path:       path,
+		Reason:     reason,
+		Region:     region,
 		Timestamp:  time.Now().UTC(),
 	}
 	// Pass context.Background() so the async Kafka produce callback is not
-	// aborted when this function returns. Franz-go manages its own retries
-	// and delivery timeouts internally; binding it to a 2s function-scoped
-	// context guaranteed the in-flight batch was canceled before it flushed.
+	// aborted when this function returns.
 	p.producer.EmitAudit(context.Background(), event)
 }
 
@@ -488,9 +475,8 @@ func (p *LLMProxy) serveCachedEntry(
 	}
 	w.WriteHeader(entry.StatusCode)
 	w.Write(entry.Body) //nolint:errcheck
-	p.enqueueAudit(reqID, tenantID, apiKeyID, "CACHE_HIT", riskScore, r.URL.Path,
+	p.emitKafka(reqID, tenantID, apiKeyID, "CACHE_HIT", riskScore, r.URL.Path,
 		entry.StatusCode, latencyMs, xCacheVal, region)
-	p.emitKafka(reqID, tenantName, "CACHE_HIT", riskScore, entry.StatusCode, latencyMs)
 }
 
 // estimateTokens approximates the number of tokens in an OpenAI-format request

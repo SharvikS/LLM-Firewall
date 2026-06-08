@@ -23,7 +23,6 @@ var sqlFS embed.FS
 // Store wraps the pgxpool and exposes typed repository methods for every table.
 type Store struct {
 	pool          *pgxpool.Pool
-	auditQueue    chan AuditRow  // buffered → background batch writer (audit_events)
 	keyTouchQueue chan uuid.UUID // buffered → background batch writer (api_keys stats)
 }
 
@@ -50,14 +49,12 @@ func New(ctx context.Context, connString string) (*Store, error) {
 
 	s := &Store{
 		pool:          pool,
-		auditQueue:    make(chan AuditRow, 4096),
 		keyTouchQueue: make(chan uuid.UUID, 2048),
 	}
 	if err := s.migrate(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("store: migrate: %w", err)
 	}
-	go s.auditBatchWriter()
 	go s.keyTouchWriter()
 
 	logger.Get().Info("store: connected and migrated")
@@ -65,7 +62,6 @@ func New(ctx context.Context, connString string) (*Store, error) {
 }
 
 func (s *Store) Close() {
-	close(s.auditQueue)
 	close(s.keyTouchQueue)
 	s.pool.Close()
 	logger.Get().Info("store: pool closed")

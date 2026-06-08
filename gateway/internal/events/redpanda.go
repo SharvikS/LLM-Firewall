@@ -13,18 +13,22 @@ import (
 
 // AuditEvent is the canonical audit record written to the "audit_logs" Kafka
 // topic. Every field must be present so downstream consumers (ClickHouse,
-// Grafana) can build accurate analytics without schema gymnastics.
+// Grafana, DB) can build accurate analytics without schema gymnastics.
 type AuditEvent struct {
 	EventID    string    `json:"event_id"`
 	RequestID  string    `json:"request_id"`
-	TenantID   string    `json:"tenant_id"`
-	Action     string    `json:"action"`     // "ALLOWED" | "BLOCKED"
+	TenantID   string    `json:"tenant_id"`  // UUID string of the tenant
+	APIKeyID   string    `json:"api_key_id"` // UUID string; empty when not applicable
+	Action     string    `json:"action"`     // "ALLOWED" | "ML_BLOCKED" | "CEDAR_BLOCKED" | etc.
 	RiskScore  float64   `json:"risk_score"`
 	Provider   string    `json:"provider"`
 	Model      string    `json:"model"`
 	Prompt     string    `json:"prompt"`
 	StatusCode int       `json:"status_code"`
 	LatencyMs  int64     `json:"latency_ms"`
+	Path       string    `json:"path"`
+	Reason     string    `json:"reason"`
+	Region     string    `json:"region"`
 	Timestamp  time.Time `json:"timestamp"`
 }
 
@@ -33,7 +37,10 @@ type EventProducer struct {
 }
 
 func NewProducer(brokers []string) (*EventProducer, error) {
-	cl, err := kgo.NewClient(kgo.SeedBrokers(brokers...))
+	cl, err := kgo.NewClient(
+		kgo.SeedBrokers(brokers...),
+		kgo.RequiredAcks(kgo.AllISRAcks()),
+	)
 	if err != nil {
 		return nil, err
 	}
