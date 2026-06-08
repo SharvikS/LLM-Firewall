@@ -123,11 +123,11 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
 │  │  Qdrant   │   │   Python ML Engine  —  gRPC  :50051  │               │
 │  │           │   │                                      │               │
 │  │ Semantic  │   │  ┌─────────────────────────────────┐ │               │
-│  │ Vector    │   │  │  Injection & Jailbreak Detector  │ │              │
+│  │ Vector    │   │  │  Injection & Jailbreak Detector │ │               │
 │  │ Cache     │   │  │  (regex + DeBERTa transformer)  │ │               │
 │  │ :6334     │   │  └─────────────────────────────────┘ │               │
 │  └───────────┘   │  ┌─────────────────────────────────┐ │               │
-│                  │  │  PII Masker (Presidio + spaCy)   │ │              │
+│                  │  │  PII Masker (Presidio + spaCy)  │ │               │
 │                  │  └─────────────────────────────────┘ │               │
 │                  │  ┌─────────────────────────────────┐ │               │
 │                  │  │  Embedding Service (MiniLM-L6)   │ │              │
