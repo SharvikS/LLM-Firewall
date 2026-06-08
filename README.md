@@ -33,7 +33,8 @@ A drop-in reverse proxy for OpenAI, Anthropic, Groq, and local LLMs — with sub
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [Features](#features)
-- [Dashboard Screenshots](#dashboard-screenshots)
+- [Security Hardening](#security-hardening)
+- [Dashboard](#dashboard)
 - [Quick Start](#quick-start)
 - [Drop-in Integration](#drop-in-integration)
 - [Configuration Reference](#configuration-reference)
@@ -69,7 +70,7 @@ Client Request
 [4] ML Analysis (gRPC)         ─ Injection detector + PII scanner (150ms timeout)
     │
     ▼
-[5] Policy Engine              ─ Rule evaluation: ALLOW / DENY / LOG
+[5] Policy Engine              ─ Cedar-style ABAC: ALLOW / DENY / LOG (default-deny)
     │
     ▼
 [6] LLM Proxy + Failover       ─ Primary → fallback with transparent retry
@@ -130,7 +131,7 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
 │                  │  └─────────────────────────────────┘ │               │
 │                  │  ┌─────────────────────────────────┐ │               │
 │                  │  │  Embedding Service (MiniLM-L6)   │ │              │
-│                  │  │  HTTP :8001 — for semantic cache │ │              │
+│                  │  │  ThreadingHTTPServer :8001       │ │              │
 │                  │  └─────────────────────────────────┘ │               │
 │                  └──────────────────────────────────────┘               │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -142,7 +143,7 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
 |-----------|----------|------|-----------------|
 | **API Gateway** | Go 1.21 | Data plane — intercepts all LLM traffic | `go-chi`, `pgx`, `redis-go`, `franz-go` |
 | **ML Engine** | Python 3.10 | Intelligence plane — threat analysis via gRPC | `transformers`, `presidio`, `spaCy`, `gRPC` |
-| **Dashboard** | Next.js 16 | Control plane — management UI | `React 19`, `Recharts`, `Framer Motion` |
+| **Dashboard** | Next.js 16 | Control plane — management UI | `React 19`, `Recharts 3`, `Framer Motion 12` |
 | **CockroachDB** | SQL | Persistent store — tenants, keys, policies, audit | Postgres-wire compatible |
 | **Redis** | In-memory | Rate limiting, exact cache, metrics buffer | Lua scripts for atomic operations |
 | **Qdrant** | Vector DB | Semantic cache — cosine similarity lookups | gRPC + HTTP REST |
@@ -156,11 +157,13 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
 
 **Prompt Injection & Jailbreak Detection** — A two-layer defense: instant regex matching against 12 known attack signatures (DAN, goal hijacking, system override), followed by a HuggingFace `protectai/deberta-v3-base-injection` transformer model with a TF-IDF fallback — all within a 150ms gRPC timeout.
 
-**PII & Credential Detection** — Microsoft Presidio detects and masks 11 entity types before any data leaves your network: `CREDIT_CARD`, `EMAIL_ADDRESS`, `IBAN`, `IP_ADDRESS`, `PERSON`, `PHONE_NUMBER`, `US_SSN`, `US_BANK_NUMBER`, `US_DRIVER_LICENSE`, `US_ITIN`, `US_PASSPORT`. spaCy NER handles context-aware person and location extraction.
+**Per-message PII Masking** — Microsoft Presidio detects and masks 11 entity types **independently per message** in multi-turn conversations before any data leaves your network: `CREDIT_CARD`, `EMAIL_ADDRESS`, `IBAN`, `IP_ADDRESS`, `PERSON`, `PHONE_NUMBER`, `US_SSN`, `US_BANK_NUMBER`, `US_DRIVER_LICENSE`, `US_ITIN`, `US_PASSPORT`. spaCy NER handles context-aware extraction. Each message is scanned in isolation — masking in one turn never corrupts adjacent turns.
 
-**Toxicity & Hate Speech Blocking** — Configurable via policy rules; blocks or monitors requests containing harmful content before they reach customer-facing models.
+**Sandbox Tool Execution Safety** — The analyzer's tool execution dispatcher uses an explicit two-tier allowlist. Shell execution tools (`bash`, `python`, `exec`, `subprocess`, etc.) are routed to an isolated sandbox. Unknown tool names are denied by default — the system never fails open to uncontrolled execution.
 
-**Source Code Leak Prevention** — Policy rules block proprietary code from being sent to public LLM providers.
+**OOM Defense** — `http.MaxBytesReader` caps request body ingestion at a configurable limit (default 4 MB) before `io.ReadAll` — preventing memory exhaustion on malformed or oversized payloads.
+
+**Default-Deny Policy Engine** — If no policy rule produces an explicit ALLOW, the gateway returns a 403 DENY. There is no implicit allow fallthrough. The policy engine logs a startup warning if no policies are loaded.
 
 ### Governance & Compliance
 
@@ -168,9 +171,9 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
 
 **Multi-Tenant Architecture** — True tenant isolation with scoped API keys. Each key is bound to a tenant, tracked for last-use, and revocable without downtime.
 
-**API Key Lifecycle** — Generate cryptographically random keys (`gf_sec_` prefix), list with metadata, copy-to-clipboard, and instant revocation. Last-used timestamps update via a deduplicated background writer.
+**API Key Lifecycle** — Generate cryptographically random keys (`titan_` prefix + 64 hex chars), list with metadata, copy-to-clipboard, and instant revocation. Prefixes use 14 characters (`titan_` + 8 random hex = ~4.3 billion unique display values). Last-used timestamps update via a deduplicated background writer that survives transient DB errors.
 
-**Complete Audit Trail** — Every request and response is logged with `tenant_id`, `request_id`, `action`, `risk_score`, `latency_ms`, `ip_address`, and `timestamp`. Logs stream to Kafka asynchronously — zero latency impact on the proxy path.
+**Complete Audit Trail** — Every request and response is logged with `tenant_id`, `request_id`, `action`, `risk_score`, `latency_ms`, and `timestamp`. Logs stream to Kafka asynchronously via `context.Background()` — the audit producer context is never cancelled by the proxy returning. The queue applies 50ms backpressure before dropping, and drops are logged at ERROR level.
 
 ### Performance & Operations
 
@@ -180,11 +183,13 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
 
 **Redis Sliding-Window Rate Limiting** — Atomic Lua scripts enforce per-tenant RPM and TPM limits with a configurable window. Token-per-minute (TPM) enforcement prevents runaway costs.
 
-**Automatic Provider Failover** — On upstream 5xx or transport error, the gateway transparently retries to a configured fallback provider (e.g., OpenAI → Azure OpenAI). Zero application-side changes needed.
+**Failover with Masked Body** — On upstream 5xx or transport error, the gateway transparently retries to a configured fallback provider. The failover replay uses the ML-masked body (not the raw client body) — PII scrubbing is never bypassed on the retry path.
+
+**Concurrent Embedding Service** — The Python embedding server runs as a `ThreadingHTTPServer`, handling parallel embedding requests for semantic cache lookups without serialization.
 
 **Streaming Support** — Full SSE/chunked transfer encoding passthrough for streaming completions.
 
-**mTLS for gRPC** — The gateway-to-ML-engine channel supports mutual TLS with configurable certificate paths.
+**mTLS for gRPC** — The gateway-to-ML-engine channel supports mutual TLS with configurable certificate paths. When TLS is enabled, a configuration failure causes the server to exit rather than fall back to plaintext.
 
 ### Developer Experience
 
@@ -192,28 +197,96 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
 
 **Sub-millisecond Hot Path** — Go's goroutine model + Redis pipeline operations keep overhead imperceptible on cache hits.
 
-**Enterprise Dashboard** — A polished Next.js 16 / React 19 / Tailwind 4 control plane with animated transitions, dark/light theme, command palette (`⌘K`), and collapsible sidebar.
+**Enterprise Dashboard** — A polished Next.js 16 / React 19 / Tailwind CSS 4 control plane with animated count-up metric cards, gradient-bordered KPI panels, staggered threat feed animations, dark/light/midnight/cobalt themes, command palette (`⌘K`), and collapsible sidebar.
 
 **One-command Stack** — `docker-compose up -d` boots the complete 8-service cluster.
 
 ---
 
-## Dashboard Screenshots
+## Security Hardening
+
+The following security and reliability fixes have been applied since the initial build, based on a structured red team review:
+
+### Gateway (`gateway/`)
+
+| # | Fix | Impact |
+|---|-----|--------|
+| 1 | **OOM defense** — `http.MaxBytesReader` wraps every request body before `io.ReadAll` | Prevents memory exhaustion from oversized payloads |
+| 2 | **Unicode-aware token estimation** — ASCII chars counted as `/4`, non-ASCII as `1:1` | Prevents TPM bypass via CJK/emoji-heavy prompts |
+| 3 | **Failover uses masked body** — Context value set after ML scan, not before | PII masking is never skipped on the retry path |
+| 4 | **Dynamic region detection** — `CF-IPCountry` → `X-Region` → `"unknown"` (no hardcoded `"US"`) | Accurate geo-context for policy evaluation |
+| 5 | **Kafka context fix** — `context.Background()` passed to async producer (not the request-scoped context) | Audit logs are never silently dropped on request return |
+| 6 | **Audit queue backpressure** — 50ms wait before drop; drops logged at ERROR (not silently discarded) | Stalled DB writers surface as alerts instead of silent data loss |
+| 7 | **API key prefix entropy** — Prefix extended from 8 to 14 chars (`titan_` + 8 random hex ≈ 4.3B combos) | Key prefixes are distinguishable in the UI; collision resistance increased |
+| 8 | **Stats preserved on DB error** — `counts` map cleared only after a successful `pool.Exec` | Transient DB failures no longer cause permanent request counter loss |
+| 9 | **Default-deny policy engine** — No matching ALLOW policy → explicit 403 DENY | Eliminates implicit allow fallthrough on misconfigured or empty policy sets |
+| 10 | **Async API key touch** — `TouchAPIKey` dispatched as `go st.TouchAPIKey(...)` (true fire-and-forget) | Auth middleware never blocks waiting on a DB stats update |
+
+### ML Engine (`ml_engine/`)
+
+| # | Fix | Impact |
+|---|-----|--------|
+| 11 | **TLS fail-closed** — `server.add_insecure_port` replaced with `sys.exit(1)` on TLS failure | Prevents silent fallback to plaintext gRPC when certificates are misconfigured |
+| 12 | **Per-message PII scanning** — Each `messages[].content` scanned independently | Multi-turn conversations no longer corrupt adjacent messages with mask tokens |
+| 13 | **ML model overfitting guard** — Falls back gracefully if training data < 100 samples; logs WARNING | Prevents TF-IDF classifier from running on insufficient training data |
+| 14 | **Concurrent embedding server** — `ThreadingHTTPServer` instead of `HTTPServer` | Semantic cache lookups no longer serialize under concurrent gateway requests |
+
+### Analyzer (`analyzer/`)
+
+| # | Fix | Impact |
+|---|-----|--------|
+| 15 | **Sandbox tool allowlist** — Explicit two-tier dispatch: known shell tools → sandbox, known safe tools → allow, unknown → deny | Unknown tool names can no longer bypass the execution sandbox |
+
+---
+
+## Dashboard
+
+The control plane is a production-grade Next.js 16 single-page application with 14 tabs:
+
+| Tab | Purpose |
+|-----|---------|
+| **Overview** | Live KPIs with animated count-up counters, traffic & interception area chart, real-time threat feed with staggered animations |
+| **Analytics** | Hourly request volume, threat category breakdown (pie + animated bars), latency percentiles (P50/P95/P99), model usage and cost |
+| **Edge Routing** | Upstream provider configuration and routing rules |
+| **Events & Logs** | Real-time filterable threat event stream with risk scores and action chips |
+| **Policy Engine** | Create, toggle, and delete Cedar-style ABAC policies with live API |
+| **Sandboxes** | Active execution sandbox status |
+| **Vulnerabilities** | Flagged vulnerability tracker |
+| **Audit Logs** | Paginated audit trail with tenant filter, search, and CSV export |
+| **Access Control** | Role and permission management |
+| **Data Privacy** | Per-entity PII masking toggles |
+| **Settings** | Theme picker (dark / light / midnight / cobalt), security toggles, notification config |
+| **Team** | Member management |
+| **API Keys** | Generate (`titan_` prefix), list, copy, and revoke tenant keys |
+| **Billing** | Usage and billing summary |
+
+**UI highlights:**
+- Animated metric cards — numbers count up from 0 on load, smoothly transition on refresh
+- Per-card gradient accent lines in semantic colors (threat = red, cache = purple, latency = blue)
+- `live-dot` pulsing indicators on the threat feed and status badge
+- Spring-physics active nav indicator with left accent bar
+- `backdrop-blur-xl` header with scroll-through glass effect
+- Framer Motion page transitions + staggered list entrance animations
+- Shimmer skeleton loaders with correct color blending
+- Command palette (`⌘K`) with full keyboard navigation
+- 4 themes that update all CSS custom properties via class swap
+
+### Dashboard Screenshots
 
 <table>
   <tr>
     <td align="center">
       <img src="docs/assets/screenshot_overview.png" width="420" alt="Overview Tab"/>
-      <br/><sub><b>Overview</b> — Real-time KPIs, threat feed, traffic chart</sub>
+      <br/><sub><b>Overview</b> — Animated KPIs, gradient cards, live threat feed</sub>
     </td>
     <td align="center">
       <img src="docs/assets/screenshot_analytics.png" width="420" alt="Analytics Tab"/>
-      <br/><sub><b>Analytics</b> — Hourly traffic, latency percentiles, model usage</sub>
+      <br/><sub><b>Analytics</b> — Hourly traffic, threat breakdown, latency, model cost</sub>
     </td>
   </tr>
   <tr>
     <td align="center">
-      <img src="docs/assets/screenshot_policy_form.png" width="420" alt="Policy Engine — New Policy Form"/>
+      <img src="docs/assets/screenshot_policy_form.png" width="420" alt="Policy Engine"/>
       <br/><sub><b>Policy Engine</b> — Create Cedar policies with effect, principal, and condition</sub>
     </td>
     <td align="center">
@@ -228,7 +301,7 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
     </td>
     <td align="center">
       <img src="docs/assets/screenshot_audit.png" width="420" alt="Audit Logs"/>
-      <br/><sub><b>Audit Logs</b> — Paginated audit trail with filter and export</sub>
+      <br/><sub><b>Audit Logs</b> — Paginated audit trail with filter and CSV export</sub>
     </td>
   </tr>
 </table>
@@ -266,7 +339,7 @@ open http://localhost:3000
 
 # 6. Send a test request through the gateway
 curl -X POST http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer gf_sec_your_api_key" \
+  -H "Authorization: Bearer titan_your_api_key" \
   -H "Content-Type: application/json" \
   -d '{"model":"llama-3.1-8b-instant","messages":[{"role":"user","content":"Hello!"}]}'
 ```
@@ -297,11 +370,11 @@ The gateway is **100% OpenAI API compatible** — change only `base_url` and `ap
 from openai import OpenAI
 
 client = OpenAI(
-    api_key="gf_sec_your_titan_key",   # Your TITAN API key
+    api_key="titan_your_key",          # Your TITAN API key (titan_ prefix)
     base_url="http://localhost:8080/v1" # Point to the gateway
 )
 
-# This prompt injection attempt is intercepted before reaching the model
+# Prompt injection attempt — intercepted before reaching the model
 response = client.chat.completions.create(
     model="gpt-4o",
     messages=[{
@@ -314,15 +387,19 @@ response = client.chat.completions.create(
 ```
 
 ```python
-# PII is automatically masked before leaving your network
+# PII is masked per-message before leaving your network
 response = client.chat.completions.create(
     model="gpt-4o",
-    messages=[{
-        "role": "user",
-        "content": "Summarize this for John Smith (SSN: 123-45-6789, john@acme.com)"
-    }]
+    messages=[
+        {"role": "user",    "content": "My SSN is 123-45-6789"},
+        {"role": "assistant","content": "Noted."},
+        {"role": "user",    "content": "And my email is john@acme.com"},
+    ]
 )
-# Upstream receives: "Summarize this for <PERSON> (SSN: <US_SSN>, <EMAIL_ADDRESS>)"
+# Upstream receives each message independently masked:
+#   "My SSN is <US_SSN>"
+#   "Noted."
+#   "And my email is <EMAIL_ADDRESS>"
 ```
 
 ### Node.js / TypeScript
@@ -331,14 +408,15 @@ response = client.chat.completions.create(
 import OpenAI from 'openai';
 
 const openai = new OpenAI({
-  apiKey: 'gf_sec_your_titan_key',
+  apiKey: 'titan_your_key',
   baseURL: 'http://localhost:8080/v1',
 });
 
+// Streaming is fully supported
 const stream = await openai.chat.completions.create({
   model: 'gpt-4o',
   messages: [{ role: 'user', content: 'Write a poem about security.' }],
-  stream: true, // Streaming is fully supported
+  stream: true,
 });
 
 for await (const chunk of stream) {
@@ -354,10 +432,11 @@ curl -X POST http://localhost:8080/admin/v1/keys \
   -H "X-Admin-Token: your-admin-token" \
   -H "Content-Type: application/json" \
   -d '{"tenant_id": "acme-corp", "name": "production-key"}'
+# → {"raw_key": "titan_abc123...", "key_prefix": "titan_ab12cd34", ...}
 
 # Use it like any OpenAI key
 curl http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer gf_sec_generated_key" \
+  -H "Authorization: Bearer titan_abc123..." \
   -H "Content-Type: application/json" \
   -d '{
     "model": "llama-3.1-8b-instant",
@@ -370,10 +449,9 @@ curl http://localhost:8080/v1/chat/completions \
 ```python
 from langchain_openai import ChatOpenAI
 
-# Drop-in with LangChain — no other changes needed
 llm = ChatOpenAI(
     model="gpt-4o",
-    openai_api_key="gf_sec_your_titan_key",
+    openai_api_key="titan_your_key",
     openai_api_base="http://localhost:8080/v1",
 )
 ```
@@ -382,7 +460,7 @@ llm = ChatOpenAI(
 
 ## Configuration Reference
 
-All configuration is passed via environment variables. The `.env.example` contains the minimal required set; the full reference is below.
+All configuration is passed via environment variables. The `.env.example` contains the minimal required set.
 
 ### Gateway (`gateway/`)
 
@@ -405,7 +483,7 @@ All configuration is passed via environment variables. The `.env.example` contai
 | `SEMANTIC_CACHE_THRESHOLD` | `0.95` | No | Cosine similarity threshold for cache hits |
 | `ANALYZER_ADDR` | `localhost:50051` | No | ML engine gRPC address |
 | `ANALYZER_TIMEOUT_MS` | `150` | No | ML analysis timeout in milliseconds |
-| `ANALYZER_TLS_ENABLED` | `false` | No | Enable mTLS for gateway → ML engine channel |
+| `ANALYZER_TLS_ENABLED` | `false` | No | Enable mTLS for gateway → ML engine channel (fail-closed: server exits if cert load fails) |
 | `ANALYZER_TLS_CERT_FILE` | `/etc/certs/tls.crt` | No | CA or server cert for TLS verification |
 | `FALLBACK_TARGET_URL` | — | No | Secondary upstream URL (failover on 5xx) |
 | `FALLBACK_API_KEY` | — | No | API key for the fallback provider |
@@ -428,7 +506,7 @@ All configuration is passed via environment variables. The `.env.example` contai
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NEXT_PUBLIC_GATEWAY_URL` | `http://gateway:8080` | Gateway URL (client-side calls go through Next.js API routes) |
-| `ADMIN_TOKEN` | — | Admin token (server-side only, never exposed to browser) |
+| `ADMIN_TOKEN` | — | Admin token (server-side only, never exposed to the browser) |
 
 ---
 
@@ -525,10 +603,10 @@ GET    /health          # Liveness probe — returns 200 OK
 | NLP | spaCy | 3.7+ | Named entity recognition (PERSON, LOC) |
 | Embeddings | `all-MiniLM-L6-v2` | — | 384-dim sentence embeddings for semantic cache |
 | Control Plane | Next.js | 16 | Server-side + client-side React dashboard |
-| UI Framework | React | 19 | Component model |
-| Styling | Tailwind CSS | 4 | Utility-first styling |
+| UI Framework | React | 19.2 | Component model |
+| Styling | Tailwind CSS | 4 | Utility-first styling with CSS custom properties |
 | Charts | Recharts | 3.8+ | Traffic, latency, and threat analytics |
-| Animations | Framer Motion | 12+ | Page transitions and micro-interactions |
+| Animations | Framer Motion | 12+ | Page transitions, count-up counters, staggered lists |
 | Database | CockroachDB | 23.1 | Multi-tenant persistent store |
 | Cache Store | Redis | 7 | Rate limits, exact cache, metrics |
 | Vector Store | Qdrant | 1.9 | Semantic similarity cache |
@@ -574,20 +652,22 @@ kubectl apply -f k8s/istio-gateway.yaml         # Istio ingress + mTLS policy
 - [x] **Phase 3** — Python ML Analyzer (gRPC): injection detection, PII masking, embedding service
 - [x] **Phase 4** — Apache Kafka audit streaming, CockroachDB integration, DB indexes
 - [x] **Phase 5** — Qdrant semantic caching, Redis metrics reporter, provider failover, gRPC mTLS
-- [x] **Phase 6** — Next.js 16 enterprise dashboard: all 14 tabs, Recharts analytics, dark/light themes
+- [x] **Phase 6** — Next.js 16 enterprise dashboard: 14 tabs, Recharts analytics, 4 themes, command palette
+- [x] **Phase 7** — Security hardening: 15 fixes across gateway, ML engine, and analyzer (OOM defense, per-message PII, default-deny policy, fail-closed TLS, sandbox allowlist, Kafka context fix, API key entropy, stats persistence, async auth touch)
+- [x] **Phase 8** — Production UI overhaul: animated count-up cards, gradient accent lines, shimmer skeletons, live-dot indicators, spring-physics nav, staggered threat feed, premium chart tooltips
 
 ### In Progress
 
-- [ ] **Phase 7** — Cedar policy engine (AWS Cedar SDK), replacing the current condition-evaluator stub
-- [ ] **Phase 7** — Firecracker MicroVM sandbox for untrusted prompt execution (replacing Docker simulation)
-- [ ] **Phase 7** — CockroachDB multi-region topology + geo-partitioned audit logs
+- [ ] **Phase 9** — Cedar policy engine (AWS Cedar SDK), replacing the current condition-evaluator stub
+- [ ] **Phase 9** — Firecracker MicroVM sandbox for untrusted prompt execution
+- [ ] **Phase 9** — CockroachDB multi-region topology + geo-partitioned audit logs
 
 ### Planned
 
-- [ ] **Phase 8** — Multi-region active-active deployment with global load balancing
-- [ ] **Phase 9** — OpenTelemetry distributed tracing (Jaeger / Tempo)
-- [ ] **Phase 10** — ClickHouse OLAP layer for analytics at scale (replacing PostgreSQL for audit queries)
-- [ ] **Phase 10** — Grafana dashboards with pre-built TITAN panels
+- [ ] **Phase 10** — Multi-region active-active deployment with global load balancing
+- [ ] **Phase 11** — OpenTelemetry distributed tracing (Jaeger / Tempo)
+- [ ] **Phase 12** — ClickHouse OLAP layer for analytics at scale
+- [ ] **Phase 12** — Grafana dashboards with pre-built TITAN panels
 - [ ] **Future** — WASM plugin system for custom detection rules
 - [ ] **Future** — LLM output scanning (response-side PII, hallucination detection)
 - [ ] **Future** — SOC2 / HIPAA compliance report generation
@@ -621,7 +701,7 @@ Scopes: `gateway`, `ml_engine`, `dashboard`, `k8s`, `docker`
 
 **Areas where contributions are especially welcome:**
 - Cedar policy engine integration
-- Additional ML detection models (toxicity, code leak)
+- Additional ML detection models (toxicity, code leak, credential detection)
 - Helm chart for production Kubernetes deployment
 - ClickHouse analytics adapter
 - Integration tests against real LLM providers (with cassette recording)
@@ -635,12 +715,15 @@ TITAN Gateway is designed with a security-first posture. If you discover a vulne
 Report vulnerabilities privately via GitHub's [Security Advisory](https://github.com/SharvikS/LLM-Firewall/security/advisories/new) feature or email directly. We aim to respond within 48 hours and publish a fix within 14 days.
 
 **Security design principles:**
-- The gateway assumes the network is hostile and all LLM models are potentially vulnerable
+- Zero-trust by default — every request is authenticated, inspected, and policy-checked before proxying
+- The policy engine is default-deny — no matching ALLOW rule means the request is blocked
+- TLS failures are fatal (fail-closed) — the ML engine never silently downgrades to plaintext
 - Admin tokens are never exposed to client-side JavaScript (`NEXT_PUBLIC_` prefix is explicitly forbidden)
 - All secrets are loaded from environment variables — never hardcoded
 - Request body size is capped (default 4 MB) to prevent memory exhaustion
 - Redis Lua scripts ensure atomic rate limit operations — no TOCTOU race conditions
-- gRPC channel between gateway and ML engine supports mutual TLS
+- The audit log producer uses `context.Background()` — audit records are never lost due to request context cancellation
+- Unknown sandbox tools are denied by default — no implicit allow on unrecognized tool names
 
 See [`docs/security/RED_TEAM_REVIEW_Phase4.md`](docs/security/RED_TEAM_REVIEW_Phase4.md) for the Phase 4 red team findings and mitigations.
 
