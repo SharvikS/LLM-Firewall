@@ -61,7 +61,7 @@ func APIKeyAuth(st *store.Store) func(http.Handler) http.Handler {
 			}
 
 			// Fire-and-forget: update last_used, increment request count.
-			st.TouchAPIKey(apiKey.ID)
+			go st.TouchAPIKey(apiKey.ID)
 
 			ctx := context.WithValue(r.Context(), AuthCtxKey, AuthContext{
 				TenantID:     tenant.ID,

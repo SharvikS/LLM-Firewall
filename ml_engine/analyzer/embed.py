@@ -81,7 +81,7 @@ def start() -> None:
         )
         return
 
-    server = http.server.HTTPServer(("0.0.0.0", EMBED_PORT), _EmbedHandler)
+    server = http.server.ThreadingHTTPServer(("0.0.0.0", EMBED_PORT), _EmbedHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     logger.info("Embedding HTTP server listening on port %d", EMBED_PORT)

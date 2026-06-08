@@ -16,7 +16,9 @@ matching gates the majority of obvious attacks; the probabilistic model
 catches novel phrasings that don't match any static rule.
 """
 
+import json
 import logging
+import os
 import re
 from dataclasses import dataclass
 
@@ -26,6 +28,19 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import Pipeline
 
 logger = logging.getLogger("injection_detector")
+
+# Minimum labelled samples required before the TF-IDF fallback is trusted.
+# Below this threshold the model is disabled to avoid acting on a wildly
+# overfit classifier.
+# TODO: replace _TRAINING_DATA with a proper dataset loaded from
+#       ml_engine/data/injection_train.jsonl (expected schema: one JSON object
+#       per line with "text": str and "label": 0|1 fields).  The embedded 30-
+#       sample set is a placeholder; it will overfit badly and miss novel
+#       injection techniques.
+_MIN_FALLBACK_SAMPLES = 100
+_TRAINING_DATA_JSONL = os.path.join(
+    os.path.dirname(__file__), "..", "data", "injection_train.jsonl"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -115,33 +130,65 @@ class InjectionDetector:
     """
 
     def __init__(self) -> None:
-        # Always train the TF-IDF fallback — zero external dependencies.
-        texts, labels = zip(*_TRAINING_DATA)
-        self._fallback_pipeline = Pipeline([
-            (
-                "tfidf",
-                TfidfVectorizer(
-                    analyzer="char_wb",
-                    ngram_range=(3, 6),
-                    max_features=8000,
-                    sublinear_tf=True,
+        # Prefer an external JSONL dataset; fall back to the embedded samples.
+        training_data = list(_TRAINING_DATA)
+        if os.path.isfile(_TRAINING_DATA_JSONL):
+            try:
+                with open(_TRAINING_DATA_JSONL) as f:
+                    loaded = [
+                        (row["text"], int(row["label"]))
+                        for line in f
+                        if (row := json.loads(line)) and "text" in row and "label" in row
+                    ]
+                training_data = loaded
+                logger.info(
+                    "InjectionDetector: loaded %d samples from %s",
+                    len(training_data), _TRAINING_DATA_JSONL,
+                )
+            except Exception as exc:
+                logger.warning("Failed to load injection_train.jsonl (%s) — using embedded data", exc)
+
+        texts, labels = zip(*training_data)
+        n_samples = len(texts)
+        n_positive = sum(labels)
+
+        if n_samples < _MIN_FALLBACK_SAMPLES:
+            # The dataset is too small to produce a reliable classifier.
+            # Disable the fallback to avoid acting on meaningless probabilities;
+            # the heuristic layer still handles obvious attacks.
+            logger.warning(
+                "InjectionDetector fallback DISABLED — only %d training samples "
+                "(minimum %d). Add labelled data to ml_engine/data/injection_train.jsonl "
+                "to re-enable. Heuristic layer remains active.",
+                n_samples, _MIN_FALLBACK_SAMPLES,
+            )
+            self._fallback_pipeline = None
+        else:
+            self._fallback_pipeline = Pipeline([
+                (
+                    "tfidf",
+                    TfidfVectorizer(
+                        analyzer="char_wb",
+                        ngram_range=(3, 6),
+                        max_features=8000,
+                        sublinear_tf=True,
+                    ),
                 ),
-            ),
-            (
-                "clf",
-                LogisticRegression(
-                    C=2.0,
-                    max_iter=1000,
-                    class_weight="balanced",
-                    random_state=42,
+                (
+                    "clf",
+                    LogisticRegression(
+                        C=2.0,
+                        max_iter=1000,
+                        class_weight="balanced",
+                        random_state=42,
+                    ),
                 ),
-            ),
-        ])
-        self._fallback_pipeline.fit(list(texts), list(labels))
-        logger.info(
-            "InjectionDetector fallback trained — %d samples, %d positive",
-            len(texts), sum(labels),
-        )
+            ])
+            self._fallback_pipeline.fit(list(texts), list(labels))
+            logger.info(
+                "InjectionDetector fallback trained — %d samples, %d positive",
+                n_samples, n_positive,
+            )
 
         # Attempt to load HuggingFace transformer model as primary Layer 2.
         self._hf_pipe = None
@@ -191,7 +238,15 @@ class InjectionDetector:
         # --- Layer 2: transformer (primary) or TF-IDF (fallback) ---
         if self._hf_pipe is not None:
             return self._classify_with_transformer(text)
-        return self._classify_with_tfidf(text)
+        if self._fallback_pipeline is not None:
+            return self._classify_with_tfidf(text)
+        # Both Layer 2 classifiers unavailable — return low-risk ALLOW.
+        # The heuristic layer above has already blocked obvious attacks.
+        return DetectionResult(
+            is_injection=False, confidence=0.0,
+            threat_type="none", description="ML layer unavailable; heuristics passed",
+            risk_score=5.0,
+        )
 
     def _classify_with_transformer(self, text: str) -> DetectionResult:
         result = self._hf_pipe(text[:512])[0]

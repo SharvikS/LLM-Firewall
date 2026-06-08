@@ -193,10 +193,6 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	metrics.Global.TotalRequests.Add(1)
 	metrics.HourlyTraffic.Record(false)
 
-	// Store body in context so the failover handler can replay it if the
-	// primary upstream fails after the body has been consumed.
-	r = r.WithContext(context.WithValue(r.Context(), reqBodyKey{}, body))
-
 	// Stage 3: Rate limiting — RPM (sliding window) then TPM (tumbling bucket).
 	rl, rlErr := p.limiter.Allow(r.Context(), tenantID.String())
 	if rlErr == nil {
@@ -282,10 +278,23 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		cacheKey = p.cache.Key(tenantID.String(), r.URL.Path, body)
 	}
 
+	// Store the (potentially PII-masked) body for failover replay.
+	// This must happen after the ML Analyzer so the fallback provider never
+	// receives the original unredacted payload.
+	r = r.WithContext(context.WithValue(r.Context(), reqBodyKey{}, body))
+
 	// Stage 5: Policy gate.
+	// Resolve request region from Cloudflare or a custom header; never hardcode.
+	region := r.Header.Get("CF-IPCountry")
+	if region == "" {
+		region = r.Header.Get("X-Region")
+	}
+	if region == "" {
+		region = "unknown"
+	}
 	ctxData := map[string]interface{}{
 		"risk_score": float64(analysis.RiskScore),
-		"region":     "US",
+		"region":     region,
 	}
 	allowed, reason := p.policy.Evaluate(r.Context(), tenantID, "InvokeLLM", "OpenAI", ctxData)
 	if !allowed {
@@ -370,6 +379,11 @@ func (p *LLMProxy) inspectPayload(w http.ResponseWriter, r *http.Request) ([]byt
 	}
 	var body []byte
 	if r.Body != nil && r.Body != http.NoBody {
+		// Wrap with MaxBytesReader before ReadAll so the read is aborted at the
+		// size limit rather than after the full payload has been buffered.
+		// The middleware applies the same limit, but enforcing it here makes
+		// inspectPayload safe even when called outside the normal middleware chain.
+		r.Body = http.MaxBytesReader(w, r.Body, p.cfg.MaxRequestBodyBytes)
 		var err error
 		body, err = io.ReadAll(r.Body)
 		if err != nil {
@@ -474,9 +488,13 @@ func (p *LLMProxy) serveCachedEntry(
 }
 
 // estimateTokens approximates the number of tokens in an OpenAI-format request
-// body using the standard heuristic of 4 characters ≈ 1 token. It also adds
-// max_tokens (output budget) if the caller specified it, making the estimate
-// conservative enough for cost-aware TPM enforcement.
+// body and adds max_tokens (output budget) when specified.
+//
+// Token counting uses two heuristics applied per rune:
+//   - ASCII (< 128): ~4 chars per token (standard GPT heuristic).
+//   - Non-ASCII (CJK, emoji, etc.): ~1 char per token — BPE tokenizers assign
+//     far fewer bytes per token for high-density Unicode, so using the ASCII
+//     heuristic would under-count and let an attacker slip under TPM limits.
 func estimateTokens(body []byte) int64 {
 	if len(body) == 0 {
 		return 1
@@ -490,11 +508,19 @@ func estimateTokens(body []byte) int64 {
 	if err := json.Unmarshal(body, &req); err != nil {
 		return int64(len(body)/4) + 1
 	}
-	var chars int
+	var estimate int64
 	for _, m := range req.Messages {
-		chars += len(m.Content)
+		var ascii, nonASCII int64
+		for _, r := range m.Content {
+			if r < 128 {
+				ascii++
+			} else {
+				nonASCII++
+			}
+		}
+		estimate += ascii/4 + nonASCII
 	}
-	estimate := int64(chars/4) + 1
+	estimate++ // floor at 1
 	if req.MaxTokens > 0 {
 		estimate += int64(req.MaxTokens)
 	}

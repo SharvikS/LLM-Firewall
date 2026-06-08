@@ -20,7 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from analyzer.v1 import analyzer_pb2, analyzer_pb2_grpc
 from analyzer.injection_detector import InjectionDetector
-from analyzer.pii_scanner import PIIScanner
+from analyzer.pii_scanner import PIIScanner, PIIResult
 from analyzer import embed
 
 logging.basicConfig(
@@ -91,8 +91,8 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
                 reason=inj.description,
             )
 
-        # --- PII scanning ---
-        pii = self._pii.scan(prompt_text)
+        # --- PII scanning — each message scanned individually to preserve context ---
+        pii, masked_body = _scan_and_mask_body(request.prompt, self._pii)
         risk = inj.risk_score  # base risk from injection confidence
 
         if pii.pii_detected:
@@ -104,10 +104,6 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
                     description=f"PII entities detected: {', '.join(pii.entities_found)}",
                 )
             )
-
-            # Rebuild the full JSON body with the masked prompt so the gateway
-            # can forward it in place of the original without breaking structure.
-            masked_body = _rebuild_body(request.prompt, pii.masked_text)
 
             logger.info(
                 "MASK request_id=%s tenant=%s entities=%s",
@@ -138,30 +134,51 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
         )
 
 
-def _rebuild_body(original_body: str, masked_text: str) -> str:
+def _scan_and_mask_body(raw_body: str, pii_scanner: PIIScanner) -> tuple[PIIResult, str]:
     """
-    Replace the concatenated message content in the original JSON body with
-    the Presidio-masked version.  Falls back to the masked_text string if the
-    body is not parseable JSON.
+    Scan every message in the JSON body individually for PII and replace
+    each message's content in-place.  Returns (aggregate PIIResult, masked body).
+
+    Scanning per-message rather than on the concatenated text preserves
+    conversation structure: masking only touches the messages that actually
+    contain PII and never corrupts earlier turns.
     """
     try:
-        body = json.loads(original_body)
-        messages = body.get("messages", [])
-        if not messages:
-            return masked_text
-
-        # Simple strategy: put the entire masked text into the last user message.
-        # A more sophisticated approach would diff each message individually.
-        for msg in reversed(messages):
-            if msg.get("role") == "user":
-                msg["content"] = masked_text
-                break
-        return json.dumps(body)
+        body = json.loads(raw_body)
     except (json.JSONDecodeError, TypeError):
-        # Original body was not valid JSON. Wrap masked_text in a valid
-        # OpenAI-compatible structure so the upstream API doesn't reject it.
-        logger.warning("_rebuild_body: original body was not valid JSON; wrapping in fallback structure")
-        return json.dumps({"messages": [{"role": "user", "content": masked_text}]})
+        result = pii_scanner.scan(raw_body)
+        masked = result.masked_text if result.pii_detected else raw_body
+        return result, masked
+
+    messages = body.get("messages", [])
+    if not messages:
+        result = pii_scanner.scan(raw_body)
+        masked = result.masked_text if result.pii_detected else raw_body
+        return result, masked
+
+    all_entities: list[str] = []
+    any_pii = False
+
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, str):
+            continue
+        result = pii_scanner.scan(content)
+        if result.pii_detected:
+            msg["content"] = result.masked_text
+            all_entities.extend(result.entities_found)
+            any_pii = True
+
+    if any_pii:
+        masked_body = json.dumps(body)
+        aggregate = PIIResult(
+            pii_detected=True,
+            masked_text=masked_body,
+            entities_found=sorted(set(all_entities)),
+        )
+        return aggregate, masked_body
+
+    return PIIResult(pii_detected=False, masked_text=raw_body, entities_found=[]), raw_body
 
 
 def serve() -> None:
@@ -189,11 +206,11 @@ def serve() -> None:
             server.add_secure_port(f"[::]:{port}", server_creds)
             logger.info("gRPC AnalyzerService TLS enabled on port %s (cert=%s)", port, cert_file)
         except Exception as exc:
-            logger.error(
-                "Failed to load TLS credentials (%s) — falling back to plaintext. "
-                "This violates Zero-Trust; fix cert paths before production.", exc
+            logger.critical(
+                "Failed to load TLS credentials (%s) — refusing to start on plaintext. "
+                "Fix GRPC_TLS_CERT / GRPC_TLS_KEY before retrying.", exc
             )
-            server.add_insecure_port(f"[::]:{port}")
+            sys.exit(1)
     else:
         server.add_insecure_port(f"[::]:{port}")
         logger.warning(

@@ -31,7 +31,7 @@ type Engine struct {
 func NewEngine(st *store.Store) *Engine {
 	e := &Engine{st: st, refresh: 30 * time.Second}
 	if err := e.reload(context.Background()); err != nil {
-		logger.Get().Warn("policy: initial load failed — all requests will be allowed",
+		logger.Get().Warn("policy: initial load failed — all requests will be DENIED until policies load",
 			slog.String("error", err.Error()))
 	}
 	go e.refreshLoop()
@@ -43,7 +43,7 @@ func NewEngine(st *store.Store) *Engine {
 // Decision logic:
 //  1. DENY rules win over ALLOW rules (deny-biased).
 //  2. A policy matches if principal/action/condition all match.
-//  3. No matching policy → ALLOW (default permissive; Cedar policies narrow).
+//  3. No matching ALLOW policy → DENY (default-deny; Zero-Trust posture).
 func (e *Engine) Evaluate(
 	_ context.Context,
 	tenantID uuid.UUID,
@@ -55,7 +55,7 @@ func (e *Engine) Evaluate(
 	e.mu.RUnlock()
 
 	log := logger.Get()
-	var matched []store.Policy
+	var hasAllow bool
 	for _, p := range policies {
 		if !p.Enabled {
 			continue
@@ -70,10 +70,7 @@ func (e *Engine) Evaluate(
 		if !evaluateCondition(p.Condition, ctx) {
 			continue
 		}
-		matched = append(matched, p)
-	}
-
-	for _, p := range matched {
+		// DENY wins immediately; ALLOW is noted but deferred so a later DENY wins.
 		if p.Effect == "DENY" {
 			log.Warn("policy DENY",
 				slog.String("policy", p.Name),
@@ -81,10 +78,21 @@ func (e *Engine) Evaluate(
 			)
 			return false, "Denied by policy: " + p.Name
 		}
+		if p.Effect == "ALLOW" {
+			hasAllow = true
+		}
 	}
 
-	log.Info("policy ALLOW", slog.String("tenant", tenantID.String()))
-	return true, "allowed"
+	if hasAllow {
+		log.Info("policy ALLOW", slog.String("tenant", tenantID.String()))
+		return true, "allowed"
+	}
+
+	log.Warn("policy DEFAULT DENY — no matching allow policy",
+		slog.String("tenant", tenantID.String()),
+		slog.String("action", action),
+	)
+	return false, "Default deny: no matching allow policy"
 }
 
 // matchesField returns true if pattern is "*" or equals value (case-insensitive prefix).
