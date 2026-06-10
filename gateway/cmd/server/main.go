@@ -18,6 +18,7 @@ import (
 
 	adminapi "github.com/sharvik/llm-firewall/gateway/internal/api"
 	"github.com/sharvik/llm-firewall/gateway/internal/analyzer"
+	"github.com/sharvik/llm-firewall/gateway/internal/batch"
 	"github.com/sharvik/llm-firewall/gateway/internal/cache"
 	"github.com/sharvik/llm-firewall/gateway/internal/config"
 	"github.com/sharvik/llm-firewall/gateway/internal/events"
@@ -61,10 +62,12 @@ func main() {
 		Password: cfg.RedisPassword,
 		DB:       cfg.RedisDB,
 	})
+	redisUp := false
 	if err := redisClient.Ping(ctx).Err(); err != nil {
 		log.Warn("Redis unreachable — rate limiting and caching disabled",
 			slog.String("error", err.Error()))
 	} else {
+		redisUp = true
 		log.Info("Redis connected", slog.String("addr", cfg.RedisAddr))
 		metrics.Init(redisClient) // activate distributed metrics flush
 	}
@@ -134,6 +137,13 @@ func main() {
 		defer mlClient.Close()
 	}
 
+	// ── Batch processing manager (Redis-backed job state, ML governance) ──────
+	batchRedis := redisClient
+	if !redisUp {
+		batchRedis = nil // fall back to in-memory job state
+	}
+	batchMgr := batch.NewManager(batchRedis, mlClient, cfg.TargetURL, cfg.APIKey)
+
 	// ── Policy Engine (DB-backed, 30s refresh) ────────────────────────────────
 	policyEngine := policy.NewEngine(st)
 
@@ -186,6 +196,13 @@ func main() {
 	// LLM proxy — all /v1/* routes require a valid API key (fail-closed)
 	r.Group(func(r chi.Router) {
 		r.Use(gatewaymw.APIKeyAuth(st))
+
+		// Batch API — specific routes must be registered before the proxy
+		// wildcard so chi matches them first.
+		batchHandler := adminapi.NewBatchHandler(batchMgr)
+		r.Post("/v1/batch", batchHandler.Submit)
+		r.Get("/v1/batch/{id}", batchHandler.Status)
+
 		r.Handle("/*", llmProxy)
 	})
 
