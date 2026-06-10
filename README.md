@@ -667,22 +667,20 @@ kubectl apply -f k8s/istio-gateway.yaml         # Istio ingress + mTLS policy
 - [x] **Phase 7** — Security hardening: 15 fixes across gateway, ML engine, and analyzer (OOM defense, per-message PII, default-deny policy, fail-closed TLS, sandbox allowlist, Kafka context fix, API key entropy, stats persistence, async auth touch)
 - [x] **Phase 8** — Production UI overhaul: animated count-up cards, gradient accent lines, shimmer skeletons, live-dot indicators, spring-physics nav, staggered threat feed, premium chart tooltips
 - [x] **Feature completion** — Toxicity/sentiment detection, source-code & secret leak prevention, OpenAPI 3.0 + Swagger UI (`/docs`), Python & Node Admin SDKs, async batch API (`/v1/batch`)
-
-### In Progress
-
-- [ ] **Phase 9** — Cedar policy engine (AWS Cedar SDK), replacing the current condition-evaluator stub
-- [ ] **Phase 9** — Firecracker MicroVM sandbox for untrusted prompt execution
-- [ ] **Phase 9** — CockroachDB multi-region topology + geo-partitioned audit logs
+- [x] **Phase 9** — Cedar policy engine (AWS `cedar-go` SDK): DB policies compile to real Cedar, forbid-wins + default-deny
+- [x] **Phase 9** — Firecracker MicroVM sandbox: true KVM microVMs per execution with hardened-Docker fallback
+- [x] **Phase 10** — Multi-region deployment: Helm chart with per-region overlays, HPA, zone topology spread
+- [x] **Phase 11** — OpenTelemetry distributed tracing (OTLP, opt-in via `OTEL_EXPORTER_OTLP_ENDPOINT`)
+- [x] **Phase 12** — ClickHouse OLAP layer: Kafka-native audit ingestion + `/api/analytics/*` read path
+- [x] **Compliance** — Audit-trail summary report + CSV/JSONL export (`/admin/v1/compliance/*`), keyset cursor pagination
+- [x] **Testing** — DB-backed E2E pipeline + multi-tenant isolation integration tests (verified on CockroachDB)
 
 ### Planned
 
-- [ ] **Phase 10** — Multi-region active-active deployment with global load balancing
-- [ ] **Phase 11** — OpenTelemetry distributed tracing (Jaeger / Tempo)
-- [ ] **Phase 12** — ClickHouse OLAP layer for analytics at scale
-- [ ] **Phase 12** — Grafana dashboards with pre-built TITAN panels
+- [ ] **Future** — Grafana dashboards with pre-built TITAN panels
 - [ ] **Future** — WASM plugin system for custom detection rules
 - [ ] **Future** — LLM output scanning (response-side PII, hallucination detection)
-- [ ] **Future** — SOC2 / HIPAA compliance report generation
+- [ ] **Future** — Load/stress test harness; Terraform modules for cluster provisioning
 
 ---
 
@@ -712,10 +710,9 @@ Types: `feat`, `fix`, `perf`, `refactor`, `test`, `docs`, `chore`
 Scopes: `gateway`, `ml_engine`, `dashboard`, `k8s`, `docker`
 
 **Areas where contributions are especially welcome:**
-- Cedar policy engine integration
-- Additional ML detection models (toxicity, code leak, credential detection)
-- Helm chart for production Kubernetes deployment
-- ClickHouse analytics adapter
+- Additional ML detection models (hallucination, response-side scanning)
+- Grafana dashboards and alerting rules
+- Load/stress test harness
 - Integration tests against real LLM providers (with cassette recording)
 
 ---

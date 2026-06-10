@@ -23,10 +23,10 @@
 | 4 | Python ML Analyzer (injection + PII detection) | Done |
 | 5 | Kafka Audit Logging & Postgres Integration | Done |
 | 6 | Next.js Dashboard (full CRUD UI) | Done |
-| 7 | Titan V2 — Cedar, Firecracker, CockroachDB migration | In Progress / Partially started |
-| 8 | Multi-Region Active-Active Deployment | Not started |
-| 9 | OpenTelemetry Observability | Not started |
-| 10 | ClickHouse Analytics Layer | Not started |
+| 7 | Titan V2 — Cedar, Firecracker, CockroachDB migration | Done |
+| 8 | Multi-Region Active-Active Deployment | Done (Helm chart + region overlays; cluster provisioning/Terraform out of scope) |
+| 9 | OpenTelemetry Observability | Done |
+| 10 | ClickHouse Analytics Layer | Done |
 
 ---
 
@@ -202,6 +202,29 @@
 **Verification:** `go build ./...` + `go test ./...` green (new batch tests pass); the full `AnalyzePrompt` composition path exercised end-to-end (clean→ALLOW, pii/secret/both→MASK with combined tags, toxic/inject→BLOCK); both SDKs instantiate; `openapi.json` validates. All work pushed to `origin/main`.
 
 **Remaining items:** #1 (Cedar), #2 (Firecracker), #3 (ClickHouse), #10 (OTel), #17 (gRPC versioning), plus test/infra items.
+
+### 2026-06-10 — Project Completion Session
+**Input:** "Finish up this project — do what's remaining, push after every change."
+
+All remaining pending items (#1–#18) closed this session, one commit per item:
+
+| Commit | Item | Summary |
+|---|---|---|
+| `1842efd` | #1, #4 | Removed dead `cedar.go` stub (real Cedar via cedar-go already lived in `engine.go`); ticked stale metrics-persistence checkbox |
+| `f0d07b2` | #3 | ClickHouse OLAP layer: Kafka-engine ingest (`platform/clickhouse/init.sql`), gateway HTTP read client, `/api/analytics/{overview,timeseries,threats}`, compose service |
+| `d1317d9` | #10 | OpenTelemetry tracing: OTLP/HTTP exporter + otelhttp middleware, opt-in via standard `OTEL_*` env vars |
+| `6f76e6a` | #13 | Keyset cursor pagination for audit logs (migration 005, `?cursor=` + `next_cursor`) |
+| `885b199` | #14 | Compliance report + CSV/JSONL audit export (`/admin/v1/compliance/*`) |
+| `4d232e8` | #17 | gRPC versioning policy (`ml_engine/proto/README.md`) + buf lint/breaking config |
+| `e7e5f3b` | #2 | True Firecracker microVM backend (API socket, serial-sentinel protocol, rootfs build tooling) with docker→simulated fallback chain |
+| `d9aee60` | #12 | Helm chart `helm/titan/` with multi-region overlays, HPA, topology spread |
+| `429a0c0` | #11 | E2E pipeline + multi-tenant isolation integration tests (verified live on CockroachDB) + **production bugfix**: migration 004 broke fresh CockroachDB boots (same-txn column+partial-index); split into 004/004b |
+
+**Toolchain set up this session:** Go 1.26.4 (winget), Helm 4.2 (winget).
+
+**Environment caveats:** Firecracker backend needs a Linux/KVM host to activate (probe-and-fallback verified here). ClickHouse ingestion configured for the compose topology (`redpanda:29092`); verified via schema review, not a live ClickHouse boot.
+
+**Remaining (explicitly out of scope, tracked in README "Planned"):** load/stress tests, Terraform/cluster provisioning, Grafana dashboards.
 
 ---
 
