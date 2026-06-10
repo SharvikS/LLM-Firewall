@@ -36,31 +36,39 @@ _SECCOMP_PROFILE = json.dumps({
 
 class FirecrackerSandboxManager:
     """
-    Hardened container sandbox for isolated agent tool execution.
+    Isolated execution for agent tool calls, strongest backend first:
 
-    Security controls applied to every container:
-      - Network isolation  : network_mode=none
-      - Read-only rootfs   : read_only=True
-      - No privilege esc.  : no-new-privileges security option
-      - Capability drop    : ALL Linux capabilities dropped
-      - Seccomp filter     : syscall allowlist profile
-      - Resource limits    : 128 MB memory (no swap), 50 PIDs
-      - Tmpfs              : /tmp and /var/tmp are in-memory only (noexec)
-      - Timeout + cleanup  : hard kill + force-remove after deadline
+    1. firecracker-microvm — true Firecracker microVMs (hardware-virtualized
+       KVM isolation, no NIC, read-only rootfs). Active when /dev/kvm, the
+       firecracker binary, a kernel image and a rootfs are present — see
+       core/firecracker_backend.py and core/firecracker/build_rootfs.sh.
+    2. docker-hardened — containers with network_mode=none, read-only rootfs,
+       all capabilities dropped, seccomp syscall allowlist, no-new-privileges,
+       128 MB no-swap memory cap, 50-PID limit, noexec tmpfs.
+    3. simulated — no execution at all (local dev without Docker/KVM).
 
-    Named "Firecracker" for roadmap alignment; this implementation uses Docker
-    with hardened security options. True Firecracker MicroVMs require bare-metal
-    KVM and are the production upgrade path for multi-tenant environments.
+    The backend in use is reported in every result's "sandbox" field.
     """
 
     def __init__(self) -> None:
-        self.client = None
+        self.firecracker = None
         try:
-            import docker  # type: ignore
-            self.client = docker.from_env()
-            logger.info("Sandbox connected to Docker API (hardened-container isolation active)")
-        except Exception as exc:
-            logger.warning("Docker API unavailable — sandbox running in simulation mode: %s", exc)
+            from analyzer.core.firecracker_backend import FirecrackerBackend
+            fc = FirecrackerBackend()
+            if fc.available():
+                self.firecracker = fc
+                logger.info("Sandbox using Firecracker microVMs (KVM hardware isolation)")
+        except Exception as exc:  # pragma: no cover — defensive
+            logger.warning("Firecracker backend probe failed: %s", exc)
+
+        self.client = None
+        if self.firecracker is None:
+            try:
+                import docker  # type: ignore
+                self.client = docker.from_env()
+                logger.info("Sandbox connected to Docker API (hardened-container isolation active)")
+            except Exception as exc:
+                logger.warning("Docker API unavailable — sandbox running in simulation mode: %s", exc)
 
     def execute_in_sandbox(
         self,
@@ -69,6 +77,9 @@ class FirecrackerSandboxManager:
         timeout: int = 10,
         env: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
+        if self.firecracker is not None:
+            return self.firecracker.execute(command, timeout=timeout, env=env)
+
         if not self.client:
             logger.info("[SIMULATED SANDBOX] command=%r", command)
             return {
