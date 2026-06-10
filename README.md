@@ -159,6 +159,10 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
 
 **Per-message PII Masking** — Microsoft Presidio detects and masks 11 entity types **independently per message** in multi-turn conversations before any data leaves your network: `CREDIT_CARD`, `EMAIL_ADDRESS`, `IBAN`, `IP_ADDRESS`, `PERSON`, `PHONE_NUMBER`, `US_SSN`, `US_BANK_NUMBER`, `US_DRIVER_LICENSE`, `US_ITIN`, `US_PASSPORT`. spaCy NER handles context-aware extraction. Each message is scanned in isolation — masking in one turn never corrupts adjacent turns.
 
+**Toxicity & Sentiment Detection** — A two-layer gate (curated threat/hate/self-harm lexicon + optional HuggingFace `unitary/toxic-bert`) blocks toxic content above a configurable threshold (`TOXICITY_BLOCK_THRESHOLD`). Sub-threshold toxicity raises the request's risk score. Fails open if the model can't load — heuristics carry detection.
+
+**Source-Code & Secret Leak Prevention** — Hardcoded credentials (cloud keys, provider API keys, private keys, tokens, DB connection strings) are masked in-place with `<SECRET:LABEL>` tags inside the same per-message pass as PII. A density heuristic flags large source-code pastes; set `CODE_LEAK_BLOCK=true` to reject them outright.
+
 **Sandbox Tool Execution Safety** — The analyzer's tool execution dispatcher uses an explicit two-tier allowlist. Shell execution tools (`bash`, `python`, `exec`, `subprocess`, etc.) are routed to an isolated sandbox. Unknown tool names are denied by default — the system never fails open to uncontrolled execution.
 
 **OOM Defense** — `http.MaxBytesReader` caps request body ingestion at a configurable limit (default 4 MB) before `io.ReadAll` — preventing memory exhaustion on malformed or oversized payloads.
@@ -194,6 +198,12 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
 ### Developer Experience
 
 **100% OpenAI SDK Compatible** — Change only `base_url` and `api_key`. No other SDK changes. Works with any language that has an OpenAI-compatible client.
+
+**OpenAPI 3.0 + Swagger UI** — The gateway serves its own machine-readable contract at `/openapi.json` and an interactive Swagger UI at `/docs` (covering the Admin API, read API, proxy, and batch endpoints).
+
+**Admin SDKs (Python & Node)** — Dependency-free client libraries in [`sdk/python`](sdk/python) and [`sdk/node`](sdk/node) wrap the full Admin API (tenants, keys, policies, audit) plus metrics — for programmatic tenant and policy management.
+
+**Asynchronous Batch API** — `POST /v1/batch` enqueues up to 100 prompts; each item passes the full ML governance gate (ALLOW/MASK/BLOCK) before reaching the upstream LLM. Poll `GET /v1/batch/{id}` for tenant-scoped results. Job state is Redis-backed (24h TTL) with an in-memory fallback.
 
 **Sub-millisecond Hot Path** — Go's goroutine model + Redis pipeline operations keep overhead imperceptible on cache hits.
 
@@ -352,6 +362,7 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 | Dashboard | `http://localhost:3000` | Enterprise control plane |
 | Gateway Health | `http://localhost:8080/health` | Health check |
 | Gateway Metrics | `http://localhost:8080/api/metrics` | Real-time metrics JSON |
+| API Reference | `http://localhost:8080/docs` | Swagger UI (`/openapi.json` for the raw spec) |
 | ML Engine gRPC | `localhost:50051` | Threat analysis (internal) |
 | Embedding Service | `http://localhost:8001/embed` | Semantic cache embeddings (internal) |
 | CockroachDB Admin | `http://localhost:8081` | Database console |
@@ -655,6 +666,7 @@ kubectl apply -f k8s/istio-gateway.yaml         # Istio ingress + mTLS policy
 - [x] **Phase 6** — Next.js 16 enterprise dashboard: 14 tabs, Recharts analytics, 4 themes, command palette
 - [x] **Phase 7** — Security hardening: 15 fixes across gateway, ML engine, and analyzer (OOM defense, per-message PII, default-deny policy, fail-closed TLS, sandbox allowlist, Kafka context fix, API key entropy, stats persistence, async auth touch)
 - [x] **Phase 8** — Production UI overhaul: animated count-up cards, gradient accent lines, shimmer skeletons, live-dot indicators, spring-physics nav, staggered threat feed, premium chart tooltips
+- [x] **Feature completion** — Toxicity/sentiment detection, source-code & secret leak prevention, OpenAPI 3.0 + Swagger UI (`/docs`), Python & Node Admin SDKs, async batch API (`/v1/batch`)
 
 ### In Progress
 
