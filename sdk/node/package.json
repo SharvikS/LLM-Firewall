@@ -1,0 +1,25 @@
+{
+  "name": "@titan/firewall-sdk",
+  "version": "1.0.0",
+  "description": "Node.js SDK for the TITAN Gateway zero-trust LLM firewall Admin API",
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    }
+  },
+  "files": ["index.js", "index.d.ts", "README.md"],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": ["llm", "firewall", "security", "gateway", "sdk"],
+  "license": "MIT",
+  "author": "Sharvik Sutar",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sharvik/llm-firewall"
+  }
+}
