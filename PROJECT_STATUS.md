@@ -1,7 +1,7 @@
 # LLM-Firewall (TITAN Gateway) — Project Status Log
 
 > **Auto-maintained log.** Updated at the end of every major session or when significant changes are made.
-> Last updated: 2026-06-07 (Session 5)
+> Last updated: 2026-06-10 (Feature Completion Session)
 
 ---
 
@@ -194,10 +194,12 @@
 | `gateway/cmd/server/main.go` | Mounted OpenAPI/docs at top level; created batch manager; registered `/v1/batch` routes before the proxy wildcard. |
 | `sdk/python/`, `sdk/node/` | NEW: dependency-free Python + Node SDKs wrapping the Admin + read API. |
 | `.env.example` | Documented `TOXICITY_*` and `CODE_LEAK_*` knobs. |
+| `README.md` | Surfaced the new features in Features / Service Endpoints / Roadmap. |
+| `.gitignore` | Ignore Python bytecode; untracked 20 previously-committed `__pycache__/*.pyc` files. |
 
 **Items completed:** #7 (Toxicity), #8 (Source-code leak), #15 (OpenAPI/Swagger), #16 (Client SDKs), #18 (Batch API)
 
-**Verification:** `go build ./...` + `go test ./...` green (new batch tests pass); Python modules `py_compile` + import clean; both SDKs instantiate; `openapi.json` validates.
+**Verification:** `go build ./...` + `go test ./...` green (new batch tests pass); the full `AnalyzePrompt` composition path exercised end-to-end (clean→ALLOW, pii/secret/both→MASK with combined tags, toxic/inject→BLOCK); both SDKs instantiate; `openapi.json` validates. All work pushed to `origin/main`.
 
 **Remaining items:** #1 (Cedar), #2 (Firecracker), #3 (ClickHouse), #10 (OTel), #17 (gRPC versioning), plus test/infra items.
 
