@@ -1,0 +1,17 @@
+# Buf configuration for the analyzer gRPC contract.
+# See README.md in this directory for the full versioning policy.
+#
+#   buf lint
+#   buf breaking --against '../../.git#subdir=ml_engine/proto'
+version: v2
+modules:
+  - path: .
+lint:
+  use:
+    - STANDARD
+  except:
+    # go_package carries a ";pkgname" suffix by design (see analyzer.proto).
+    - PACKAGE_DIRECTORY_MATCH
+breaking:
+  use:
+    - WIRE_JSON   # strictest: wire + JSON compatibility (field names matter)

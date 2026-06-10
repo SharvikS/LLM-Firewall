@@ -71,7 +71,7 @@
 - [x] **14. Compliance Reporting** — DONE. `GET /admin/v1/compliance/report` (period summary: totals, action/region breakdowns, risk stats, attestations) and `GET /admin/v1/compliance/export?format=csv|jsonl` (full audit-trail export streamed in bounded memory via keyset paging — CSV for auditors, JSON Lines for SIEM).
 - [x] **15. OpenAPI/Swagger Docs** — DONE. Embedded OpenAPI 3.0 spec (`gateway/internal/api/openapi.json`) served at `/openapi.json` with Swagger UI at `/docs` (top-level, bypassing admin auth). Covers admin API, read API, proxy and batch.
 - [x] **16. Client SDKs** — DONE. `sdk/python` (stdlib `TitanClient`) and `sdk/node` (ESM over fetch + `.d.ts`) wrap the full Admin API + read API.
-- [ ] **17. gRPC Schema Versioning** — Proto file exists but no backward compatibility strategy.
+- [x] **17. gRPC Schema Versioning** — DONE. `ml_engine/proto/README.md` documents the full policy (additive-only within `analyzer.v1`, `reserved` on deletion, breaking changes ship as side-by-side `analyzer.v2`, retirement criteria) and `buf.yaml` enforces it (`buf lint` + `buf breaking` with WIRE_JSON against git).
 - [x] **18. Batch Processing API** — DONE. `POST /v1/batch` (async, ≤100 items, ML governance per item) + `GET /v1/batch/{id}` (tenant-scoped). Redis-backed job state with in-memory fallback. `gateway/internal/batch/`.
 
 ---
