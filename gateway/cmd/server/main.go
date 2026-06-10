@@ -16,6 +16,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/sharvik/llm-firewall/gateway/internal/analytics"
 	adminapi "github.com/sharvik/llm-firewall/gateway/internal/api"
 	"github.com/sharvik/llm-firewall/gateway/internal/analyzer"
 	"github.com/sharvik/llm-firewall/gateway/internal/batch"
@@ -144,6 +145,14 @@ func main() {
 	}
 	batchMgr := batch.NewManager(batchRedis, mlClient, cfg.TargetURL, cfg.APIKey)
 
+	// ── ClickHouse analytics (optional OLAP read path) ────────────────────────
+	chClient := analytics.New(cfg.ClickHouseURL, cfg.ClickHouseUser, cfg.ClickHousePassword, cfg.ClickHouseDatabase)
+	if chClient.Enabled() {
+		log.Info("ClickHouse analytics enabled", slog.String("url", cfg.ClickHouseURL))
+	} else {
+		log.Info("ClickHouse analytics disabled — set CLICKHOUSE_URL to enable")
+	}
+
 	// ── Policy Engine (DB-backed, 30s refresh) ────────────────────────────────
 	policyEngine := policy.NewEngine(st)
 
@@ -184,6 +193,12 @@ func main() {
 		})
 		r.Get("/metrics", metricsHandler)
 		r.Get("/events",  eventsHandler)
+
+		// ClickHouse-backed OLAP analytics (503 when CLICKHOUSE_URL unset)
+		ah := adminapi.NewAnalyticsHandler(chClient)
+		r.Get("/analytics/overview",   ah.Overview)
+		r.Get("/analytics/timeseries", ah.Timeseries)
+		r.Get("/analytics/threats",    ah.Threats)
 	})
 
 	// API reference (public — the contract exposes no secrets)

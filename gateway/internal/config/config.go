@@ -52,6 +52,12 @@ type Config struct {
 
 	// Admin API
 	AdminToken string // master secret for /admin/* routes — never NEXT_PUBLIC_
+
+	// ClickHouse analytics (OLAP read path); empty URL = disabled
+	ClickHouseURL      string // e.g. "http://localhost:8123"
+	ClickHouseUser     string
+	ClickHousePassword string
+	ClickHouseDatabase string
 }
 
 // Load reads environment variables and returns a validated Config.
@@ -91,6 +97,11 @@ func Load() (*Config, error) {
 		SemanticCacheThreshold: getEnvFloat64("SEMANTIC_CACHE_THRESHOLD", 0.95),
 
 		AdminToken: getEnv("ADMIN_TOKEN", "titan-admin-dev-secret"),
+
+		ClickHouseURL:      os.Getenv("CLICKHOUSE_URL"),
+		ClickHouseUser:     getEnv("CLICKHOUSE_USER", "default"),
+		ClickHousePassword: os.Getenv("CLICKHOUSE_PASSWORD"),
+		ClickHouseDatabase: getEnv("CLICKHOUSE_DATABASE", "titan"),
 	}
 
 	if cfg.APIKey == "" {

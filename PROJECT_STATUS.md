@@ -51,7 +51,7 @@
 
 - [x] **1. Cedar Policy Engine** — DONE. `gateway/internal/policy/engine.go` evaluates real Cedar via `github.com/cedar-policy/cedar-go` (pure-Go AWS implementation): DB policies compile to Cedar text (or use the pre-computed `cedar_text` column), forbid-wins + default-deny semantics, 30s cache refresh. The old `cedar.go` stub was dead code and has been removed.
 - [ ] **2. Firecracker MicroVM Sandbox** — `analyzer/core/sandbox.py` uses Docker containers instead of true Firecracker microVMs. Real security gap — containers can be escaped.
-- [ ] **3. ClickHouse Analytics DB** — No OLAP layer. Audit logs in PostgreSQL won't scale to enterprise traffic. Required for real-time dashboard analytics.
+- [x] **3. ClickHouse Analytics DB** — DONE. ClickHouse ingests the `audit_logs` topic natively (Kafka engine table + MV → MergeTree, 90-day TTL, monthly partitions — `platform/clickhouse/init.sql`). Gateway read path: `internal/analytics/clickhouse.go` (HTTP interface, parameterized queries) exposed at `/api/analytics/{overview,timeseries,threats}`; answers 503 when `CLICKHOUSE_URL` unset. Compose includes the `clickhouse` service.
 - [x] **4. Metrics Persistence** — DONE (Phase 2 session). `gateway/internal/metrics/reporter.go` flushes counters/latencies/traffic to Redis every 5s; `GlobalSnapshot()`/`GlobalEvents()` give cluster-wide views with local fallback.
 
 ### Medium Priority

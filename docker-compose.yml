@@ -95,6 +95,34 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # ── ClickHouse (OLAP analytics — ingests audit_logs topic natively) ───────
+  # Kafka engine table + materialized view (see platform/clickhouse/init.sql)
+  # consume the same topic as the Go consumer but under their own consumer
+  # group, so Postgres persistence and OLAP analytics are independent.
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    environment:
+      CLICKHOUSE_SKIP_USER_SETUP: "1"   # default user, no password (local dev)
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./platform/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports:
+      - "8123:8123"   # HTTP interface (gateway read path)
+      - "9000:9000"   # native protocol
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    restart: unless-stopped
+
   # ── Qdrant (vector DB for semantic response caching) ─────────────────────
   qdrant:
     image: qdrant/qdrant:v1.9.2
@@ -155,6 +183,9 @@ services:
       QDRANT_URL: "http://qdrant:6333"
       EMBEDDING_URL: "http://ml_engine:8001/embed"
       SEMANTIC_CACHE_THRESHOLD: "0.95"
+      CLICKHOUSE_URL: "http://clickhouse:8123"
+      CLICKHOUSE_USER: "default"
+      CLICKHOUSE_DATABASE: "titan"
     ports:
       - "8080:8080"
     depends_on:
@@ -194,3 +225,4 @@ volumes:
   cockroach_data:
   redpanda_data:
   qdrant_data:
+  clickhouse_data:
