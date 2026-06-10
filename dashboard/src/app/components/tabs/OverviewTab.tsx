@@ -91,7 +91,7 @@ function MetricCard({ title, value, rawValue, sub, trend, accentColor }: {
     <motion.div
       initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-      className="relative overflow-hidden rounded-xl border p-5 group transition-all duration-200 cursor-default"
+      className="relative overflow-hidden rounded-xl border p-4 group transition-all duration-200 cursor-default"
       style={{
         background: 'var(--bg-card)',
         borderColor: 'var(--border-color)',
@@ -106,10 +106,10 @@ function MetricCard({ title, value, rawValue, sub, trend, accentColor }: {
         style={{ background: `color-mix(in srgb, ${color} 15%, transparent)` }}/>
 
       <div className="relative z-10">
-        <div className="text-[10px] font-semibold uppercase tracking-[0.1em] mb-3" style={{ color: 'var(--text-muted)' }}>
+        <div className="text-[10px] font-semibold uppercase tracking-[0.1em] mb-2" style={{ color: 'var(--text-muted)' }}>
           {title}
         </div>
-        <div className="text-[28px] font-bold tracking-tight leading-none mb-2.5" style={{ color: 'var(--text-main)' }}>
+        <div className="text-[24px] font-bold tracking-tight leading-none mb-2 tnum" style={{ color: 'var(--text-main)' }}>
           {displayValue}
         </div>
         <div className="flex items-center gap-1.5">
@@ -167,21 +167,15 @@ function ChartTooltip({ active, payload }: { active?: boolean; payload?: any[] }
 function SecondaryStat({ label, value, color }: { label: string; value: number; color: string }) {
   const animated = useCounter(value);
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-      className="relative overflow-hidden rounded-xl border p-4 group transition-all duration-200"
-      style={{ background: 'var(--bg-card)', borderColor: 'var(--border-color)' }}
-    >
-      <div className="absolute top-0 left-0 right-0 h-px"
-        style={{ background: `linear-gradient(90deg, transparent 20%, ${color}50 50%, transparent 80%)` }}/>
-      <div className="text-[10px] font-semibold uppercase tracking-[0.1em] mb-2" style={{ color: 'var(--text-muted)' }}>
-        {label}
+    <div className="flex items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-white/[0.02]">
+      <div className="flex items-center gap-2.5 min-w-0">
+        <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color, boxShadow: `0 0 6px ${color}50` }}/>
+        <span className="text-[11px] font-medium truncate" style={{ color: 'var(--text-muted)' }}>{label}</span>
       </div>
-      <div className="text-2xl font-bold tracking-tight" style={{ color }}>
+      <span className="text-base font-bold tracking-tight tnum shrink-0" style={{ color }}>
         {kfmt(animated)}
-      </div>
-    </motion.div>
+      </span>
+    </div>
   );
 }
 
@@ -286,12 +280,12 @@ export default function OverviewTab() {
   const threatEvents = events.filter(e => e.action !== 'ALLOWED').slice(0, 12);
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="max-w-[1480px] mx-auto space-y-4">
       {/* Page header */}
       <div className="flex justify-between items-end">
         <div>
-          <h1 className="text-[22px] font-bold tracking-tight">Overview</h1>
-          <p className="text-sm mt-1 flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
+          <h1 className="text-lg font-bold tracking-tight">Overview</h1>
+          <p className="text-[13px] mt-0.5 flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
             Live gateway telemetry
             {metrics?._offline && (
               <span className="inline-flex items-center gap-1 text-yellow-500 font-medium text-xs px-2 py-0.5 rounded-md"
@@ -300,7 +294,7 @@ export default function OverviewTab() {
               </span>
             )}
             {lastRefresh && !metrics?._offline && (
-              <span className="text-[11px] opacity-50">· {lastRefresh.toLocaleTimeString()}</span>
+              <span className="text-[11px] opacity-50 tnum">· {lastRefresh.toLocaleTimeString()}</span>
             )}
           </p>
         </div>
@@ -313,9 +307,9 @@ export default function OverviewTab() {
       </div>
 
       {/* KPI row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {loading ? (
-          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[110px]"/>)
+          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[96px]"/>)
         ) : (
           <>
             <MetricCard title="Total Requests"  rawValue={totalReq}   value={kfmt(totalReq)}
@@ -331,10 +325,10 @@ export default function OverviewTab() {
       </div>
 
       {/* Chart + Threat feed */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
         {/* Traffic chart */}
-        <div className="lg:col-span-2 relative overflow-hidden rounded-xl border flex flex-col"
-          style={{ background: 'var(--bg-card)', borderColor: 'var(--border-color)', height: 360 }}>
+        <div className="lg:col-span-2 relative overflow-hidden rounded-xl border flex flex-col h-[340px] xl:h-[400px] 2xl:h-[450px]"
+          style={{ background: 'var(--bg-card)', borderColor: 'var(--border-color)' }}>
           {/* Top gradient line */}
           <div className="absolute top-0 left-0 right-0 h-px"
             style={{ background: 'linear-gradient(90deg, transparent 10%, var(--accent) 50%, transparent 90%)', opacity: 0.4 }}/>
@@ -388,8 +382,8 @@ export default function OverviewTab() {
         </div>
 
         {/* Live threat feed */}
-        <div className="relative overflow-hidden rounded-xl border flex flex-col"
-          style={{ background: 'var(--bg-card)', borderColor: 'var(--border-color)', height: 360 }}>
+        <div className="relative overflow-hidden rounded-xl border flex flex-col h-[340px] xl:h-[400px] 2xl:h-[450px]"
+          style={{ background: 'var(--bg-card)', borderColor: 'var(--border-color)' }}>
           <div className="absolute top-0 left-0 right-0 h-px"
             style={{ background: 'linear-gradient(90deg, transparent 10%, #f87171 50%, transparent 90%)', opacity: 0.4 }}/>
           {/* Header */}
@@ -426,9 +420,10 @@ export default function OverviewTab() {
         </div>
       </div>
 
-      {/* Secondary stats */}
+      {/* Secondary stats — single compact strip */}
       {metrics && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 rounded-xl border overflow-hidden divide-y md:divide-y-0 md:divide-x divide-base-border"
+          style={{ background: 'var(--bg-card)', borderColor: 'var(--border-color)' }}>
           <SecondaryStat label="PII Masked"   value={piiMasked}   color="#60a5fa"/>
           <SecondaryStat label="ML Blocked"   value={mlBlocked}   color="#f87171"/>
           <SecondaryStat label="Rate Limited" value={rateLimited} color="#facc15"/>
