@@ -61,7 +61,7 @@
 - [x] **7. Toxicity / Sentiment Detection** — DONE. `ml_engine/analyzer/toxicity_detector.py`: two-layer (heuristic lexicon + optional `unitary/toxic-bert`) BLOCK gate wired after injection. Configurable via `TOXICITY_ENABLED` / `TOXICITY_BLOCK_THRESHOLD`.
 - [x] **8. Source Code Leak Prevention** — DONE. `ml_engine/analyzer/secret_scanner.py`: masks hardcoded credentials (`<SECRET:LABEL>`) and detects large source-code pastes via a density heuristic. Composed into the same per-message masking pass as PII. `CODE_LEAK_BLOCK=true` blocks code pastes; default flags + raises risk.
 - [x] **9. Multi-Provider Failover / Smart Routing** — DONE. Added `FallbackTargetURL` + `FallbackAPIKey` config (env vars). Proxy builds a second `httputil.ReverseProxy`; `ModifyResponse` triggers failover on 502/503/504; `ErrorHandler` replays request body (stored in context) to fallback. Logs a warning on failover.
-- [ ] **10. OpenTelemetry (OTel) Observability** — No distributed tracing or metrics export. Required for multi-region visibility.
+- [x] **10. OpenTelemetry (OTel) Observability** — DONE. `gateway/internal/telemetry/otel.go`: OTLP/HTTP trace exporter + W3C TraceContext/Baggage propagation, one server span per request via `otelhttp` middleware (first in the chain). Fully opt-in — no-op with zero overhead unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set; honours standard `OTEL_*` env vars.
 
 ### Lower Priority
 

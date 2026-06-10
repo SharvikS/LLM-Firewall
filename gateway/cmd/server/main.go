@@ -30,6 +30,7 @@ import (
 	"github.com/sharvik/llm-firewall/gateway/internal/proxy"
 	"github.com/sharvik/llm-firewall/gateway/internal/ratelimit"
 	"github.com/sharvik/llm-firewall/gateway/internal/store"
+	"github.com/sharvik/llm-firewall/gateway/internal/telemetry"
 )
 
 func main() {
@@ -47,6 +48,14 @@ func main() {
 	)
 
 	ctx := context.Background()
+
+	// ── OpenTelemetry tracing (no-op unless OTEL_EXPORTER_OTLP_ENDPOINT set) ──
+	otelShutdown, otelEnabled := telemetry.Setup(ctx)
+	defer func() {
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		otelShutdown(flushCtx) //nolint:errcheck
+	}()
 
 	// ── Database (hard dependency — auth depends on it) ───────────────────────
 	st, err := store.New(ctx, cfg.DBConnString)
@@ -165,6 +174,7 @@ func main() {
 
 	// ── Router ────────────────────────────────────────────────────────────────
 	r := chi.NewRouter()
+	r.Use(telemetry.Middleware(otelEnabled))
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.RealIP)
 	r.Use(gatewaymw.SecurityHeaders)
