@@ -49,6 +49,10 @@ func NewAdminRouter(st *store.Store, adminToken string) http.Handler {
 	// Audit logs
 	r.Get("/audit",          h.listAudit)
 
+	// Compliance reporting
+	r.Get("/compliance/report", h.complianceReport)
+	r.Get("/compliance/export", h.complianceExport)
+
 	return r
 }
 
