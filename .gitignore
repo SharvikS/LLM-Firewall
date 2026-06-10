@@ -10,3 +10,8 @@ gateway/gateway
 *.dll
 *.so
 *.dylib
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
