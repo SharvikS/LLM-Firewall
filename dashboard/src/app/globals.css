@@ -177,3 +177,50 @@ body {
   background: color-mix(in srgb, var(--accent) 25%, transparent);
   color: var(--text-main);
 }
+
+/* ── Rail tooltip (collapsed sidebar) ───────────────────────────────────── */
+.rail-tip { position: relative; }
+.rail-tip::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  transform: translateY(-50%) translateX(-4px);
+  background: var(--bg-card);
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  z-index: 60;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+}
+.rail-tip:hover::after {
+  opacity: 1;
+  transform: translateY(-50%) translateX(0);
+  transition-delay: 0.25s;
+}
+
+/* ── Accessible focus ring (keyboard only) ──────────────────────────────── */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bg-main), 0 0 0 4px color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 8px;
+}
+
+/* ── Reduced motion ─────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Tabular numbers everywhere data lives ──────────────────────────────── */
+.tnum { font-variant-numeric: tabular-nums; }
