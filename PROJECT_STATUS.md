@@ -58,8 +58,8 @@
 
 - [x] **5. Semantic Caching via Qdrant** — DONE. `cache/semantic.go` uses Qdrant REST API + ML engine embedding endpoint. `all-MiniLM-L6-v2` generates 384-dim vectors; cosine similarity ≥ 0.95 (configurable) triggers a hit. Docker Compose now includes Qdrant. Falls back gracefully if Qdrant/embedding unavailable.
 - [x] **6. Token-Based Rate Limiting** — DONE. Added `AllowTokens()` TPM method to `ratelimit.go` (1-min tumbling Redis bucket). Proxy checks TPM in Stage 3 after RPM. Enable via `RATE_LIMIT_TPM=<n>` env var (0 = disabled). Returns `X-RateLimit-Tokens-Remaining` header.
-- [ ] **7. Toxicity / Sentiment Detection** — Mentioned in README, not implemented. Only injection and PII detection exist.
-- [ ] **8. Source Code Leak Prevention** — Mentioned in README, not implemented.
+- [x] **7. Toxicity / Sentiment Detection** — DONE. `ml_engine/analyzer/toxicity_detector.py`: two-layer (heuristic lexicon + optional `unitary/toxic-bert`) BLOCK gate wired after injection. Configurable via `TOXICITY_ENABLED` / `TOXICITY_BLOCK_THRESHOLD`.
+- [x] **8. Source Code Leak Prevention** — DONE. `ml_engine/analyzer/secret_scanner.py`: masks hardcoded credentials (`<SECRET:LABEL>`) and detects large source-code pastes via a density heuristic. Composed into the same per-message masking pass as PII. `CODE_LEAK_BLOCK=true` blocks code pastes; default flags + raises risk.
 - [x] **9. Multi-Provider Failover / Smart Routing** — DONE. Added `FallbackTargetURL` + `FallbackAPIKey` config (env vars). Proxy builds a second `httputil.ReverseProxy`; `ModifyResponse` triggers failover on 502/503/504; `ErrorHandler` replays request body (stored in context) to fallback. Logs a warning on failover.
 - [ ] **10. OpenTelemetry (OTel) Observability** — No distributed tracing or metrics export. Required for multi-region visibility.
 
@@ -69,10 +69,10 @@
 - [ ] **12. Multi-Region K8s Deployment** — K8s manifests exist but no Terraform/Helm charts, no cross-region replication, no automated failover.
 - [ ] **13. Audit Log Query Performance** — Basic offset/limit pagination. No cursor-based pagination or index optimization.
 - [ ] **14. Compliance Reporting** — No SOC2/HIPAA/GDPR report generation or audit trail export.
-- [ ] **15. OpenAPI/Swagger Docs** — No API schema for the admin API.
-- [ ] **16. Client SDKs** — No Python/Node.js/Go libraries for programmatic management.
+- [x] **15. OpenAPI/Swagger Docs** — DONE. Embedded OpenAPI 3.0 spec (`gateway/internal/api/openapi.json`) served at `/openapi.json` with Swagger UI at `/docs` (top-level, bypassing admin auth). Covers admin API, read API, proxy and batch.
+- [x] **16. Client SDKs** — DONE. `sdk/python` (stdlib `TitanClient`) and `sdk/node` (ESM over fetch + `.d.ts`) wrap the full Admin API + read API.
 - [ ] **17. gRPC Schema Versioning** — Proto file exists but no backward compatibility strategy.
-- [ ] **18. Batch Processing API** — No `/v1/batch` endpoint for async bulk prompt jobs.
+- [x] **18. Batch Processing API** — DONE. `POST /v1/batch` (async, ≤100 items, ML governance per item) + `GET /v1/batch/{id}` (tenant-scoped). Redis-backed job state with in-memory fallback. `gateway/internal/batch/`.
 
 ---
 
@@ -177,6 +177,29 @@
 
 **Remaining items:** #1 (Cedar), #2 (Firecracker), #3 (ClickHouse)
 **To enable gRPC TLS in production:** Mount a cert/key pair into the ml_engine pod at `/etc/certs/tls.crt` + `/etc/certs/tls.key`, set `GRPC_TLS_ENABLED=true` on the ml_engine service, and `ANALYZER_TLS_ENABLED=true` + `ANALYZER_TLS_CERT_FILE=/etc/certs/tls.crt` on the gateway.
+
+### 2026-06-10 — Feature Completion Session
+**Input:** "Finish this project" → scoped to *feature completion* — build the unbuilt features named in the README/status (toxicity, source-code-leak prevention, OpenAPI docs, client SDKs, batch API).
+
+**Changes made:**
+
+| File | Change |
+|---|---|
+| `ml_engine/analyzer/toxicity_detector.py` | NEW: two-layer toxicity detector (heuristic lexicon + optional `unitary/toxic-bert`); BLOCK gate. |
+| `ml_engine/analyzer/secret_scanner.py` | NEW: credential masking (`<SECRET:LABEL>`) + source-code-leak density heuristic. |
+| `ml_engine/analyzer/server.py` | Wired toxicity BLOCK gate after injection; restructured the masking pass to compose PII + secrets into one rewrite; added code-leak flag/BLOCK + `SourceCodeLeak`/`SecretLeak`/`Toxicity` threat details. |
+| `gateway/internal/api/openapi.{json,go}` | NEW: embedded OpenAPI 3.0 spec + Swagger UI, served at `/openapi.json` and `/docs`. |
+| `gateway/internal/batch/batch.go` | NEW: async batch manager — Redis-backed (in-memory fallback), ML governance per item, upstream forwarding. |
+| `gateway/internal/api/batch.go` + `batch_test.go` | NEW: `/v1/batch` submit/status handlers (tenant-scoped) + integration tests (routing precedence, governance, cross-tenant 404). |
+| `gateway/cmd/server/main.go` | Mounted OpenAPI/docs at top level; created batch manager; registered `/v1/batch` routes before the proxy wildcard. |
+| `sdk/python/`, `sdk/node/` | NEW: dependency-free Python + Node SDKs wrapping the Admin + read API. |
+| `.env.example` | Documented `TOXICITY_*` and `CODE_LEAK_*` knobs. |
+
+**Items completed:** #7 (Toxicity), #8 (Source-code leak), #15 (OpenAPI/Swagger), #16 (Client SDKs), #18 (Batch API)
+
+**Verification:** `go build ./...` + `go test ./...` green (new batch tests pass); Python modules `py_compile` + import clean; both SDKs instantiate; `openapi.json` validates.
+
+**Remaining items:** #1 (Cedar), #2 (Firecracker), #3 (ClickHouse), #10 (OTel), #17 (gRPC versioning), plus test/infra items.
 
 ---
 
