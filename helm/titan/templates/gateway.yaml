@@ -1,0 +1,135 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "titan.fullname" . }}-gateway
+  labels:
+    app.kubernetes.io/name: titan-gateway
+    {{- include "titan.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.gateway.autoscaling.enabled }}
+  replicas: {{ .Values.gateway.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: titan-gateway
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: titan-gateway
+        {{- include "titan.labels" . | nindent 8 }}
+      annotations:
+        sidecar.istio.io/inject: {{ .Values.gateway.istioInject | quote }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: titan-gateway
+              app.kubernetes.io/instance: {{ .Release.Name }}
+      containers:
+        - name: gateway
+          image: {{ .Values.gateway.image }}
+          ports:
+            - containerPort: 8080
+          env:
+            - name: LISTEN_ADDR
+              value: ":8080"
+            - name: REGION
+              value: {{ .Values.region | quote }}
+            - name: TARGET_URL
+              value: {{ .Values.externalServices.targetURL | quote }}
+            - name: DB_CONN_STRING
+              value: {{ .Values.externalServices.dbConnString | quote }}
+            - name: KAFKA_BROKERS
+              value: {{ .Values.externalServices.kafkaBrokers | quote }}
+            - name: REDIS_ADDR
+              value: {{ .Values.externalServices.redisAddr | quote }}
+            - name: QDRANT_URL
+              value: {{ .Values.externalServices.qdrantURL | quote }}
+            - name: CLICKHOUSE_URL
+              value: {{ .Values.externalServices.clickhouseURL | quote }}
+            - name: ANALYZER_ADDR
+              value: "{{ include "titan.fullname" . }}-ml:50051"
+            - name: EMBEDDING_URL
+              value: "http://{{ include "titan.fullname" . }}-ml:8001/embed"
+            {{- if .Values.externalServices.fallbackTargetURL }}
+            - name: FALLBACK_TARGET_URL
+              value: {{ .Values.externalServices.fallbackTargetURL | quote }}
+            - name: FALLBACK_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "titan.secretName" . }}
+                  key: fallback-api-key
+            {{- end }}
+            {{- if .Values.gateway.otlpEndpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ .Values.gateway.otlpEndpoint | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: "titan-gateway-{{ .Values.region }}"
+            {{- end }}
+            - name: ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "titan.secretName" . }}
+                  key: admin-token
+            - name: GROQ_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "titan.secretName" . }}
+                  key: provider-api-key
+            {{- range $k, $v := .Values.gateway.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          readinessProbe:
+            httpGet: {path: /health, port: 8080}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /health, port: 8080}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources: {{- toYaml .Values.gateway.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "titan.fullname" . }}-gateway
+  labels: {{- include "titan.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.gateway.service.type }}
+  selector:
+    app.kubernetes.io/name: titan-gateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  ports:
+    - protocol: TCP
+      port: {{ .Values.gateway.service.port }}
+      targetPort: 8080
+{{- if .Values.gateway.autoscaling.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "titan.fullname" . }}-gateway
+  labels: {{- include "titan.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "titan.fullname" . }}-gateway
+  minReplicas: {{ .Values.gateway.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.gateway.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.gateway.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}

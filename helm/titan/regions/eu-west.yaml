@@ -1,0 +1,12 @@
+# Region overlay: EU West (GDPR-scoped traffic).
+#   helm install titan-eu ./helm/titan -f ./helm/titan/regions/eu-west.yaml
+region: eu-west-1
+gateway:
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 12
+externalServices:
+  redisAddr: "redis.eu-west.platform.svc.cluster.local:6379"
+  kafkaBrokers: "redpanda-0.eu-west.platform.svc.cluster.local:9092"
+  dbConnString: "postgresql://root@cockroachdb-eu-west.platform.svc.cluster.local:26257/defaultdb?sslmode=verify-full"
+  clickhouseURL: "http://clickhouse.eu-west.platform.svc.cluster.local:8123"

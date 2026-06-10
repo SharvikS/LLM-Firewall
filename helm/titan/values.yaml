@@ -1,0 +1,77 @@
+# Default values for the titan chart.
+# Per-region installs override `region` and the externalServices endpoints:
+#   helm install titan-us ./helm/titan -f regions/us-east.yaml
+
+# Region tag stamped on pods and exported to the gateway (audit events carry
+# it; CockroachDB locality and Cedar region conditions consume it).
+region: local
+
+imagePullSecrets: []
+
+gateway:
+  image: ghcr.io/sharviks/llm-firewall-gateway:latest
+  replicas: 3
+  service:
+    type: ClusterIP
+    port: 80
+  resources:
+    requests: {cpu: 500m, memory: 512Mi}
+    limits: {cpu: "2", memory: 1Gi}
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 12
+    targetCPUUtilizationPercentage: 70
+  env:
+    RATE_LIMIT_RPM: "600"
+    RATE_LIMIT_TPM: "0"
+    CACHE_TTL_SEC: "3600"
+    SEMANTIC_CACHE_THRESHOLD: "0.95"
+    ANALYZER_TIMEOUT_MS: "150"
+  # Distributed tracing — set to an OTLP collector endpoint to enable.
+  otlpEndpoint: ""
+  istioInject: true
+
+mlEngine:
+  image: ghcr.io/sharviks/llm-firewall-ml:latest
+  replicas: 2
+  resources:
+    requests: {cpu: "1", memory: 2Gi}
+    limits: {cpu: "4", memory: 4Gi}
+  env:
+    TOXICITY_ENABLED: "true"
+    TOXICITY_BLOCK_THRESHOLD: "0.85"
+    CODE_LEAK_BLOCK: "false"
+  istioInject: true
+
+dashboard:
+  enabled: true
+  image: ghcr.io/sharviks/llm-firewall-dashboard:latest
+  replicas: 2
+  service:
+    type: ClusterIP
+    port: 3000
+  resources:
+    requests: {cpu: 250m, memory: 256Mi}
+    limits: {cpu: "1", memory: 512Mi}
+
+# Endpoints of stateful services this region talks to. For multi-region
+# active-active, point every region at its local Redis/Kafka and at the
+# regional CockroachDB nodes of the shared cluster.
+externalServices:
+  redisAddr: "redis.platform.svc.cluster.local:6379"
+  dbConnString: "postgresql://root@cockroachdb.platform.svc.cluster.local:26257/defaultdb?sslmode=verify-full"
+  kafkaBrokers: "redpanda.platform.svc.cluster.local:9092"
+  qdrantURL: "http://qdrant.platform.svc.cluster.local:6333"
+  clickhouseURL: "http://clickhouse.platform.svc.cluster.local:8123"
+  targetURL: "https://api.groq.com/openai"
+  fallbackTargetURL: ""
+
+secrets:
+  # Set via --set-string or an external secret manager in production.
+  adminToken: "change-me"
+  providerAPIKey: ""
+  fallbackAPIKey: ""
+  # Reference an existing Secret instead of creating one from the values
+  # above (keys: admin-token, provider-api-key, fallback-api-key).
+  existingSecret: ""

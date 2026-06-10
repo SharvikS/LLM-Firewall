@@ -1,0 +1,12 @@
+# Region overlay: US East.
+#   helm install titan-us ./helm/titan -f ./helm/titan/regions/us-east.yaml
+region: us-east-1
+gateway:
+  autoscaling:
+    minReplicas: 5
+    maxReplicas: 20
+externalServices:
+  redisAddr: "redis.us-east.platform.svc.cluster.local:6379"
+  kafkaBrokers: "redpanda-0.us-east.platform.svc.cluster.local:9092"
+  dbConnString: "postgresql://root@cockroachdb-us-east.platform.svc.cluster.local:26257/defaultdb?sslmode=verify-full"
+  clickhouseURL: "http://clickhouse.us-east.platform.svc.cluster.local:8123"
