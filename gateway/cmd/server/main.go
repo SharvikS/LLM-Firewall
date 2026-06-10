@@ -176,6 +176,10 @@ func main() {
 		r.Get("/events",  eventsHandler)
 	})
 
+	// API reference (public — the contract exposes no secrets)
+	r.Get("/openapi.json", adminapi.OpenAPISpecHandler)
+	r.Get("/docs", adminapi.SwaggerUIHandler)
+
 	// Admin API (token-gated — called server-side only from Next.js)
 	r.Mount("/admin/v1", adminapi.NewAdminRouter(st, cfg.AdminToken))
 

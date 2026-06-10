@@ -1,0 +1,261 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "TITAN Gateway API",
+    "description": "Zero-Trust LLM Security Gateway. The Admin API (`/admin/v1/*`) manages tenants, API keys, policies and audit logs and is gated by the `X-Admin-Token` header. The data-plane proxy (`/v1/*`) forwards OpenAI-compatible requests to the upstream LLM after the seven-stage inspection pipeline, and is gated by a tenant API key. The read API (`/api/*`) exposes non-sensitive metrics.",
+    "version": "1.0.0",
+    "license": { "name": "MIT" }
+  },
+  "servers": [
+    { "url": "http://localhost:8080", "description": "Local development" }
+  ],
+  "tags": [
+    { "name": "Health", "description": "Liveness" },
+    { "name": "Tenants", "description": "Tenant management" },
+    { "name": "API Keys", "description": "Tenant-scoped API key issuance and revocation" },
+    { "name": "Policies", "description": "ABAC policy CRUD" },
+    { "name": "Audit", "description": "Audit log query" },
+    { "name": "Metrics", "description": "Aggregate gateway metrics and threat feed" },
+    { "name": "Proxy", "description": "LLM data-plane proxy" }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Liveness probe",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Service is up",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "example": "ok" }, "service": { "type": "string", "example": "titan-gateway" } } } } }
+          }
+        }
+      }
+    },
+    "/api/metrics": {
+      "get": {
+        "tags": ["Metrics"],
+        "summary": "Aggregate gateway metrics",
+        "security": [],
+        "responses": { "200": { "description": "Cross-replica metrics snapshot", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Metrics" } } } } }
+      }
+    },
+    "/api/events": {
+      "get": {
+        "tags": ["Metrics"],
+        "summary": "Recent threat / decision events",
+        "security": [],
+        "parameters": [ { "name": "n", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 }, "description": "Number of events to return" } ],
+        "responses": { "200": { "description": "Cluster-wide event feed", "content": { "application/json": { "schema": { "type": "object", "properties": { "events": { "type": "array", "items": { "type": "object" } }, "count": { "type": "integer" } } } } } } }
+      }
+    },
+    "/admin/v1/tenants": {
+      "get": {
+        "tags": ["Tenants"],
+        "summary": "List tenants",
+        "responses": { "200": { "description": "All tenants", "content": { "application/json": { "schema": { "type": "object", "properties": { "tenants": { "type": "array", "items": { "$ref": "#/components/schemas/Tenant" } }, "count": { "type": "integer" } } } } } }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      },
+      "post": {
+        "tags": ["Tenants"],
+        "summary": "Create a tenant",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" }, "tier": { "type": "string", "default": "standard" }, "rate_limit": { "type": "integer", "default": 60 } } } } } },
+        "responses": { "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Tenant" } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/admin/v1/keys": {
+      "get": {
+        "tags": ["API Keys"],
+        "summary": "List API keys",
+        "parameters": [ { "name": "tenant_id", "in": "query", "schema": { "type": "string", "format": "uuid" }, "description": "Filter by tenant" } ],
+        "responses": { "200": { "description": "API keys (hashes never exposed)", "content": { "application/json": { "schema": { "type": "object", "properties": { "keys": { "type": "array", "items": { "$ref": "#/components/schemas/APIKey" } }, "count": { "type": "integer" } } } } } }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      },
+      "post": {
+        "tags": ["API Keys"],
+        "summary": "Issue an API key",
+        "description": "The raw key is returned exactly once and cannot be recovered later.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["tenant_id"], "properties": { "tenant_id": { "type": "string", "format": "uuid" }, "name": { "type": "string" } } } } } },
+        "responses": { "201": { "description": "Key issued", "content": { "application/json": { "schema": { "type": "object", "properties": { "key": { "type": "string", "description": "Raw key — shown once" }, "metadata": { "$ref": "#/components/schemas/APIKey" } } } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/admin/v1/keys/{id}": {
+      "delete": {
+        "tags": ["API Keys"],
+        "summary": "Revoke an API key",
+        "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } } ],
+        "responses": { "200": { "description": "Revoked", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "example": "revoked" } } } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/admin/v1/policies": {
+      "get": {
+        "tags": ["Policies"],
+        "summary": "List policies",
+        "responses": { "200": { "description": "All policies", "content": { "application/json": { "schema": { "type": "object", "properties": { "policies": { "type": "array", "items": { "$ref": "#/components/schemas/Policy" } }, "count": { "type": "integer" } } } } } }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      },
+      "post": {
+        "tags": ["Policies"],
+        "summary": "Create a policy",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PolicyInput" } } } },
+        "responses": { "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Policy" } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/admin/v1/policies/{id}": {
+      "put": {
+        "tags": ["Policies"],
+        "summary": "Update a policy",
+        "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PolicyInput" } } } },
+        "responses": { "200": { "description": "Updated", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Policy" } } } }, "404": { "$ref": "#/components/responses/NotFound" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      },
+      "delete": {
+        "tags": ["Policies"],
+        "summary": "Delete a policy",
+        "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } } ],
+        "responses": { "200": { "description": "Deleted", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "example": "deleted" } } } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/admin/v1/audit": {
+      "get": {
+        "tags": ["Audit"],
+        "summary": "Query audit events",
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 50, "maximum": 200 } },
+          { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 } }
+        ],
+        "responses": { "200": { "description": "Audit events", "content": { "application/json": { "schema": { "type": "object", "properties": { "events": { "type": "array", "items": { "$ref": "#/components/schemas/AuditEvent" } }, "total": { "type": "integer" }, "limit": { "type": "integer" }, "offset": { "type": "integer" } } } } } }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/v1/chat/completions": {
+      "post": {
+        "tags": ["Proxy"],
+        "summary": "Proxy a chat completion through the firewall",
+        "description": "OpenAI-compatible. The request passes the seven-stage pipeline (auth, cache, rate-limit, ML analysis, policy, proxy, audit) before reaching the upstream provider. Authenticate with a tenant API key as a Bearer token.",
+        "security": [ { "ApiKeyAuth": [] } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ChatCompletionRequest" } } } },
+        "responses": {
+          "200": { "description": "Upstream completion (passed through)", "content": { "application/json": { "schema": { "type": "object" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "description": "Blocked by ML analysis or policy engine", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "429": { "description": "Rate limit exceeded" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "AdminToken": { "type": "apiKey", "in": "header", "name": "X-Admin-Token", "description": "Master admin secret for /admin/v1/* routes." },
+      "ApiKeyAuth": { "type": "http", "scheme": "bearer", "description": "Tenant API key for the /v1/* data plane." }
+    },
+    "responses": {
+      "Unauthorized": { "description": "Missing or invalid credential", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "BadRequest": { "description": "Invalid request body or parameter", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "NotFound": { "description": "Resource not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+    },
+    "schemas": {
+      "Error": { "type": "object", "properties": { "error": { "type": "string" } } },
+      "Tenant": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "tier": { "type": "string" },
+          "rate_limit": { "type": "integer" },
+          "active": { "type": "boolean" },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "APIKey": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "tenant_id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "key_prefix": { "type": "string" },
+          "active": { "type": "boolean" },
+          "requests": { "type": "integer", "format": "int64" },
+          "last_used_at": { "type": "string", "format": "date-time", "nullable": true },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Policy": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "tenant_id": { "type": "string", "format": "uuid", "nullable": true },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "effect": { "type": "string", "enum": ["allow", "deny", "log"] },
+          "principal": { "type": "string" },
+          "action": { "type": "string" },
+          "condition": { "type": "string" },
+          "cedar_text": { "type": "string", "nullable": true },
+          "enabled": { "type": "boolean" },
+          "created_at": { "type": "string", "format": "date-time" },
+          "updated_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "PolicyInput": {
+        "type": "object",
+        "required": ["name", "effect"],
+        "properties": {
+          "tenant_id": { "type": "string", "format": "uuid", "nullable": true },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "effect": { "type": "string", "enum": ["allow", "deny", "log"] },
+          "principal": { "type": "string", "default": "*" },
+          "action": { "type": "string", "default": "*" },
+          "condition": { "type": "string", "description": "e.g. risk_score > 70" },
+          "enabled": { "type": "boolean", "default": true }
+        }
+      },
+      "AuditEvent": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "request_id": { "type": "string" },
+          "tenant_id": { "type": "string", "format": "uuid", "nullable": true },
+          "api_key_id": { "type": "string", "format": "uuid", "nullable": true },
+          "action": { "type": "string" },
+          "risk_score": { "type": "number", "nullable": true },
+          "path": { "type": "string", "nullable": true },
+          "latency_ms": { "type": "integer", "format": "int64", "nullable": true },
+          "status_code": { "type": "integer", "nullable": true },
+          "reason": { "type": "string", "nullable": true },
+          "region": { "type": "string" },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Metrics": {
+        "type": "object",
+        "properties": {
+          "total_requests": { "type": "integer", "format": "int64" },
+          "allowed_requests": { "type": "integer", "format": "int64" },
+          "blocked_requests": { "type": "integer", "format": "int64" },
+          "rate_limited": { "type": "integer", "format": "int64" },
+          "cache_hits": { "type": "integer", "format": "int64" },
+          "cache_misses": { "type": "integer", "format": "int64" },
+          "cache_hit_rate": { "type": "number" },
+          "ml_blocked": { "type": "integer", "format": "int64" },
+          "pii_masked": { "type": "integer", "format": "int64" },
+          "cedar_blocked": { "type": "integer", "format": "int64" },
+          "p99_latency_ms": { "type": "number" },
+          "avg_latency_ms": { "type": "number" },
+          "uptime_seconds": { "type": "integer", "format": "int64" }
+        }
+      },
+      "ChatCompletionRequest": {
+        "type": "object",
+        "required": ["model", "messages"],
+        "properties": {
+          "model": { "type": "string", "example": "llama-3.3-70b-versatile" },
+          "messages": {
+            "type": "array",
+            "items": { "type": "object", "properties": { "role": { "type": "string", "enum": ["system", "user", "assistant"] }, "content": { "type": "string" } } }
+          },
+          "temperature": { "type": "number" },
+          "stream": { "type": "boolean" }
+        }
+      }
+    }
+  },
+  "security": [ { "AdminToken": [] } ]
+}
