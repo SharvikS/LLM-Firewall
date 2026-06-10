@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from analyzer.v1 import analyzer_pb2, analyzer_pb2_grpc
 from analyzer.injection_detector import InjectionDetector
 from analyzer.pii_scanner import PIIScanner, PIIResult
+from analyzer.toxicity_detector import ToxicityDetector
 from analyzer import embed
 
 logging.basicConfig(
@@ -56,6 +57,7 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
         logger.info("Initialising analyzers…")
         self._pii = PIIScanner()
         self._injection = InjectionDetector()
+        self._toxicity = ToxicityDetector()
         logger.info("AnalyzerService ready")
 
     def AnalyzePrompt(
@@ -91,9 +93,43 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
                 reason=inj.description,
             )
 
+        # --- Toxicity / sentiment detection (BLOCK gate) ---
+        tox = self._toxicity.detect(prompt_text)
+        if tox.should_block:
+            threats.append(
+                analyzer_pb2.ThreatDetail(
+                    type="Toxicity",
+                    confidence=tox.score,
+                    description=tox.description,
+                )
+            )
+            logger.warning(
+                "BLOCK request_id=%s tenant=%s toxicity=%s score=%.2f",
+                request.request_id, request.tenant_id, tox.category, tox.score,
+            )
+            return analyzer_pb2.AnalysisResult(
+                request_id=request.request_id,
+                action=_ACTION_BLOCK,
+                risk_score=max(inj.risk_score, tox.score * 100.0),
+                pii_detected=False,
+                masked_prompt="",
+                threats=threats,
+                reason=f"Toxic content blocked: {tox.description}",
+            )
+
         # --- PII scanning — each message scanned individually to preserve context ---
         pii, masked_body = _scan_and_mask_body(request.prompt, self._pii)
-        risk = inj.risk_score  # base risk from injection confidence
+        # Base risk: injection confidence, with a floor raised by sub-threshold toxicity.
+        risk = inj.risk_score
+        if tox.is_toxic:
+            risk = max(risk, tox.score * 100.0)
+            threats.append(
+                analyzer_pb2.ThreatDetail(
+                    type="Toxicity",
+                    confidence=tox.score,
+                    description=tox.description,
+                )
+            )
 
         if pii.pii_detected:
             risk = max(risk, 35.0)  # PII presence raises floor to 35
