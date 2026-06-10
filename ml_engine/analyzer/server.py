@@ -12,6 +12,7 @@ import os
 import signal
 import sys
 from concurrent import futures
+from dataclasses import dataclass
 
 import grpc
 
@@ -22,6 +23,7 @@ from analyzer.v1 import analyzer_pb2, analyzer_pb2_grpc
 from analyzer.injection_detector import InjectionDetector
 from analyzer.pii_scanner import PIIScanner, PIIResult
 from analyzer.toxicity_detector import ToxicityDetector
+from analyzer.secret_scanner import SecretScanner
 from analyzer import embed
 
 logging.basicConfig(
@@ -58,6 +60,7 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
         self._pii = PIIScanner()
         self._injection = InjectionDetector()
         self._toxicity = ToxicityDetector()
+        self._secrets = SecretScanner()
         logger.info("AnalyzerService ready")
 
     def AnalyzePrompt(
@@ -117,9 +120,11 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
                 reason=f"Toxic content blocked: {tox.description}",
             )
 
-        # --- PII scanning — each message scanned individually to preserve context ---
-        pii, masked_body = _scan_and_mask_body(request.prompt, self._pii)
-        # Base risk: injection confidence, with a floor raised by sub-threshold toxicity.
+        # --- Combined masking pass — PII + secrets in a single per-message rewrite,
+        #     plus a source-code-leak signal over the whole body. ---
+        scan = _scan_and_mask_body(request.prompt, self._pii, self._secrets)
+
+        # Base risk: injection confidence, raised by any sub-threshold toxicity.
         risk = inj.risk_score
         if tox.is_toxic:
             risk = max(risk, tox.score * 100.0)
@@ -131,28 +136,69 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
                 )
             )
 
-        if pii.pii_detected:
+        # Source-code leak: flag + risk by default; BLOCK only when CODE_LEAK_BLOCK=true.
+        if scan.code_leak:
+            risk = max(risk, scan.code_confidence * 100.0)
+            threats.append(
+                analyzer_pb2.ThreatDetail(
+                    type="SourceCodeLeak",
+                    confidence=scan.code_confidence,
+                    description=f"Source-code paste detected (confidence {scan.code_confidence:.0%})",
+                )
+            )
+            if self._secrets.code_leak_block:
+                logger.warning(
+                    "BLOCK request_id=%s tenant=%s source_code_leak confidence=%.2f",
+                    request.request_id, request.tenant_id, scan.code_confidence,
+                )
+                return analyzer_pb2.AnalysisResult(
+                    request_id=request.request_id,
+                    action=_ACTION_BLOCK,
+                    risk_score=risk,
+                    pii_detected=False,
+                    masked_prompt="",
+                    threats=threats,
+                    reason="Source-code leak blocked",
+                )
+
+        if scan.pii_entities:
             risk = max(risk, 35.0)  # PII presence raises floor to 35
             threats.append(
                 analyzer_pb2.ThreatDetail(
                     type="PII",
                     confidence=0.9,
-                    description=f"PII entities detected: {', '.join(pii.entities_found)}",
+                    description=f"PII entities detected: {', '.join(scan.pii_entities)}",
+                )
+            )
+        if scan.secret_entities:
+            risk = max(risk, 60.0)  # leaked credentials are higher risk than PII
+            threats.append(
+                analyzer_pb2.ThreatDetail(
+                    type="SecretLeak",
+                    confidence=0.95,
+                    description=f"Secrets/credentials detected: {', '.join(scan.secret_entities)}",
                 )
             )
 
+        if scan.pii_entities or scan.secret_entities:
+            reason_parts = []
+            if scan.pii_entities:
+                reason_parts.append(f"PII masked: {', '.join(scan.pii_entities)}")
+            if scan.secret_entities:
+                reason_parts.append(f"secrets masked: {', '.join(scan.secret_entities)}")
             logger.info(
-                "MASK request_id=%s tenant=%s entities=%s",
-                request.request_id, request.tenant_id, pii.entities_found,
+                "MASK request_id=%s tenant=%s pii=%s secrets=%s",
+                request.request_id, request.tenant_id,
+                scan.pii_entities, scan.secret_entities,
             )
             return analyzer_pb2.AnalysisResult(
                 request_id=request.request_id,
                 action=_ACTION_MASK,
                 risk_score=risk,
-                pii_detected=True,
-                masked_prompt=masked_body,
+                pii_detected=bool(scan.pii_entities),
+                masked_prompt=scan.masked_body,
                 threats=threats,
-                reason=f"PII masked: {', '.join(pii.entities_found)}",
+                reason="; ".join(reason_parts),
             )
 
         logger.info(
@@ -170,51 +216,94 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
         )
 
 
-def _scan_and_mask_body(raw_body: str, pii_scanner: PIIScanner) -> tuple[PIIResult, str]:
+@dataclass
+class BodyScan:
+    """Aggregate result of one combined PII + secret + code-leak pass."""
+    masked_body: str
+    pii_entities: list[str]
+    secret_entities: list[str]
+    code_leak: bool
+    code_confidence: float
+
+
+def _scan_one(text: str, pii_scanner: PIIScanner, secret_scanner: SecretScanner):
     """
-    Scan every message in the JSON body individually for PII and replace
-    each message's content in-place.  Returns (aggregate PIIResult, masked body).
+    Run PII then secret masking over a single string. Secrets are masked on the
+    PII-masked text so both rewrites compose into one output. Returns
+    (masked_text, pii_entities, secret_entities).
+    """
+    pii = pii_scanner.scan(text)
+    masked = pii.masked_text if pii.pii_detected else text
+    sec = secret_scanner.scan(masked)
+    masked = sec.masked_text if sec.secrets_detected else masked
+    return (
+        masked,
+        pii.entities_found if pii.pii_detected else [],
+        sec.entities_found if sec.secrets_detected else [],
+    )
+
+
+def _scan_and_mask_body(
+    raw_body: str,
+    pii_scanner: PIIScanner,
+    secret_scanner: SecretScanner,
+) -> BodyScan:
+    """
+    Scan every message in the JSON body individually for PII *and* secrets and
+    replace each message's content in-place, then run the source-code-leak
+    heuristic over the concatenated text.
 
     Scanning per-message rather than on the concatenated text preserves
     conversation structure: masking only touches the messages that actually
-    contain PII and never corrupts earlier turns.
+    contain sensitive data and never corrupts earlier turns.
     """
+    code_leak, code_conf = False, 0.0
+
     try:
         body = json.loads(raw_body)
+        messages = body.get("messages", []) if isinstance(body, dict) else []
     except (json.JSONDecodeError, TypeError):
-        result = pii_scanner.scan(raw_body)
-        masked = result.masked_text if result.pii_detected else raw_body
-        return result, masked
+        body, messages = None, []
 
-    messages = body.get("messages", [])
     if not messages:
-        result = pii_scanner.scan(raw_body)
-        masked = result.masked_text if result.pii_detected else raw_body
-        return result, masked
+        # Non-JSON or message-less body — scan the whole string.
+        masked, pii_ents, sec_ents = _scan_one(raw_body, pii_scanner, secret_scanner)
+        leak = secret_scanner.scan(raw_body)
+        return BodyScan(
+            masked_body=masked if (pii_ents or sec_ents) else raw_body,
+            pii_entities=pii_ents,
+            secret_entities=sec_ents,
+            code_leak=leak.code_leak,
+            code_confidence=leak.code_confidence,
+        )
 
-    all_entities: list[str] = []
-    any_pii = False
+    all_pii: list[str] = []
+    all_secrets: list[str] = []
+    text_parts: list[str] = []
 
     for msg in messages:
         content = msg.get("content")
         if not isinstance(content, str):
             continue
-        result = pii_scanner.scan(content)
-        if result.pii_detected:
-            msg["content"] = result.masked_text
-            all_entities.extend(result.entities_found)
-            any_pii = True
+        text_parts.append(content)
+        masked, pii_ents, sec_ents = _scan_one(content, pii_scanner, secret_scanner)
+        if pii_ents or sec_ents:
+            msg["content"] = masked
+            all_pii.extend(pii_ents)
+            all_secrets.extend(sec_ents)
 
-    if any_pii:
-        masked_body = json.dumps(body)
-        aggregate = PIIResult(
-            pii_detected=True,
-            masked_text=masked_body,
-            entities_found=sorted(set(all_entities)),
-        )
-        return aggregate, masked_body
+    # Source-code-leak heuristic runs once over the full conversation text.
+    leak = secret_scanner.scan("\n".join(text_parts))
+    code_leak, code_conf = leak.code_leak, leak.code_confidence
 
-    return PIIResult(pii_detected=False, masked_text=raw_body, entities_found=[]), raw_body
+    masked_body = json.dumps(body) if (all_pii or all_secrets) else raw_body
+    return BodyScan(
+        masked_body=masked_body,
+        pii_entities=sorted(set(all_pii)),
+        secret_entities=sorted(set(all_secrets)),
+        code_leak=code_leak,
+        code_confidence=code_conf,
+    )
 
 
 def serve() -> None:
