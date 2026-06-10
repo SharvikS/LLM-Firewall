@@ -67,7 +67,7 @@
 
 - [ ] **11. Integration Test Coverage** — Unit tests exist for cache, auth, policies, API keys, ML detector. Missing: E2E pipeline tests, multi-tenant isolation tests, Kafka producer tests, load/stress tests.
 - [ ] **12. Multi-Region K8s Deployment** — K8s manifests exist but no Terraform/Helm charts, no cross-region replication, no automated failover.
-- [ ] **13. Audit Log Query Performance** — Basic offset/limit pagination. No cursor-based pagination or index optimization.
+- [x] **13. Audit Log Query Performance** — DONE. Keyset pagination: `ListAuditEventsCursor` seeks `(created_at, id)` row-value comparisons against new composite indexes (migration 005); `GET /admin/v1/audit?cursor=<opaque>` returns `next_cursor` (base64url, "" = end). O(limit) at any depth, stable under inserts, and skips the COUNT(*) query. Offset mode kept for legacy callers.
 - [ ] **14. Compliance Reporting** — No SOC2/HIPAA/GDPR report generation or audit trail export.
 - [x] **15. OpenAPI/Swagger Docs** — DONE. Embedded OpenAPI 3.0 spec (`gateway/internal/api/openapi.json`) served at `/openapi.json` with Swagger UI at `/docs` (top-level, bypassing admin auth). Covers admin API, read API, proxy and batch.
 - [x] **16. Client SDKs** — DONE. `sdk/python` (stdlib `TitanClient`) and `sdk/node` (ESM over fetch + `.d.ts`) wrap the full Admin API + read API.

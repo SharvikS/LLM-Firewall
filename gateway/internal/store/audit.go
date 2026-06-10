@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -72,6 +74,72 @@ func (s *Store) ListAuditEvents(ctx context.Context, tenantID *uuid.UUID, limit,
 		out = append(out, e)
 	}
 	return out, total, pgRows.Err()
+}
+
+// AuditCursor is a keyset-pagination position: the (created_at, id) pair of
+// the last row the client has seen. Rows strictly older than it come next.
+type AuditCursor struct {
+	CreatedAt time.Time
+	ID        uuid.UUID
+}
+
+// ListAuditEventsCursor returns up to limit events strictly older than the
+// cursor (newest-first), plus the cursor for the next page (nil when the
+// result set is exhausted). Unlike OFFSET pagination this is O(limit) per
+// page regardless of depth, and stable under concurrent inserts.
+func (s *Store) ListAuditEventsCursor(ctx context.Context, tenantID *uuid.UUID, limit int, before *AuditCursor) ([]AuditEventRow, *AuditCursor, error) {
+	const cols = `id,request_id,tenant_id,api_key_id,action,risk_score,path,latency_ms,status_code,reason,region,created_at`
+
+	q := `SELECT ` + cols + ` FROM audit_events`
+	var conds []string
+	var args []any
+	arg := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
+	}
+
+	if tenantID != nil {
+		conds = append(conds, "tenant_id="+arg(*tenantID))
+	}
+	if before != nil {
+		// Row-value comparison seeks the composite index directly.
+		conds = append(conds, "(created_at, id) < ("+arg(before.CreatedAt)+", "+arg(before.ID)+")")
+	}
+	if len(conds) > 0 {
+		q += " WHERE " + strings.Join(conds, " AND ")
+	}
+	// Fetch one extra row to know whether another page exists.
+	q += " ORDER BY created_at DESC, id DESC LIMIT " + arg(limit+1)
+
+	pgRows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer pgRows.Close()
+
+	var out []AuditEventRow
+	for pgRows.Next() {
+		var e AuditEventRow
+		if err := pgRows.Scan(
+			&e.ID, &e.RequestID, &e.TenantID, &e.APIKeyID, &e.Action,
+			&e.RiskScore, &e.Path, &e.LatencyMs, &e.StatusCode, &e.Reason,
+			&e.Region, &e.CreatedAt,
+		); err != nil {
+			return nil, nil, err
+		}
+		out = append(out, e)
+	}
+	if err := pgRows.Err(); err != nil {
+		return nil, nil, err
+	}
+
+	var next *AuditCursor
+	if len(out) > limit {
+		out = out[:limit]
+		last := out[len(out)-1]
+		next = &AuditCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+	}
+	return out, next, nil
 }
 
 // AuditEventRow is the read-side DTO for the admin API.

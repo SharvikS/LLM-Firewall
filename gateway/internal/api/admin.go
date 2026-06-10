@@ -5,11 +5,14 @@ package api
 
 import (
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -260,13 +263,38 @@ func (h *adminHandler) deletePolicy(w http.ResponseWriter, r *http.Request) {
 
 // ── Audit Logs ────────────────────────────────────────────────────────────────
 
+// listAudit supports two pagination modes:
+//
+//	keyset (preferred): ?limit=50[&cursor=<opaque>] — O(limit) at any depth,
+//	  stable under concurrent inserts; response carries next_cursor ("" = end).
+//	offset (legacy):    ?limit=50&offset=100 — kept for existing dashboard
+//	  callers; degrades linearly with depth.
+//
+// Presence of the cursor parameter (even empty: "cursor=") selects keyset mode.
 func (h *adminHandler) listAudit(w http.ResponseWriter, r *http.Request) {
-	limit  := parseQueryInt(r, "limit", 50)
-	offset := parseQueryInt(r, "offset", 0)
+	limit := parseQueryInt(r, "limit", 50)
 	if limit > 200 {
 		limit = 200
 	}
 
+	if cursorStr, useCursor := cursorParam(r); useCursor {
+		before, err := decodeAuditCursor(cursorStr)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid cursor"})
+			return
+		}
+		rows, next, err := h.st.ListAuditEventsCursor(r.Context(), nil, limit, before)
+		if err != nil {
+			internalError(w, "list audit (cursor)", err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"events": rows, "limit": limit, "next_cursor": encodeAuditCursor(next),
+		})
+		return
+	}
+
+	offset := parseQueryInt(r, "offset", 0)
 	rows, total, err := h.st.ListAuditEvents(r.Context(), nil, limit, offset)
 	if err != nil {
 		internalError(w, "list audit", err)
@@ -275,6 +303,49 @@ func (h *adminHandler) listAudit(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"events": rows, "total": total, "limit": limit, "offset": offset,
 	})
+}
+
+// cursorParam reports whether the request opted into keyset pagination and
+// returns the raw cursor value (empty string = first page).
+func cursorParam(r *http.Request) (string, bool) {
+	if !r.URL.Query().Has("cursor") {
+		return "", false
+	}
+	return r.URL.Query().Get("cursor"), true
+}
+
+// encodeAuditCursor packs a cursor as base64url("RFC3339Nano|uuid").
+// A nil cursor (no more pages) encodes to "".
+func encodeAuditCursor(c *store.AuditCursor) string {
+	if c == nil {
+		return ""
+	}
+	raw := c.CreatedAt.UTC().Format(time.RFC3339Nano) + "|" + c.ID.String()
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+// decodeAuditCursor reverses encodeAuditCursor; "" means first page (nil).
+func decodeAuditCursor(s string) (*store.AuditCursor, error) {
+	if s == "" {
+		return nil, nil
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return nil, err
+	}
+	parts := strings.SplitN(string(raw), "|", 2)
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("malformed cursor")
+	}
+	ts, err := time.Parse(time.RFC3339Nano, parts[0])
+	if err != nil {
+		return nil, err
+	}
+	id, err := uuid.Parse(parts[1])
+	if err != nil {
+		return nil, err
+	}
+	return &store.AuditCursor{CreatedAt: ts, ID: id}, nil
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
