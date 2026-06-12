@@ -1,11 +1,35 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, AreaChart, Area,
 } from 'recharts';
+
+// ─── Live data (ClickHouse via gateway /api/analytics/*) ─────────────────────
+
+const RANGE_HOURS: Record<string, number> = { '24h': 24, '7d': 168, '30d': 720 };
+
+const THREAT_COLORS = ['#f87171', '#60a5fa', '#fb923c', '#facc15', '#a78bfa', '#34d399'];
+
+type LiveAnalytics = {
+  live: boolean;
+  overview: {
+    total_requests: number; blocked_requests: number; block_rate: number;
+    avg_risk_score: number; avg_latency_ms: number; p99_latency_ms: number;
+    unique_tenants: number;
+  } | null;
+  timeseries: { points: { time: string; total: number; blocked: number }[] } | null;
+  threats: { threats: { action: string; count: number; avg_risk: number; last_seen: string }[] } | null;
+};
+
+const THREAT_LABELS: Record<string, string> = {
+  ML_BLOCKED: 'Prompt Injection / ML',
+  CEDAR_BLOCKED: 'Policy (Cedar)',
+  RATE_LIMITED: 'Rate Limit',
+  PII_MASKED: 'PII Masked',
+};
 
 // ─── Static demo data ─────────────────────────────────────────────────────────
 
@@ -100,6 +124,41 @@ function AnalyticsCard({ title, sub, accentColor, children }: {
 
 export default function AnalyticsTab() {
   const [range, setRange] = useState('24h');
+  const [data, setData] = useState<LiveAnalytics | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = () =>
+      fetch(`/api/gateway/analytics?hours=${RANGE_HOURS[range] ?? 24}`)
+        .then(r => r.json())
+        .then(d => { if (!cancelled) setData(d); })
+        .catch(() => { if (!cancelled) setData(null); });
+    load();
+    const id = setInterval(load, 15_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [range]);
+
+  const livePoints = data?.live ? data.timeseries?.points ?? [] : [];
+  const isLive = livePoints.length > 0;
+
+  // Map ClickHouse hourly buckets into the bar-chart shape ("14:00" labels).
+  const hourData = isLive
+    ? livePoints.map(p => ({
+        hour: p.time.slice(11, 16) || p.time,
+        requests: p.total,
+        blocked: p.blocked,
+      }))
+    : HOUR_DATA;
+
+  const liveThreats = data?.live ? data.threats?.threats ?? [] : [];
+  const threatTotal = liveThreats.reduce((s, t) => s + t.count, 0);
+  const threatPie = threatTotal > 0
+    ? liveThreats.map((t, i) => ({
+        name: THREAT_LABELS[t.action] ?? t.action,
+        value: Math.round((t.count / threatTotal) * 100),
+        color: THREAT_COLORS[i % THREAT_COLORS.length],
+      }))
+    : THREAT_PIE;
 
   const maxTokens = MODEL_USAGE[0].tokens;
 
@@ -111,10 +170,17 @@ export default function AnalyticsTab() {
           <h1 className="text-[22px] font-bold tracking-tight">Analytics</h1>
           <p className="text-sm mt-1 flex items-center gap-2" style={{ color: 'var(--text-muted)' }}>
             Traffic patterns, threat breakdown, and latency distribution
-            <span className="px-1.5 py-0.5 rounded-md text-[10px] font-semibold"
-              style={{ background: 'rgba(234,179,8,0.1)', color: 'rgba(234,179,8,0.9)', border: '1px solid rgba(234,179,8,0.2)' }}>
-              Demo data
-            </span>
+            {isLive ? (
+              <span className="px-1.5 py-0.5 rounded-md text-[10px] font-semibold"
+                style={{ background: 'rgba(52,211,153,0.1)', color: 'rgba(52,211,153,0.9)', border: '1px solid rgba(52,211,153,0.2)' }}>
+                Live · ClickHouse
+              </span>
+            ) : (
+              <span className="px-1.5 py-0.5 rounded-md text-[10px] font-semibold"
+                style={{ background: 'rgba(234,179,8,0.1)', color: 'rgba(234,179,8,0.9)', border: '1px solid rgba(234,179,8,0.2)' }}>
+                Demo data
+              </span>
+            )}
           </p>
         </div>
         {/* Range tabs */}
@@ -133,22 +199,28 @@ export default function AnalyticsTab() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Hourly Traffic */}
-        <AnalyticsCard title="Hourly Request Volume" sub="Requests, blocked, and cached per hour" accentColor="var(--accent)">
+        <AnalyticsCard title="Hourly Request Volume"
+          sub={isLive ? 'Requests and blocked per hour (ClickHouse)' : 'Requests, blocked, and cached per hour'}
+          accentColor="var(--accent)">
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={HOUR_DATA} margin={{ left: -18, bottom: 0 }} barSize={5} barGap={2}>
+              <BarChart data={hourData} margin={{ left: -18, bottom: 0 }} barSize={5} barGap={2}>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} opacity={0.5}/>
                 <XAxis dataKey="hour" stroke="var(--text-muted)" fontSize={9} tickLine={false} axisLine={false} minTickGap={24}/>
-                <YAxis stroke="var(--text-muted)" fontSize={9} tickLine={false} axisLine={false} tickFormatter={v => `${(v/1000).toFixed(0)}k`}/>
+                <YAxis stroke="var(--text-muted)" fontSize={9} tickLine={false} axisLine={false}
+                  tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : `${v}`}/>
                 <Tooltip content={<ChartTip/>} cursor={{ fill: 'var(--bg-sec)', opacity: 0.6 }}/>
                 <Bar dataKey="requests" name="Requests" fill="var(--accent)" opacity={0.85} radius={[2,2,0,0]}/>
                 <Bar dataKey="blocked"  name="Blocked"  fill="#f87171"       opacity={0.85} radius={[2,2,0,0]}/>
-                <Bar dataKey="cached"   name="Cached"   fill="#a78bfa"       opacity={0.85} radius={[2,2,0,0]}/>
+                {!isLive && <Bar dataKey="cached" name="Cached" fill="#a78bfa" opacity={0.85} radius={[2,2,0,0]}/>}
               </BarChart>
             </ResponsiveContainer>
           </div>
           <div className="flex gap-4 mt-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-            {[['Requests','var(--accent)'],['Blocked','#f87171'],['Cached','#a78bfa']].map(([l,c]) => (
+            {(isLive
+              ? [['Requests','var(--accent)'],['Blocked','#f87171']]
+              : [['Requests','var(--accent)'],['Blocked','#f87171'],['Cached','#a78bfa']]
+            ).map(([l,c]) => (
               <div key={l} className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-sm inline-block" style={{ background: c }}/>
                 {l}
@@ -163,16 +235,16 @@ export default function AnalyticsTab() {
             <div className="h-48 w-44 shrink-0">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
-                  <Pie data={THREAT_PIE} cx="50%" cy="50%" innerRadius={42} outerRadius={68}
+                  <Pie data={threatPie} cx="50%" cy="50%" innerRadius={42} outerRadius={68}
                     dataKey="value" paddingAngle={4} strokeWidth={0}>
-                    {THREAT_PIE.map((entry, i) => <Cell key={i} fill={entry.color} opacity={0.9}/>)}
+                    {threatPie.map((entry, i) => <Cell key={i} fill={entry.color} opacity={0.9}/>)}
                   </Pie>
                   <Tooltip content={<ChartTip/>}/>
                 </PieChart>
               </ResponsiveContainer>
             </div>
             <div className="flex-1 space-y-2.5">
-              {THREAT_PIE.map(({ name, value, color }) => (
+              {threatPie.map(({ name, value, color }) => (
                 <div key={name}>
                   <div className="flex items-center justify-between mb-1 text-xs">
                     <div className="flex items-center gap-1.5">
