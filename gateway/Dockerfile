@@ -17,9 +17,10 @@ RUN CGO_ENABLED=0 GOOS=linux \
     -o /gateway ./cmd/server/
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
-FROM scratch
+# alpine rather than scratch so the compose healthcheck (busybox wget) works;
+# still ~8 MB and no shell access is exposed by the service itself.
+FROM alpine:3.20
 
-# Import CA certificates for TLS calls to Groq / OpenAI.
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /gateway /gateway
 

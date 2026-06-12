@@ -73,6 +73,9 @@ services:
       - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:8084
       - --rpc-addr redpanda:33145
       - --advertise-rpc-addr redpanda:33145
+      # audit_logs is created on demand by the first producer/consumer —
+      # without this, audit events are silently dropped on a fresh volume.
+      - --set redpanda.auto_create_topics_enabled=true
     volumes:
       - redpanda_data:/var/lib/redpanda/data
     ports:
@@ -116,7 +119,7 @@ services:
       redpanda:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -135,11 +138,7 @@ services:
       - "16686:16686"   # tracing UI
       - "4318:4318"     # OTLP/HTTP ingest
       - "4317:4317"     # OTLP/gRPC ingest
-    healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:16686/ || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
+    # No healthcheck: the all-in-one image is scratch-based (no shell/wget).
     restart: unless-stopped
 
   # ── Qdrant (vector DB for semantic response caching) ─────────────────────
@@ -151,7 +150,8 @@ services:
       - "6333:6333"   # REST API
       - "6334:6334"   # gRPC API
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:6333/healthz || exit 1"]
+      # Image ships without wget/curl; bash /dev/tcp probe checks the REST port.
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -169,6 +169,10 @@ services:
       EMBED_MODEL: "all-MiniLM-L6-v2"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
       OTEL_SERVICE_NAME: "titan-ml-engine"
+    volumes:
+      # Persist HuggingFace model downloads (toxic-bert etc.) across container
+      # recreations — cold starts drop from minutes to seconds.
+      - hf_cache:/root/.cache/huggingface
     ports:
       - "50051:50051"
       - "8001:8001"   # embedding HTTP endpoint
@@ -219,7 +223,9 @@ services:
       ml_engine:
         condition: service_started
       qdrant:
-        condition: service_healthy
+        # service_started (not healthy): the gateway fails open if the
+        # semantic cache is unavailable, so qdrant must never block boot.
+        condition: service_started
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health || exit 1"]
       interval: 10s
@@ -249,3 +255,4 @@ volumes:
   redpanda_data:
   qdrant_data:
   clickhouse_data:
+  hf_cache:

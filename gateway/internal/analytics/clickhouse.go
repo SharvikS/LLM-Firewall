@@ -181,20 +181,23 @@ LIMIT 20`
 
 // query executes a parameterized SELECT and returns FORMAT JSON data rows.
 func (c *Client) query(ctx context.Context, sql string, params map[string]string) ([]map[string]any, error) {
-	form := url.Values{}
-	form.Set("query", sql+" FORMAT JSON")
-	form.Set("database", c.database)
+	// ClickHouse's HTTP interface reads the POST body as raw SQL; settings and
+	// query parameters must travel in the URL query string (it does not parse
+	// form-encoded bodies).
+	qs := url.Values{}
+	qs.Set("database", c.database)
 	// Return numbers as JSON numbers, not quoted strings (UInt64 default).
-	form.Set("output_format_json_quote_64bit_integers", "0")
+	qs.Set("output_format_json_quote_64bit_integers", "0")
 	for k, v := range params {
-		form.Set("param_"+k, v)
+		qs.Set("param_"+k, v)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/", strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/?"+qs.Encode(), strings.NewReader(sql+" FORMAT JSON"))
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Content-Type", "text/plain; charset=utf-8")
 	if c.user != "" {
 		req.SetBasicAuth(c.user, c.password)
 	}

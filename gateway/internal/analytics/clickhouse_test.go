@@ -3,24 +3,26 @@ package analytics
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
-// fakeCH returns a test server that records the submitted form and replies
-// with the given FORMAT JSON data rows.
+// fakeCH returns a test server that records the URL query parameters and the
+// SQL body (ClickHouse HTTP protocol: settings in URL, raw SQL as POST body)
+// and replies with the given FORMAT JSON data rows.
 func fakeCH(t *testing.T, rows []map[string]any, captured *map[string]string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := r.ParseForm(); err != nil {
-			t.Fatalf("parse form: %v", err)
-		}
 		if captured != nil {
 			m := map[string]string{}
-			for k := range r.PostForm {
-				m[k] = r.PostForm.Get(k)
+			for k := range r.URL.Query() {
+				m[k] = r.URL.Query().Get(k)
 			}
+			body, _ := io.ReadAll(r.Body)
+			m["__sql"] = string(body)
 			*captured = m
 		}
 		json.NewEncoder(w).Encode(map[string]any{"data": rows}) //nolint:errcheck
@@ -70,6 +72,9 @@ func TestOverviewParsesAggregates(t *testing.T) {
 	}
 	if captured["database"] != "titan" {
 		t.Fatalf("database not set: %v", captured)
+	}
+	if !strings.Contains(captured["__sql"], "FORMAT JSON") || !strings.Contains(captured["__sql"], "FROM audit_events") {
+		t.Fatalf("SQL not sent as POST body: %q", captured["__sql"])
 	}
 }
 

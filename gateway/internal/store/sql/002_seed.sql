@@ -21,6 +21,9 @@ ON CONFLICT (key_hash) DO NOTHING;
 -- Seed default global policies
 INSERT INTO policies (tenant_id, name, description, effect, principal, action, condition, enabled)
 VALUES
+    (NULL, 'Baseline Allow',
+     'Permit InvokeLLM for all tenants. Cedar is default-deny, so without a baseline permit every request is rejected; DENY policies always win over this.',
+     'ALLOW', '*', 'InvokeLLM', '', true),
     (NULL, 'Block High-Risk Requests',
      'Deny any request where ML risk_score exceeds 70.',
      'DENY', '*', 'InvokeLLM', 'risk_score > 70', true),
