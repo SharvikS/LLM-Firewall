@@ -4,7 +4,7 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci --frozen-lockfile
+RUN npm ci
 
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1

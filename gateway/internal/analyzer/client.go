@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -72,7 +73,11 @@ func New(addr string, timeout time.Duration, tlsEnabled bool, certFile string) (
 		)
 	}
 
-	conn, err := grpc.NewClient(addr, cred)
+	// The OTel stats handler injects the W3C trace context into outgoing gRPC
+	// metadata so ML-engine spans join the gateway's trace. With tracing
+	// disabled the global provider is a no-op and this adds no overhead.
+	conn, err := grpc.NewClient(addr, cred,
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()))
 	if err != nil {
 		return nil, fmt.Errorf("analyzer: dial %q: %w", addr, err)
 	}

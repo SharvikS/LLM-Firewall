@@ -16,6 +16,8 @@ import (
 
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 
 	"github.com/sharvik/llm-firewall/gateway/internal/analyzer"
 	"github.com/sharvik/llm-firewall/gateway/internal/cache"
@@ -109,6 +111,8 @@ func NewLLMProxy(
 			fbBase(req)
 			req.Host = fb.Host
 			req.Header.Set("Authorization", "Bearer "+fbAPIKey)
+			// Propagate the trace ID to the fallback upstream too.
+			otel.GetTextMapPropagator().Inject(req.Context(), propagation.HeaderCarrier(req.Header))
 		}
 		fbRp.ModifyResponse = func(resp *http.Response) error {
 			resp.Header.Del("Server")
@@ -134,6 +138,10 @@ func NewLLMProxy(
 		base(req)
 		req.Host = target.Host
 		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+		// W3C traceparent travels to the LLM upstream so one Jaeger trace
+		// covers the full gateway → provider round trip. The propagator is
+		// a no-op when tracing is disabled.
+		otel.GetTextMapPropagator().Inject(req.Context(), propagation.HeaderCarrier(req.Header))
 	}
 	rp.ModifyResponse = func(resp *http.Response) error {
 		// Trigger failover on retriable server errors when a fallback is configured.
