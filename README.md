@@ -25,7 +25,7 @@ A drop-in reverse proxy for OpenAI, Anthropic, Groq, and local LLMs — with sub
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-Ready-326CE5?style=flat-square&logo=kubernetes&logoColor=white)](https://kubernetes.io)
 
 </div>
-
+  
 ---    
 
 ## Table of Contents
