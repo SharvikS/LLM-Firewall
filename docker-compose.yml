@@ -11,6 +11,9 @@ name: titan-llm-firewall
 #   cockroachdb  – Policy/key storage, Postgres-wire compatible (port 26257)
 #   redpanda     – Kafka-wire event bus (port 9092)
 #   console      – Redpanda web UI (port 8082)
+#   clickhouse   – OLAP analytics store (port 8123)
+#   qdrant       – Vector DB for semantic cache (port 6333)
+#   jaeger       – Distributed tracing UI (port 16686)
 #
 # Start everything:   docker compose up -d
 # Gateway only:       docker compose up -d gateway redis
@@ -123,6 +126,22 @@ services:
         hard: 262144
     restart: unless-stopped
 
+  # ── Jaeger (distributed tracing UI — receives OTLP from gateway + ML engine)
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"   # tracing UI
+      - "4318:4318"     # OTLP/HTTP ingest
+      - "4317:4317"     # OTLP/gRPC ingest
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:16686/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   # ── Qdrant (vector DB for semantic response caching) ─────────────────────
   qdrant:
     image: qdrant/qdrant:v1.9.2
@@ -148,6 +167,8 @@ services:
       GRPC_WORKERS: "4"
       EMBED_PORT: "8001"
       EMBED_MODEL: "all-MiniLM-L6-v2"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
+      OTEL_SERVICE_NAME: "titan-ml-engine"
     ports:
       - "50051:50051"
       - "8001:8001"   # embedding HTTP endpoint
@@ -186,6 +207,8 @@ services:
       CLICKHOUSE_URL: "http://clickhouse:8123"
       CLICKHOUSE_USER: "default"
       CLICKHOUSE_DATABASE: "titan"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
+      OTEL_SERVICE_NAME: "titan-gateway"
     ports:
       - "8080:8080"
     depends_on:

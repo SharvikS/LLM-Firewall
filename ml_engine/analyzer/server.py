@@ -25,6 +25,7 @@ from analyzer.pii_scanner import PIIScanner, PIIResult
 from analyzer.toxicity_detector import ToxicityDetector
 from analyzer.secret_scanner import SecretScanner
 from analyzer import embed
+from analyzer import telemetry
 
 logging.basicConfig(
     level=logging.INFO,
@@ -72,7 +73,8 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
         threats = []
 
         # --- Injection / Jailbreak detection ---
-        inj = self._injection.detect(prompt_text)
+        with telemetry.span("InjectionDetector.detect"):
+            inj = self._injection.detect(prompt_text)
         if inj.is_injection:
             threats.append(
                 analyzer_pb2.ThreatDetail(
@@ -97,7 +99,8 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
             )
 
         # --- Toxicity / sentiment detection (BLOCK gate) ---
-        tox = self._toxicity.detect(prompt_text)
+        with telemetry.span("ToxicityDetector.detect"):
+            tox = self._toxicity.detect(prompt_text)
         if tox.should_block:
             threats.append(
                 analyzer_pb2.ThreatDetail(
@@ -122,7 +125,8 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
 
         # --- Combined masking pass — PII + secrets in a single per-message rewrite,
         #     plus a source-code-leak signal over the whole body. ---
-        scan = _scan_and_mask_body(request.prompt, self._pii, self._secrets)
+        with telemetry.span("PIIScanner.scan_and_mask"):
+            scan = _scan_and_mask_body(request.prompt, self._pii, self._secrets)
 
         # Base risk: injection confidence, raised by any sub-threshold toxicity.
         risk = inj.risk_score
@@ -310,11 +314,17 @@ def serve() -> None:
     # Start embedding HTTP server alongside gRPC (no-op if sentence-transformers absent)
     embed.start()
 
+    # Tracing is opt-in: no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set.
+    telemetry.init()
+
     port = os.getenv("GRPC_PORT", "50051")
     workers = int(os.getenv("GRPC_WORKERS", "4"))
     tls_enabled = os.getenv("GRPC_TLS_ENABLED", "false").lower() in ("true", "1")
 
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=workers))
+    server = grpc.server(
+        futures.ThreadPoolExecutor(max_workers=workers),
+        interceptors=telemetry.server_interceptors(),
+    )
     analyzer_pb2_grpc.add_AnalyzerServiceServicer_to_server(
         AnalyzerServicer(), server
     )
