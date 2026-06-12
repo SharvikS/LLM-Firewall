@@ -26,7 +26,7 @@ A drop-in reverse proxy for OpenAI, Anthropic, Groq, and local LLMs — with sub
 
 </div>
 
----
+---    
 
 ## Table of Contents
 
