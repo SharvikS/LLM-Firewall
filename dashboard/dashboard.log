@@ -1,18 +1,9 @@
 
-> dashboard@0.1.0 dev
-> next dev
+> dashboard@0.1.0 start
+> next start -H 0.0.0.0 -p 3000
 
-⚠ Port 3000 is in use by process 4484, using available port 3001 instead.
-▲ Next.js 16.2.7 (Turbopack)
-- Local:         http://localhost:3001
-- Network:       http://192.168.15.56:3001
-✓ Ready in 226ms
-⨯ Another next dev server is already running.
-
-- Local:        http://localhost:3000
-- PID:          4484
-- Dir:          /Users/sharvik/Desktop/Projects/LLM_Firewall/dashboard
-- Log:          .next/dev/logs/next-development.log
-
-Run kill 4484 to stop it.
-[?25h
+▲ Next.js 16.2.7
+- Local:         http://localhost:3000
+- Network:       http://0.0.0.0:3000
+✓ Ready in 56ms
+⚠ "next start" does not work with "output: standalone" configuration. Use "node .next/standalone/server.js" instead.

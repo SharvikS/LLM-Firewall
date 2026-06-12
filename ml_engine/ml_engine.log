@@ -1,61 +1,100 @@
-{"time":"2026-06-09T16:20:02","level":"INFO","logger":"sentence_transformers.base.model","msg":"No device provided, using mps"}
-{"time":"2026-06-09T16:20:02","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/modules.json "HTTP/1.1 307 Temporary Redirect""}
-{"time":"2026-06-09T16:20:02","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/modules.json "HTTP/1.1 200 OK""}
-{"time":"2026-06-09T16:20:03","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config_sentence_transformers.json "HTTP/1.1 307 Temporary Redirect""}
+{"time":"2026-06-12T13:12:20","level":"INFO","logger":"sentence_transformers.base.model","msg":"No device provided, using mps"}
+{"time":"2026-06-12T13:12:21","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/modules.json "HTTP/1.1 307 Temporary Redirect""}
+{"time":"2026-06-12T13:12:21","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/modules.json "HTTP/1.1 200 OK""}
+{"time":"2026-06-12T13:12:21","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config_sentence_transformers.json "HTTP/1.1 307 Temporary Redirect""}
+{"time":"2026-06-12T13:12:21","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/config_sentence_transformers.json "HTTP/1.1 200 OK""}
+{"time":"2026-06-12T13:12:21","level":"INFO","logger":"sentence_transformers.base.model","msg":"Loading SentenceTransformer model from sentence-transformers/all-MiniLM-L6-v2."}
+{"time":"2026-06-12T13:12:21","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config_sentence_transformers.json "HTTP/1.1 307 Temporary Redirect""}
 Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
-{"time":"2026-06-09T16:20:03","level":"WARNING","logger":"huggingface_hub.utils._http","msg":"Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads."}
-{"time":"2026-06-09T16:20:03","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/config_sentence_transformers.json "HTTP/1.1 200 OK""}
-{"time":"2026-06-09T16:20:03","level":"INFO","logger":"sentence_transformers.base.model","msg":"Loading SentenceTransformer model from sentence-transformers/all-MiniLM-L6-v2."}
-{"time":"2026-06-09T16:20:03","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config_sentence_transformers.json "HTTP/1.1 307 Temporary Redirect""}
-{"time":"2026-06-09T16:20:03","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/config_sentence_transformers.json "HTTP/1.1 200 OK""}
-{"time":"2026-06-09T16:20:03","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/README.md "HTTP/1.1 307 Temporary Redirect""}
-{"time":"2026-06-09T16:20:03","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/README.md "HTTP/1.1 200 OK""}
-{"time":"2026-06-09T16:20:03","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/modules.json "HTTP/1.1 307 Temporary Redirect""}
-{"time":"2026-06-09T16:20:03","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/modules.json "HTTP/1.1 200 OK""}
-{"time":"2026-06-09T16:20:04","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/sentence_bert_config.json "HTTP/1.1 307 Temporary Redirect""}
-{"time":"2026-06-09T16:20:04","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/sentence_bert_config.json "HTTP/1.1 200 OK""}
-{"time":"2026-06-09T16:20:04","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/adapter_config.json "HTTP/1.1 404 Not Found""}
-{"time":"2026-06-09T16:20:04","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect""}
-{"time":"2026-06-09T16:20:04","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/config.json "HTTP/1.1 200 OK""}
-Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 20061.92it/s]
-{"time":"2026-06-09T16:20:05","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/processor_config.json "HTTP/1.1 404 Not Found""}
-{"time":"2026-06-09T16:20:05","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/preprocessor_config.json "HTTP/1.1 404 Not Found""}
-{"time":"2026-06-09T16:20:05","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/video_preprocessor_config.json "HTTP/1.1 404 Not Found""}
-{"time":"2026-06-09T16:20:05","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/preprocessor_config.json "HTTP/1.1 404 Not Found""}
-{"time":"2026-06-09T16:20:06","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect""}
-{"time":"2026-06-09T16:20:06","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/tokenizer_config.json "HTTP/1.1 200 OK""}
-{"time":"2026-06-09T16:20:06","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect""}
-{"time":"2026-06-09T16:20:06","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/config.json "HTTP/1.1 200 OK""}
-{"time":"2026-06-09T16:20:06","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect""}
-{"time":"2026-06-09T16:20:06","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/config.json "HTTP/1.1 200 OK""}
-{"time":"2026-06-09T16:20:06","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect""}
-{"time":"2026-06-09T16:20:06","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/tokenizer_config.json "HTTP/1.1 200 OK""}
-{"time":"2026-06-09T16:20:07","level":"INFO","logger":"httpx","msg":"HTTP Request: GET https://huggingface.co/api/models/sentence-transformers/all-MiniLM-L6-v2/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found""}
-{"time":"2026-06-09T16:20:07","level":"INFO","logger":"httpx","msg":"HTTP Request: GET https://huggingface.co/api/models/sentence-transformers/all-MiniLM-L6-v2/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK""}
-{"time":"2026-06-09T16:20:07","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/1_Pooling/config.json "HTTP/1.1 307 Temporary Redirect""}
-{"time":"2026-06-09T16:20:07","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/1_Pooling%2Fconfig.json "HTTP/1.1 200 OK""}
-{"time":"2026-06-09T16:20:07","level":"INFO","logger":"httpx","msg":"HTTP Request: GET https://huggingface.co/api/models/sentence-transformers/all-MiniLM-L6-v2 "HTTP/1.1 200 OK""}
+{"time":"2026-06-12T13:12:21","level":"WARNING","logger":"huggingface_hub.utils._http","msg":"Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads."}
+{"time":"2026-06-12T13:12:21","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/config_sentence_transformers.json "HTTP/1.1 200 OK""}
+{"time":"2026-06-12T13:12:21","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/README.md "HTTP/1.1 307 Temporary Redirect""}
+{"time":"2026-06-12T13:12:21","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/README.md "HTTP/1.1 200 OK""}
+{"time":"2026-06-12T13:12:22","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/modules.json "HTTP/1.1 307 Temporary Redirect""}
+{"time":"2026-06-12T13:12:22","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/modules.json "HTTP/1.1 200 OK""}
+{"time":"2026-06-12T13:12:22","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/sentence_bert_config.json "HTTP/1.1 307 Temporary Redirect""}
+{"time":"2026-06-12T13:12:22","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/sentence_bert_config.json "HTTP/1.1 200 OK""}
+{"time":"2026-06-12T13:12:22","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/adapter_config.json "HTTP/1.1 404 Not Found""}
+{"time":"2026-06-12T13:12:22","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect""}
+{"time":"2026-06-12T13:12:22","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/config.json "HTTP/1.1 200 OK""}
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 10527.15it/s]
+{"time":"2026-06-12T13:12:23","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/processor_config.json "HTTP/1.1 404 Not Found""}
+{"time":"2026-06-12T13:12:23","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/preprocessor_config.json "HTTP/1.1 404 Not Found""}
+{"time":"2026-06-12T13:12:23","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/video_preprocessor_config.json "HTTP/1.1 404 Not Found""}
+{"time":"2026-06-12T13:12:23","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/preprocessor_config.json "HTTP/1.1 404 Not Found""}
+{"time":"2026-06-12T13:12:24","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect""}
+{"time":"2026-06-12T13:12:24","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/tokenizer_config.json "HTTP/1.1 200 OK""}
+{"time":"2026-06-12T13:12:24","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect""}
+{"time":"2026-06-12T13:12:24","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/config.json "HTTP/1.1 200 OK""}
+{"time":"2026-06-12T13:12:24","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect""}
+{"time":"2026-06-12T13:12:24","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/config.json "HTTP/1.1 200 OK""}
+{"time":"2026-06-12T13:12:24","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/tokenizer_config.json "HTTP/1.1 307 Temporary Redirect""}
+{"time":"2026-06-12T13:12:24","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/tokenizer_config.json "HTTP/1.1 200 OK""}
+{"time":"2026-06-12T13:12:25","level":"INFO","logger":"httpx","msg":"HTTP Request: GET https://huggingface.co/api/models/sentence-transformers/all-MiniLM-L6-v2/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found""}
+{"time":"2026-06-12T13:12:25","level":"INFO","logger":"httpx","msg":"HTTP Request: GET https://huggingface.co/api/models/sentence-transformers/all-MiniLM-L6-v2/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK""}
+{"time":"2026-06-12T13:12:25","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/1_Pooling/config.json "HTTP/1.1 307 Temporary Redirect""}
+{"time":"2026-06-12T13:12:25","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/sentence-transformers/all-MiniLM-L6-v2/1110a243fdf4706b3f48f1d95db1a4f5529b4d41/1_Pooling%2Fconfig.json "HTTP/1.1 200 OK""}
+{"time":"2026-06-12T13:12:25","level":"INFO","logger":"httpx","msg":"HTTP Request: GET https://huggingface.co/api/models/sentence-transformers/all-MiniLM-L6-v2 "HTTP/1.1 200 OK""}
 /Users/sharvik/Desktop/Projects/LLM_Firewall/ml_engine/analyzer/embed.py:74: FutureWarning: The `get_sentence_embedding_dimension` method has been renamed to `get_embedding_dimension`.
   dims = _model.get_sentence_embedding_dimension()
-{"time":"2026-06-09T16:20:07","level":"INFO","logger":"embed_server","msg":"Embedding model loaded: all-MiniLM-L6-v2 (dims=384)"}
-Traceback (most recent call last):
-  File "<frozen runpy>", line 203, in _run_module_as_main
-  File "<frozen runpy>", line 88, in _run_code
-  File "/Users/sharvik/Desktop/Projects/LLM_Firewall/ml_engine/analyzer/server.py", line 235, in <module>
-    serve()
-    ~~~~~^^
-  File "/Users/sharvik/Desktop/Projects/LLM_Firewall/ml_engine/analyzer/server.py", line 186, in serve
-    embed.start()
-    ~~~~~~~~~~~^^
-  File "/Users/sharvik/Desktop/Projects/LLM_Firewall/ml_engine/analyzer/embed.py", line 84, in start
-    server = http.server.ThreadingHTTPServer(("0.0.0.0", EMBED_PORT), _EmbedHandler)
-  File "/opt/homebrew/Cellar/python@3.14/3.14.5/Frameworks/Python.framework/Versions/3.14/lib/python3.14/socketserver.py", line 457, in __init__
-    self.server_bind()
-    ~~~~~~~~~~~~~~~~^^
-  File "/opt/homebrew/Cellar/python@3.14/3.14.5/Frameworks/Python.framework/Versions/3.14/lib/python3.14/http/server.py", line 148, in server_bind
-    socketserver.TCPServer.server_bind(self)
-    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
-  File "/opt/homebrew/Cellar/python@3.14/3.14.5/Frameworks/Python.framework/Versions/3.14/lib/python3.14/socketserver.py", line 478, in server_bind
-    self.socket.bind(self.server_address)
-    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
-OSError: [Errno 48] Address already in use
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"embed_server","msg":"Embedding model loaded: all-MiniLM-L6-v2 (dims=384)"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"embed_server","msg":"Embedding HTTP server listening on port 8001"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"grpc_server","msg":"Initialising analyzers…"}
+{"time":"2026-06-12T13:12:26","level":"WARNING","logger":"presidio-analyzer","msg":"model_to_presidio_entity_mapping is missing from configuration, using default"}
+{"time":"2026-06-12T13:12:26","level":"WARNING","logger":"presidio-analyzer","msg":"low_score_entity_names is missing from configuration, using default"}
+{"time":"2026-06-12T13:12:26","level":"WARNING","logger":"presidio-analyzer","msg":"labels_to_ignore is missing from configuration, using default"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Created NLP engine: spacy. Loaded models: ['en']"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"registry not provided, creating default."}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: CreditCardRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: CreditCardRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: CreditCardRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: CreditCardRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: UsBankRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: UsLicenseRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: UsItinRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: UsPassportRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: UsSsnRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: NhsRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: EsNifRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: EsNieRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: ItDriverLicenseRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: ItFiscalCodeRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: ItVatCodeRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: ItIdentityCardRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: ItPassportRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: PlPeselRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: CryptoRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: DateRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: EmailRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: IbanRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: IpRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: MedicalLicenseRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: PhoneRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: UrlRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"WARNING","logger":"presidio-analyzer","msg":"Recognizer not added to registry because language is not supported by registry - CreditCardRecognizer supported languages: es, registry supported languages: en"}
+{"time":"2026-06-12T13:12:26","level":"WARNING","logger":"presidio-analyzer","msg":"Recognizer not added to registry because language is not supported by registry - CreditCardRecognizer supported languages: it, registry supported languages: en"}
+{"time":"2026-06-12T13:12:26","level":"WARNING","logger":"presidio-analyzer","msg":"Recognizer not added to registry because language is not supported by registry - CreditCardRecognizer supported languages: pl, registry supported languages: en"}
+{"time":"2026-06-12T13:12:26","level":"WARNING","logger":"presidio-analyzer","msg":"Recognizer not added to registry because language is not supported by registry - EsNifRecognizer supported languages: es, registry supported languages: en"}
+{"time":"2026-06-12T13:12:26","level":"WARNING","logger":"presidio-analyzer","msg":"Recognizer not added to registry because language is not supported by registry - EsNieRecognizer supported languages: es, registry supported languages: en"}
+{"time":"2026-06-12T13:12:26","level":"WARNING","logger":"presidio-analyzer","msg":"Recognizer not added to registry because language is not supported by registry - ItDriverLicenseRecognizer supported languages: it, registry supported languages: en"}
+{"time":"2026-06-12T13:12:26","level":"WARNING","logger":"presidio-analyzer","msg":"Recognizer not added to registry because language is not supported by registry - ItFiscalCodeRecognizer supported languages: it, registry supported languages: en"}
+{"time":"2026-06-12T13:12:26","level":"WARNING","logger":"presidio-analyzer","msg":"Recognizer not added to registry because language is not supported by registry - ItVatCodeRecognizer supported languages: it, registry supported languages: en"}
+{"time":"2026-06-12T13:12:26","level":"WARNING","logger":"presidio-analyzer","msg":"Recognizer not added to registry because language is not supported by registry - ItIdentityCardRecognizer supported languages: it, registry supported languages: en"}
+{"time":"2026-06-12T13:12:26","level":"WARNING","logger":"presidio-analyzer","msg":"Recognizer not added to registry because language is not supported by registry - ItPassportRecognizer supported languages: it, registry supported languages: en"}
+{"time":"2026-06-12T13:12:26","level":"WARNING","logger":"presidio-analyzer","msg":"Recognizer not added to registry because language is not supported by registry - PlPeselRecognizer supported languages: pl, registry supported languages: en"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"presidio-analyzer","msg":"Loaded recognizer: SpacyRecognizer"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"pii_scanner","msg":"PIIScanner initialised with 11 entity types"}
+{"time":"2026-06-12T13:12:26","level":"WARNING","logger":"injection_detector","msg":"InjectionDetector fallback DISABLED — only 35 training samples (minimum 100). Add labelled data to ml_engine/data/injection_train.jsonl to re-enable. Heuristic layer remains active."}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/protectai/deberta-v3-base-injection/resolve/main/config.json "HTTP/1.1 401 Unauthorized""}
+{"time":"2026-06-12T13:12:26","level":"WARNING","logger":"injection_detector","msg":"HuggingFace model unavailable (protectai/deberta-v3-base-injection is not a local folder and is not a valid model identifier listed on 'https://huggingface.co/models'
+If this is a private repository, make sure to pass a token having permission to this repo either by logging in with `hf auth login` or by passing `token=<your_token>`) — Layer 2 falling back to TF-IDF + LogisticRegression"}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/unitary/toxic-bert/resolve/main/config.json "HTTP/1.1 307 Temporary Redirect""}
+{"time":"2026-06-12T13:12:26","level":"INFO","logger":"httpx","msg":"HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/unitary/toxic-bert/4d6c22e74ba2fdd26bc4f7238f50766b045a0d94/config.json "HTTP/1.1 200 OK""}
+Loading weights:   0%|          | 0/201 [00:00<?, ?it/s]Loading weights: 100%|██████████| 201/201 [00:00<00:00, 8746.75it/s]
+{"time":"2026-06-12T13:12:27","level":"INFO","logger":"httpx","msg":"HTTP Request: GET https://huggingface.co/api/models/unitary/toxic-bert/tree/main/additional_chat_templates?recursive=false&expand=false "HTTP/1.1 404 Not Found""}
+{"time":"2026-06-12T13:12:27","level":"INFO","logger":"httpx","msg":"HTTP Request: GET https://huggingface.co/api/models/unitary/toxic-bert/tree/main?recursive=true&expand=false "HTTP/1.1 200 OK""}
+{"time":"2026-06-12T13:12:27","level":"INFO","logger":"toxicity_detector","msg":"ToxicityDetector Layer 2: HuggingFace model loaded — unitary/toxic-bert"}
+{"time":"2026-06-12T13:12:27","level":"INFO","logger":"secret_scanner","msg":"SecretScanner initialised — 13 credential signatures, code_leak_block=False"}
+{"time":"2026-06-12T13:12:27","level":"INFO","logger":"grpc_server","msg":"AnalyzerService ready"}
+{"time":"2026-06-12T13:12:27","level":"WARNING","logger":"grpc_server","msg":"gRPC AnalyzerService listening on plaintext port 50051 — set GRPC_TLS_ENABLED=true to enable mTLS"}
+{"time":"2026-06-12T13:12:27","level":"INFO","logger":"grpc_server","msg":"gRPC AnalyzerService started on port 50051 (tls=False)"}
