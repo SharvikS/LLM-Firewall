@@ -19,17 +19,20 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/sharvik/llm-firewall/gateway/internal/logger"
+	"github.com/sharvik/llm-firewall/gateway/internal/settings"
 	"github.com/sharvik/llm-firewall/gateway/internal/store"
 )
 
-// NewAdminRouter builds the /admin/v1 Chi sub-router.
-func NewAdminRouter(st *store.Store, adminToken string) http.Handler {
+// NewAdminRouter builds the /admin/v1 Chi sub-router. settingsMgr may be nil, in
+// which case the /settings routes answer 503.
+func NewAdminRouter(st *store.Store, adminToken string, settingsMgr *settings.Manager) http.Handler {
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
 	r.Use(adminAuth(adminToken))
 	r.Use(corsHeaders)
 
 	h := &adminHandler{st: st}
+	sh := &settingsHandler{mgr: settingsMgr}
 
 	// Tenants
 	r.Get("/tenants",        h.listTenants)
@@ -52,6 +55,10 @@ func NewAdminRouter(st *store.Store, adminToken string) http.Handler {
 	// Compliance reporting
 	r.Get("/compliance/report", h.complianceReport)
 	r.Get("/compliance/export", h.complianceExport)
+
+	// Runtime settings (dashboard control plane)
+	r.Get("/settings", sh.getSettings)
+	r.Put("/settings", sh.updateSettings)
 
 	return r
 }

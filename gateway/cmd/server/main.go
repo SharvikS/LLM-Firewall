@@ -30,6 +30,7 @@ import (
 	"github.com/sharvik/llm-firewall/gateway/internal/policy"
 	"github.com/sharvik/llm-firewall/gateway/internal/proxy"
 	"github.com/sharvik/llm-firewall/gateway/internal/ratelimit"
+	"github.com/sharvik/llm-firewall/gateway/internal/settings"
 	"github.com/sharvik/llm-firewall/gateway/internal/store"
 	"github.com/sharvik/llm-firewall/gateway/internal/telemetry"
 )
@@ -86,6 +87,21 @@ func main() {
 
 	limiter := ratelimit.New(redisClient, cfg.RateLimitRPM, time.Duration(cfg.RateLimitWindowSec)*time.Second, cfg.RateLimitTPM)
 	exactCache := cache.New(redisClient, time.Duration(cfg.CacheTTLSec)*time.Second)
+
+	// ── Runtime settings plane (dashboard-tunable; persisted in DB) ───────────
+	// Seeds from config/env, hydrates any persisted overrides, then fans every
+	// change out to the rate limiter, cache, and ML engine — all applied live.
+	settingsMgr := settings.NewManager(st, cfg)
+	if err := settingsMgr.Load(ctx); err != nil {
+		log.Warn("settings load failed — using config defaults", slog.String("error", err.Error()))
+	}
+	settingsMgr.OnApply(func(s settings.Settings) {
+		limiter.SetLimits(s.RateLimitRPM, s.RateLimitTPM)
+		exactCache.SetTTL(time.Duration(s.CacheTTLSec) * time.Second)
+	})
+	settingsMgr.OnApply(settings.NewMLPusher(settings.MLConfigURLFromEmbedding(cfg.EmbeddingURL)))
+	settingsMgr.ApplyAll()
+	log.Info("runtime settings plane ready")
 
 	// Semantic cache is optional — only created when QDRANT_URL is set.
 	var semCache *cache.SemanticCache
@@ -169,8 +185,11 @@ func main() {
 	// ── WASM custom-rule plugins (optional) ───────────────────────────────────
 	pluginRT, err := plugins.Load(ctx, cfg.PluginDir, time.Duration(cfg.PluginTimeoutMs)*time.Millisecond)
 	if err != nil {
-		log.Error("plugin runtime init failed", slog.String("error", err.Error()))
-		os.Exit(1)
+		// A plugin runtime failure must never take the gateway down — degrade to
+		// a disabled plugin stage and keep serving. Individual bad plugins are
+		// already skipped inside Load; this guards the rare runtime-init error.
+		log.Warn("plugin runtime init failed — plugin stage disabled", slog.String("error", err.Error()))
+		pluginRT, _ = plugins.Load(ctx, "", 0)
 	}
 	if pluginRT.Enabled() {
 		log.Info("WASM plugins enabled", slog.Int("count", pluginRT.Count()), slog.String("dir", cfg.PluginDir))
@@ -180,7 +199,7 @@ func main() {
 	}
 
 	// ── Proxy ─────────────────────────────────────────────────────────────────
-	llmProxy, err := proxy.NewLLMProxy(cfg, policyEngine, producer, limiter, exactCache, semCache, mlClient, st, pluginRT)
+	llmProxy, err := proxy.NewLLMProxy(cfg, policyEngine, producer, limiter, exactCache, semCache, mlClient, st, pluginRT, settingsMgr)
 	if err != nil {
 		log.Error("proxy init failed", slog.String("error", err.Error()))
 		os.Exit(1)
@@ -196,10 +215,45 @@ func main() {
 	r.Use(chimiddleware.Recoverer)
 	r.Use(gatewaymw.MaxBodySize(cfg.MaxRequestBodyBytes))
 
-	// Health (no auth)
+	// Health — liveness only (always 200 while the process is up).
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok","service":"titan-gateway"}`)) //nolint:errcheck
+	})
+
+	// Readiness — probes downstream dependencies. The DB is the only hard
+	// dependency (auth needs it); Redis and the ML engine are reported but
+	// degrade gracefully, so they never flip readiness to false.
+	r.Get("/ready", func(w http.ResponseWriter, req *http.Request) {
+		probeCtx, cancel := context.WithTimeout(req.Context(), 2*time.Second)
+		defer cancel()
+		comps := map[string]string{}
+		ready := true
+		if err := st.Pool().Ping(probeCtx); err != nil {
+			comps["database"] = "down"
+			ready = false
+		} else {
+			comps["database"] = "ok"
+		}
+		if err := redisClient.Ping(probeCtx).Err(); err != nil {
+			comps["redis"] = "degraded"
+		} else {
+			comps["redis"] = "ok"
+		}
+		if mlClient != nil {
+			comps["ml_engine"] = "configured"
+		} else {
+			comps["ml_engine"] = "fail-open"
+		}
+		status := http.StatusOK
+		if !ready {
+			status = http.StatusServiceUnavailable
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(map[string]any{ //nolint:errcheck
+			"ready": ready, "components": comps,
+		})
 	})
 
 	// Dashboard read API (no auth — metrics are not sensitive)
@@ -230,7 +284,7 @@ func main() {
 	r.Get("/docs", adminapi.SwaggerUIHandler)
 
 	// Admin API (token-gated — called server-side only from Next.js)
-	r.Mount("/admin/v1", adminapi.NewAdminRouter(st, cfg.AdminToken))
+	r.Mount("/admin/v1", adminapi.NewAdminRouter(st, cfg.AdminToken, settingsMgr))
 
 	// LLM proxy — all /v1/* routes require a valid API key (fail-closed)
 	r.Group(func(r chi.Router) {

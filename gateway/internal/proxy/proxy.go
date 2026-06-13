@@ -29,6 +29,7 @@ import (
 	"github.com/sharvik/llm-firewall/gateway/internal/plugins"
 	"github.com/sharvik/llm-firewall/gateway/internal/policy"
 	"github.com/sharvik/llm-firewall/gateway/internal/ratelimit"
+	"github.com/sharvik/llm-firewall/gateway/internal/settings"
 	"github.com/sharvik/llm-firewall/gateway/internal/store"
 )
 
@@ -70,8 +71,9 @@ type LLMProxy struct {
 	mlClient      *analyzer.Client
 	st            *store.Store
 	cfg           *config.Config
-	provider      string           // upstream provider label derived from TargetURL host
-	plugins       *plugins.Runtime // WASM custom-rule stage; nil-safe when disabled
+	settings      *settings.Manager // live runtime knobs (rate limits, timeouts, gates)
+	provider      string            // upstream provider label derived from TargetURL host
+	plugins       *plugins.Runtime  // WASM custom-rule stage; nil-safe when disabled
 }
 
 // providerFromHost maps an upstream host to a human-readable provider label for
@@ -120,6 +122,7 @@ func NewLLMProxy(
 	mlClient *analyzer.Client,
 	st *store.Store,
 	pluginRT *plugins.Runtime,
+	settingsMgr *settings.Manager,
 ) (*LLMProxy, error) {
 	target, err := url.Parse(cfg.TargetURL)
 	if err != nil {
@@ -135,6 +138,7 @@ func NewLLMProxy(
 		mlClient:      mlClient,
 		st:            st,
 		cfg:           cfg,
+		settings:      settingsMgr,
 		provider:      providerFromHost(target.Host),
 		plugins:       pluginRT,
 	}
@@ -186,8 +190,9 @@ func NewLLMProxy(
 		otel.GetTextMapPropagator().Inject(req.Context(), propagation.HeaderCarrier(req.Header))
 	}
 	rp.ModifyResponse = func(resp *http.Response) error {
-		// Trigger failover on retriable server errors when a fallback is configured.
-		if p.fallbackRP != nil {
+		// Trigger failover on retriable server errors when a fallback is configured
+		// and the live "Edge Routing" failover toggle is on.
+		if p.fallbackRP != nil && p.settings.Get().FailoverEnabled {
 			switch resp.StatusCode {
 			case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 				resp.Body.Close()
@@ -200,7 +205,7 @@ func NewLLMProxy(
 	}
 	rp.ErrorHandler = func(w http.ResponseWriter, req *http.Request, err error) {
 		log := logger.Get().With(slog.String("request_id", chimiddleware.GetReqID(req.Context())))
-		if p.fallbackRP != nil {
+		if p.fallbackRP != nil && p.settings.Get().FailoverEnabled {
 			log.Warn("primary upstream failed — failing over to backup provider",
 				slog.String("error", err.Error()),
 			)
@@ -236,6 +241,10 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	tenantID := auth.TenantID
 	tenantName := auth.TenantName
 	apiKeyID := auth.APIKeyID
+
+	// Live runtime settings snapshot (dashboard-tunable). Read once per request
+	// so a mid-request settings change can't produce inconsistent decisions.
+	set := p.settings.Get()
 
 	isStream := cache.IsStreaming(body)
 	cacheKey := p.cache.Key(tenantID.String(), r.URL.Path, body)
@@ -278,8 +287,8 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TPM check (skipped when tpmLimit == 0 or cfg.RateLimitTPM == 0).
-	if p.cfg.RateLimitTPM > 0 {
+	// TPM check (skipped when the live TPM limit is 0).
+	if p.limiter.TPMLimit() > 0 {
 		tokenCount := estimateTokens(body)
 		tpm, tpmErr := p.limiter.AllowTokens(r.Context(), tenantID.String(), tokenCount)
 		if tpmErr == nil && !tpm.Allowed {
@@ -304,8 +313,9 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Stage 4: ML Analyzer.
-	analysis := p.mlClient.Analyze(r.Context(), reqID, tenantName, string(body))
+	// Stage 4: ML Analyzer. The inline deadline is dashboard-tunable.
+	analysis := p.mlClient.AnalyzeWithTimeout(r.Context(), reqID, tenantName, string(body),
+		time.Duration(set.AnalyzerTimeoutMs)*time.Millisecond)
 
 	switch analysis.Action {
 	case analyzer.ActionBlock:
@@ -409,7 +419,7 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if isStream {
 		// Streaming responses are not buffered, so output scanning is skipped.
 		p.rp.ServeHTTP(w, r)
-	} else if p.cfg.OutputScanEnabled {
+	} else if set.OutputScanEnabled {
 		// Buffer the response (no tee), scan/mask the assistant text, then send.
 		bw := newBufferingResponse(w)
 		p.rp.ServeHTTP(bw, r)
@@ -466,8 +476,12 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		auditAction = "OUTPUT_MASKED"
 	}
 	p.pushEvent(reqID, tenantName, auditAction, float64(analysis.RiskScore), r.URL.Path, "")
-	p.emitKafka(reqID, tenantID, apiKeyID, auditAction, float64(analysis.RiskScore), r.URL.Path,
-		http.StatusOK, latencyMs, "", region, model)
+	// "Audit All Requests" (default on) writes clean ALLOWs to the durable audit
+	// log. When disabled, only security-relevant outcomes (blocks, masks) persist.
+	if set.AuditAllRequests || auditAction != "ALLOWED" {
+		p.emitKafka(reqID, tenantID, apiKeyID, auditAction, float64(analysis.RiskScore), r.URL.Path,
+			http.StatusOK, latencyMs, "", region, model)
+	}
 }
 
 // inspectPayload reads body once, enforces structural invariants, restores r.Body.

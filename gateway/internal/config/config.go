@@ -61,6 +61,13 @@ type Config struct {
 	EmbeddingURL           string  // embedding HTTP endpoint, e.g. "http://localhost:8001/embed"
 	SemanticCacheThreshold float64 // cosine similarity threshold (0 < x ≤ 1.0)
 
+	// ML governance gate defaults — these run in the Python engine but the
+	// gateway reads the same env vars to seed the runtime-settings document so
+	// the dashboard starts in sync with the engine.
+	ToxicityEnabled        bool
+	ToxicityBlockThreshold float64
+	CodeLeakBlock          bool
+
 	// Admin API
 	AdminToken string // master secret for /admin/* routes — never NEXT_PUBLIC_
 
@@ -111,6 +118,10 @@ func Load() (*Config, error) {
 		QdrantURL:              os.Getenv("QDRANT_URL"),
 		EmbeddingURL:           getEnv("EMBEDDING_URL", "http://localhost:8001/embed"),
 		SemanticCacheThreshold: getEnvFloat64("SEMANTIC_CACHE_THRESHOLD", 0.95),
+
+		ToxicityEnabled:        getEnvBool("TOXICITY_ENABLED", true),
+		ToxicityBlockThreshold: getEnvFloat64("TOXICITY_BLOCK_THRESHOLD", 0.85),
+		CodeLeakBlock:          getEnvBool("CODE_LEAK_BLOCK", false),
 
 		AdminToken: getEnv("ADMIN_TOKEN", "titan-admin-dev-secret"),
 

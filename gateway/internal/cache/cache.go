@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -26,14 +27,28 @@ type entry struct {
 // Cache is an exact-match request/response cache backed by Redis.
 // Streaming responses must never be cached; callers are responsible for
 // skipping cache operations when stream=true.
+//
+// The TTL is stored atomically (as nanoseconds) so the dashboard settings plane
+// can retune it live via SetTTL without restarting the gateway.
 type Cache struct {
 	client *redis.Client
-	ttl    time.Duration
+	ttlNs  atomic.Int64
 }
 
 // New creates a Cache with the given TTL for all entries.
 func New(client *redis.Client, ttl time.Duration) *Cache {
-	return &Cache{client: client, ttl: ttl}
+	c := &Cache{client: client}
+	c.ttlNs.Store(int64(ttl))
+	return c
+}
+
+// SetTTL live-updates the cache entry TTL. A non-positive duration is clamped to
+// 1 second to avoid writing entries that expire immediately.
+func (c *Cache) SetTTL(ttl time.Duration) {
+	if ttl <= 0 {
+		ttl = time.Second
+	}
+	c.ttlNs.Store(int64(ttl))
 }
 
 // Key returns a deterministic cache key for the tuple (tenantID, path, body).
@@ -111,7 +126,7 @@ func (c *Cache) Set(ctx context.Context, key string, statusCode int, headers map
 		)
 		return
 	}
-	if err := c.client.Set(ctx, key, raw, c.ttl).Err(); err != nil {
+	if err := c.client.Set(ctx, key, raw, time.Duration(c.ttlNs.Load())).Err(); err != nil {
 		logger.Get().Warn("cache SET error",
 			slog.String("key", key),
 			slog.String("error", err.Error()),

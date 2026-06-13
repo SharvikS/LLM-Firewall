@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -57,11 +58,15 @@ type Result struct {
 // RateLimiter is a distributed rate limiter backed by Redis.
 // RPM uses a sliding-window sorted-set; TPM uses a 1-minute tumbling bucket.
 // All operations are atomic via Lua scripts, safe across multiple replicas.
+//
+// The RPM and TPM limits are held atomically so the dashboard settings plane can
+// retune them live (SetLimits) without restarting the gateway or racing the
+// request path.
 type RateLimiter struct {
 	client   *redis.Client
-	limit    int64         // RPM limit
+	limit    atomic.Int64  // RPM limit
 	window   time.Duration // RPM window
-	tpmLimit int64         // tokens per minute; 0 = TPM checking disabled
+	tpmLimit atomic.Int64  // tokens per minute; 0 = TPM checking disabled
 }
 
 // New creates a RateLimiter.
@@ -69,8 +74,29 @@ type RateLimiter struct {
 //   window   — the rolling RPM window duration
 //   tpmLimit — maximum tokens per minute; 0 disables TPM enforcement
 func New(client *redis.Client, limit int64, window time.Duration, tpmLimit int64) *RateLimiter {
-	return &RateLimiter{client: client, limit: limit, window: window, tpmLimit: tpmLimit}
+	rl := &RateLimiter{client: client, window: window}
+	rl.limit.Store(limit)
+	rl.tpmLimit.Store(tpmLimit)
+	return rl
 }
+
+// SetLimits live-updates the RPM and TPM limits. Safe to call concurrently with
+// Allow/AllowTokens; in-flight windows simply observe the new value on their next
+// evaluation. A TPM of 0 disables token enforcement.
+func (rl *RateLimiter) SetLimits(rpm, tpm int64) {
+	if rpm < 0 {
+		rpm = 0
+	}
+	if tpm < 0 {
+		tpm = 0
+	}
+	rl.limit.Store(rpm)
+	rl.tpmLimit.Store(tpm)
+}
+
+// TPMLimit returns the current tokens-per-minute limit (0 = disabled). The proxy
+// uses this to decide whether to run the TPM check at all.
+func (rl *RateLimiter) TPMLimit() int64 { return rl.tpmLimit.Load() }
 
 // Allow checks whether tenantID is within its rate limit.
 // On any Redis error the limiter fails open (returns Allowed: true) and logs a
@@ -80,11 +106,12 @@ func (rl *RateLimiter) Allow(ctx context.Context, tenantID string) (Result, erro
 	nowMs := time.Now().UnixMilli()
 	windowMs := rl.window.Milliseconds()
 	member := uuid.New().String() // unique per request to avoid sorted-set collisions
+	limit := rl.limit.Load()
 
 	vals, err := slidingWindowScript.Run(
 		ctx, rl.client,
 		[]string{key},
-		nowMs, windowMs, rl.limit, member,
+		nowMs, windowMs, limit, member,
 	).Slice()
 
 	if err != nil {
@@ -92,12 +119,12 @@ func (rl *RateLimiter) Allow(ctx context.Context, tenantID string) (Result, erro
 			slog.String("tenant", tenantID),
 			slog.String("error", err.Error()),
 		)
-		return Result{Allowed: true, Limit: rl.limit}, err
+		return Result{Allowed: true, Limit: limit}, err
 	}
 
 	allowed := toInt64(vals[0]) == 1
 	current := toInt64(vals[1])
-	limit := toInt64(vals[2])
+	limit = toInt64(vals[2])
 
 	return Result{
 		Allowed:   allowed,
@@ -145,11 +172,12 @@ return {1, new_total, limit}
 func (rl *RateLimiter) AllowTokens(ctx context.Context, tenantID string, tokens int64) (Result, error) {
 	minuteBucket := time.Now().Unix() / 60
 	key := fmt.Sprintf("gateway:tpm:%s:%d", tenantID, minuteBucket)
+	tpmLimit := rl.tpmLimit.Load()
 
 	vals, err := tpmScript.Run(
 		ctx, rl.client,
 		[]string{key},
-		rl.tpmLimit, tokens,
+		tpmLimit, tokens,
 	).Slice()
 
 	if err != nil {
@@ -157,7 +185,7 @@ func (rl *RateLimiter) AllowTokens(ctx context.Context, tenantID string, tokens 
 			slog.String("tenant", tenantID),
 			slog.String("error", err.Error()),
 		)
-		return Result{Allowed: true, Limit: rl.tpmLimit}, err
+		return Result{Allowed: true, Limit: tpmLimit}, err
 	}
 
 	allowed := toInt64(vals[0]) == 1
