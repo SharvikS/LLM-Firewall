@@ -28,10 +28,71 @@ _SECCOMP_PROFILE = json.dumps({
             "clock_gettime", "clock_nanosleep", "epoll_create", "epoll_ctl",
             "epoll_wait", "epoll_pwait", "getdents64", "pread64", "pwrite64",
             "readv", "writev", "arch_prctl", "prctl", "capget",
+            # ── Modern runc/glibc init requirements ─────────────────────────
+            # The original list predates current runc + glibc, which use these
+            # newer syscalls during container init and normal libc operation.
+            # Without them the container fails to start under seccomp ("error
+            # during container init"), forcing a silent drop to no isolation.
+            "statx", "statfs", "fstatfs", "newfstatat", "openat2",
+            "faccessat", "faccessat2", "close_range", "clone3", "rseq",
+            "set_robust_list", "get_robust_list", "prlimit64", "getrandom",
+            "pipe2", "dup3", "epoll_create1", "epoll_pwait2", "eventfd2",
+            "signalfd4", "pidfd_open", "pidfd_send_signal", "memfd_create",
+            "membarrier", "restart_syscall", "rt_sigpending",
+            "rt_sigtimedwait", "rt_sigsuspend", "rt_sigqueueinfo",
+            "sigaltstack", "sched_getaffinity", "sched_setaffinity",
+            "setresuid", "setresgid", "setuid", "setgid", "setgroups",
+            "setsid", "getppid", "getpgrp", "getpgid", "getsid", "setpgid",
+            "wait4", "waitid", "gettid", "gettid", "tkill", "getpriority",
+            "setpriority", "ppoll", "pselect6", "getrandom", "clock_getres",
         ],
         "action": "SCMP_ACT_ALLOW",
     }],
 })
+
+
+def _connect_docker():
+    """
+    Connect to the Docker daemon, tolerant of non-default socket locations.
+
+    docker.from_env() honours DOCKER_HOST / the default /var/run/docker.sock,
+    which covers Linux and most CI. Docker Desktop on macOS exposes its socket
+    under the user's home (~/.docker/run/docker.sock) and only symlinks
+    /var/run/docker.sock when the privileged helper is installed — so we fall
+    back to the known Desktop paths before giving up and dropping to simulation.
+    Returns a pinging client, or None when no daemon is reachable.
+    """
+    import os
+
+    try:
+        import docker  # type: ignore
+    except Exception as exc:  # docker SDK not installed
+        logger.warning("docker SDK not importable: %s", exc)
+        return None
+
+    candidates = []
+    if os.getenv("DOCKER_HOST"):
+        candidates.append(None)  # let from_env() read DOCKER_HOST
+    candidates.append(None)      # from_env() default (/var/run/docker.sock)
+    home = os.path.expanduser("~")
+    candidates += [
+        f"unix://{home}/.docker/run/docker.sock",  # Docker Desktop (macOS)
+        "unix:///var/run/docker.sock",             # explicit default
+    ]
+
+    seen = set()
+    for base in candidates:
+        key = base or "from_env"
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            client = docker.from_env() if base is None else docker.DockerClient(base_url=base)
+            client.ping()  # fail fast if the daemon is not actually reachable
+            return client
+        except Exception:
+            continue
+    return None
 
 
 class FirecrackerSandboxManager:
@@ -63,12 +124,11 @@ class FirecrackerSandboxManager:
 
         self.client = None
         if self.firecracker is None:
-            try:
-                import docker  # type: ignore
-                self.client = docker.from_env()
+            self.client = _connect_docker()
+            if self.client is not None:
                 logger.info("Sandbox connected to Docker API (hardened-container isolation active)")
-            except Exception as exc:
-                logger.warning("Docker API unavailable — sandbox running in simulation mode: %s", exc)
+            else:
+                logger.warning("Docker API unavailable — sandbox running in simulation mode")
 
     def execute_in_sandbox(
         self,
