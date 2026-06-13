@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/sharvik/llm-firewall/gateway/internal/analytics"
 	"github.com/sharvik/llm-firewall/gateway/internal/analyzer"
 	adminapi "github.com/sharvik/llm-firewall/gateway/internal/api"
+	"github.com/sharvik/llm-firewall/gateway/internal/auth"
 	"github.com/sharvik/llm-firewall/gateway/internal/batch"
 	"github.com/sharvik/llm-firewall/gateway/internal/cache"
 	"github.com/sharvik/llm-firewall/gateway/internal/config"
@@ -47,7 +49,22 @@ func main() {
 	log.Info("configuration loaded",
 		slog.String("listen", cfg.ListenAddr),
 		slog.String("target", cfg.TargetURL),
+		slog.String("env", cfg.AppEnv),
 	)
+
+	// In production, refuse to start with public default secrets.
+	if cfg.IsProduction() {
+		if issues := cfg.InsecureDefaults(); len(issues) > 0 {
+			for _, issue := range issues {
+				log.Error("insecure default in production — refusing to start", slog.String("issue", issue))
+			}
+			os.Exit(1)
+		}
+	} else if issues := cfg.InsecureDefaults(); len(issues) > 0 {
+		for _, issue := range issues {
+			log.Warn("insecure default in use (set APP_ENV=production to enforce)", slog.String("issue", issue))
+		}
+	}
 
 	ctx := context.Background()
 
@@ -67,6 +84,33 @@ func main() {
 		os.Exit(1)
 	}
 	defer st.Close()
+
+	// ── Control-plane auth (sessions + RBAC) ──────────────────────────────────
+	// Bootstrap a default admin on first boot so the dashboard is reachable.
+	if n, cErr := st.CountUsers(ctx); cErr == nil && n == 0 {
+		if hash, hErr := auth.HashPassword(cfg.DefaultAdminPassword); hErr == nil {
+			if _, uErr := st.CreateUser(ctx, strings.ToLower(cfg.DefaultAdminEmail), hash, string(auth.RoleAdmin), "local"); uErr == nil {
+				log.Info("bootstrapped default admin user", slog.String("email", cfg.DefaultAdminEmail))
+			} else {
+				log.Warn("default admin bootstrap failed", slog.String("error", uErr.Error()))
+			}
+		}
+	}
+	sessionIssuer := auth.NewIssuer(cfg.AuthSigningSecret, time.Duration(cfg.AuthSessionTTLHours)*time.Hour)
+	oidcCfg := auth.OIDCConfig{
+		Issuer:       cfg.OIDCIssuer,
+		ClientID:     cfg.OIDCClientID,
+		ClientSecret: cfg.OIDCClientSecret,
+		RedirectURL:  cfg.OIDCRedirectURL,
+		DefaultRole:  auth.Role(cfg.OIDCDefaultRole),
+	}
+	var oidcClient *auth.OIDCClient
+	if oidcCfg.Enabled() {
+		oidcClient = auth.NewOIDCClient(oidcCfg, cfg.AuthSigningSecret)
+		log.Info("OIDC SSO enabled", slog.String("issuer", cfg.OIDCIssuer))
+	} else {
+		log.Info("OIDC SSO disabled — set OIDC_ISSUER + client creds to enable")
+	}
 
 	// ── Redis ─────────────────────────────────────────────────────────────────
 	redisClient := redis.NewClient(&redis.Options{
@@ -284,7 +328,16 @@ func main() {
 	r.Get("/docs", adminapi.SwaggerUIHandler)
 
 	// Admin API (token-gated — called server-side only from Next.js)
-	r.Mount("/admin/v1", adminapi.NewAdminRouter(st, cfg.AdminToken, settingsMgr))
+	r.Mount("/admin/v1", adminapi.NewAdminRouter(adminapi.AdminDeps{
+		Store:           st,
+		MasterToken:     cfg.AdminToken,
+		Settings:        settingsMgr,
+		Issuer:          sessionIssuer,
+		OIDC:            oidcClient,
+		OIDCEnabled:     oidcCfg.Enabled(),
+		DefaultOIDCRole: auth.Role(cfg.OIDCDefaultRole),
+		DashboardURL:    cfg.DashboardURL,
+	}))
 
 	// LLM proxy — all /v1/* routes require a valid API key (fail-closed)
 	r.Group(func(r chi.Router) {

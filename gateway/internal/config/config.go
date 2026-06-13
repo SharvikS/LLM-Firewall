@@ -69,7 +69,24 @@ type Config struct {
 	CodeLeakBlock          bool
 
 	// Admin API
-	AdminToken string // master secret for /admin/* routes — never NEXT_PUBLIC_
+	AdminToken string // master (machine) secret for /admin/* — never NEXT_PUBLIC_
+
+	// Auth / RBAC (dashboard control plane)
+	AuthSigningSecret    string // HMAC secret for session JWTs
+	AuthSessionTTLHours  int
+	DefaultAdminEmail    string // bootstrapped on first boot if no users exist
+	DefaultAdminPassword string
+	AppEnv               string // "development" | "production"
+
+	// OIDC SSO (optional — disabled unless OIDCIssuer + client creds are set)
+	OIDCIssuer       string
+	OIDCClientID     string
+	OIDCClientSecret string
+	OIDCRedirectURL  string
+	OIDCDefaultRole  string
+
+	// DashboardURL is where SSO bounces the browser back after login.
+	DashboardURL string
 
 	// ClickHouse analytics (OLAP read path); empty URL = disabled
 	ClickHouseURL      string // e.g. "http://localhost:8123"
@@ -84,7 +101,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		ListenAddr:          getEnv("LISTEN_ADDR", ":8080"),
 		TargetURL:           getEnv("TARGET_URL", "https://api.groq.com/openai"),
-		APIKey:              os.Getenv("GROQ_API_KEY"),
+		APIKey:              getEnvWithFile("GROQ_API_KEY", ""),
 		DBConnString:        getEnv("DB_CONN_STRING", "postgresql://localhost/titan_dev?sslmode=disable"),
 		KafkaBrokers:        splitComma(getEnv("KAFKA_BROKERS", "localhost:9092")),
 		MaxRequestBodyBytes: getEnvInt64("MAX_REQUEST_BODY_BYTES", 4*1024*1024), // 4 MB
@@ -123,7 +140,20 @@ func Load() (*Config, error) {
 		ToxicityBlockThreshold: getEnvFloat64("TOXICITY_BLOCK_THRESHOLD", 0.85),
 		CodeLeakBlock:          getEnvBool("CODE_LEAK_BLOCK", false),
 
-		AdminToken: getEnv("ADMIN_TOKEN", "titan-admin-dev-secret"),
+		AdminToken: getEnvWithFile("ADMIN_TOKEN", "titan-admin-dev-secret"),
+
+		AuthSigningSecret:    getEnvWithFile("AUTH_SIGNING_SECRET", "titan-dev-signing-secret-change-me"),
+		AuthSessionTTLHours:  getEnvInt("AUTH_SESSION_TTL_HOURS", 12),
+		DefaultAdminEmail:    getEnv("DEFAULT_ADMIN_EMAIL", "admin@titan.local"),
+		DefaultAdminPassword: getEnvWithFile("DEFAULT_ADMIN_PASSWORD", "titan-admin"),
+		AppEnv:               getEnv("APP_ENV", "development"),
+
+		OIDCIssuer:       os.Getenv("OIDC_ISSUER"),
+		OIDCClientID:     os.Getenv("OIDC_CLIENT_ID"),
+		OIDCClientSecret: getEnvWithFile("OIDC_CLIENT_SECRET", ""),
+		OIDCRedirectURL:  os.Getenv("OIDC_REDIRECT_URL"),
+		OIDCDefaultRole:  getEnv("OIDC_DEFAULT_ROLE", "viewer"),
+		DashboardURL:     getEnv("DASHBOARD_URL", "http://localhost:3000"),
 
 		ClickHouseURL:      os.Getenv("CLICKHOUSE_URL"),
 		ClickHouseUser:     getEnv("CLICKHOUSE_USER", "default"),
@@ -147,6 +177,40 @@ func getEnv(key, defaultVal string) string {
 	}
 	return defaultVal
 }
+
+// getEnvWithFile resolves a secret from a mounted file first (<KEY>_FILE), then
+// the plain env var, then the default. The *_FILE convention is how Vault Agent,
+// Kubernetes Secrets and Docker secrets surface credentials, so the gateway
+// integrates with all three without an SDK.
+func getEnvWithFile(key, defaultVal string) string {
+	if path := os.Getenv(key + "_FILE"); path != "" {
+		if b, err := os.ReadFile(path); err == nil {
+			if v := strings.TrimSpace(string(b)); v != "" {
+				return v
+			}
+		}
+	}
+	return getEnv(key, defaultVal)
+}
+
+// InsecureDefaults lists production-unsafe default secrets still in effect.
+// main refuses to start in production when this is non-empty.
+func (c *Config) InsecureDefaults() []string {
+	var issues []string
+	if c.AdminToken == "titan-admin-dev-secret" {
+		issues = append(issues, "ADMIN_TOKEN is the public default — set a strong secret (openssl rand -hex 32)")
+	}
+	if c.AuthSigningSecret == "titan-dev-signing-secret-change-me" {
+		issues = append(issues, "AUTH_SIGNING_SECRET is the default — set a strong secret to protect sessions")
+	}
+	if c.DefaultAdminPassword == "titan-admin" {
+		issues = append(issues, "DEFAULT_ADMIN_PASSWORD is the default — set a strong admin password")
+	}
+	return issues
+}
+
+// IsProduction reports whether the gateway is running in production mode.
+func (c *Config) IsProduction() bool { return strings.EqualFold(c.AppEnv, "production") }
 
 func getEnvInt64(key string, defaultVal int64) int64 {
 	if v := os.Getenv(key); v != "" {

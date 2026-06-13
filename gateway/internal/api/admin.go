@@ -4,7 +4,6 @@
 package api
 
 import (
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -18,67 +17,89 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 
+	"github.com/sharvik/llm-firewall/gateway/internal/auth"
 	"github.com/sharvik/llm-firewall/gateway/internal/logger"
 	"github.com/sharvik/llm-firewall/gateway/internal/settings"
 	"github.com/sharvik/llm-firewall/gateway/internal/store"
 )
 
-// NewAdminRouter builds the /admin/v1 Chi sub-router. settingsMgr may be nil, in
-// which case the /settings routes answer 503.
-func NewAdminRouter(st *store.Store, adminToken string, settingsMgr *settings.Manager) http.Handler {
-	r := chi.NewRouter()
-	r.Use(chimiddleware.RequestID)
-	r.Use(adminAuth(adminToken))
-	r.Use(corsHeaders)
-
-	h := &adminHandler{st: st}
-	sh := &settingsHandler{mgr: settingsMgr}
-
-	// Tenants
-	r.Get("/tenants",        h.listTenants)
-	r.Post("/tenants",       h.createTenant)
-
-	// API Keys
-	r.Get("/keys",           h.listKeys)
-	r.Post("/keys",          h.createKey)
-	r.Delete("/keys/{id}",   h.revokeKey)
-
-	// Policies
-	r.Get("/policies",       h.listPolicies)
-	r.Post("/policies",      h.createPolicy)
-	r.Put("/policies/{id}",  h.updatePolicy)
-	r.Delete("/policies/{id}", h.deletePolicy)
-
-	// Audit logs
-	r.Get("/audit",          h.listAudit)
-
-	// Compliance reporting
-	r.Get("/compliance/report", h.complianceReport)
-	r.Get("/compliance/export", h.complianceExport)
-
-	// Runtime settings (dashboard control plane)
-	r.Get("/settings", sh.getSettings)
-	r.Put("/settings", sh.updateSettings)
-
-	return r
+// AdminDeps bundles everything the admin router needs.
+type AdminDeps struct {
+	Store           *store.Store
+	MasterToken     string // machine super-user token (maps to admin role)
+	Settings        *settings.Manager
+	Issuer          *auth.Issuer
+	OIDC            *auth.OIDCClient
+	OIDCEnabled     bool
+	DefaultOIDCRole auth.Role
+	DashboardURL    string // SSO bounce-back target
 }
 
-// adminAuth gates every /admin/* route with the master token.
-func adminAuth(token string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			provided := r.Header.Get("X-Admin-Token")
-			if provided == "" {
-				// Also accept Bearer for curl convenience
-				provided = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			}
-			if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
-				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid admin token"})
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
+// NewAdminRouter builds the /admin/v1 Chi sub-router with authentication and
+// per-route RBAC. Auth endpoints are public; every other route requires a valid
+// session (or the machine master token) and a minimum role:
+//
+//	viewer     — read tenants/keys/policies/audit/settings
+//	compliance — + compliance report/export
+//	security   — + edit settings, policies, tenants
+//	admin      — + API keys, user management
+func NewAdminRouter(d AdminDeps) http.Handler {
+	r := chi.NewRouter()
+	r.Use(chimiddleware.RequestID)
+	r.Use(corsHeaders)
+
+	h := &adminHandler{st: d.Store}
+	sh := &settingsHandler{mgr: d.Settings}
+	uh := &userHandler{st: d.Store}
+	ah := &authHandler{
+		st:           d.Store,
+		issuer:       d.Issuer,
+		oidc:         d.OIDC,
+		oidcEnabled:  d.OIDCEnabled,
+		defaultRole:  d.DefaultOIDCRole,
+		dashboardURL: d.DashboardURL,
 	}
+
+	// ── Public auth endpoints (no session required) ──────────────────────────
+	r.Post("/auth/login", ah.login)
+	r.Get("/auth/status", ah.authStatus)
+	r.Get("/auth/oidc/login", ah.oidcLogin)
+	r.Get("/auth/oidc/callback", ah.oidcCallback)
+
+	// ── Authenticated + RBAC ─────────────────────────────────────────────────
+	r.Group(func(r chi.Router) {
+		r.Use(authenticate(d.Issuer, d.MasterToken))
+
+		r.Get("/auth/me", ah.me)
+
+		// viewer+ : read-only surfaces
+		r.With(requireRole(auth.RoleViewer)).Get("/tenants", h.listTenants)
+		r.With(requireRole(auth.RoleViewer)).Get("/keys", h.listKeys)
+		r.With(requireRole(auth.RoleViewer)).Get("/policies", h.listPolicies)
+		r.With(requireRole(auth.RoleViewer)).Get("/audit", h.listAudit)
+		r.With(requireRole(auth.RoleViewer)).Get("/settings", sh.getSettings)
+
+		// compliance+ : audit exports
+		r.With(requireRole(auth.RoleCompliance)).Get("/compliance/report", h.complianceReport)
+		r.With(requireRole(auth.RoleCompliance)).Get("/compliance/export", h.complianceExport)
+
+		// security+ : edit configuration, policies, tenants
+		r.With(requireRole(auth.RoleSecurity)).Put("/settings", sh.updateSettings)
+		r.With(requireRole(auth.RoleSecurity)).Post("/tenants", h.createTenant)
+		r.With(requireRole(auth.RoleSecurity)).Post("/policies", h.createPolicy)
+		r.With(requireRole(auth.RoleSecurity)).Put("/policies/{id}", h.updatePolicy)
+		r.With(requireRole(auth.RoleSecurity)).Delete("/policies/{id}", h.deletePolicy)
+
+		// admin only : credentials and user management
+		r.With(requireRole(auth.RoleAdmin)).Post("/keys", h.createKey)
+		r.With(requireRole(auth.RoleAdmin)).Delete("/keys/{id}", h.revokeKey)
+		r.With(requireRole(auth.RoleAdmin)).Get("/users", uh.listUsers)
+		r.With(requireRole(auth.RoleAdmin)).Post("/users", uh.createUser)
+		r.With(requireRole(auth.RoleAdmin)).Put("/users/{id}/role", uh.updateRole)
+		r.With(requireRole(auth.RoleAdmin)).Delete("/users/{id}", uh.deleteUser)
+	})
+
+	return r
 }
 
 func corsHeaders(next http.Handler) http.Handler {
