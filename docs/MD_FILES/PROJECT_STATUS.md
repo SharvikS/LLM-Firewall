@@ -1,9 +1,48 @@
 # LLM-Firewall (TITAN Gateway) — Project Status Log
 
 > **Auto-maintained log.** Updated at the end of every major session or when significant changes are made.
-> Last updated: 2026-06-13 (Finish-Everything-Remaining Session)
+> Last updated: 2026-06-14 (Investor-Demo Readiness Session)
 
 ---
+
+## 2026-06-14 — Investor-Demo Readiness Session
+
+Goal: enterprise-grade, everything-running-together, dashboard-configurable,
+seamless. Built a true runtime-configuration plane and wired the control plane
+to it; verified live against CockroachDB + Redis.
+
+**Runtime settings plane (the headline "configurable from the dashboard")**
+- New `gateway/internal/settings` Manager: DB-persisted JSON document seeded
+  from config/env, in-memory snapshot, apply-hooks, clamping/validation.
+  Migration `006_settings.sql` + `store.{Get,Save}SettingsRaw`.
+- `GET/PUT /admin/v1/settings`. Rate limiter (RPM/TPM) and cache TTL made
+  atomic with `SetLimits`/`SetTTL`; proxy reads live settings for analyzer
+  timeout, output scan, TPM gate, failover toggle, and audit-all gating.
+- ML engine gained a runtime config plane (`runtime_config.py` + `GET/POST
+  /config` on the embed server); toxicity enablement/threshold, code-leak
+  block, PII master switch and per-entity Presidio allowlist are all live.
+  The gateway pushes the ML subset on every change (fail-open).
+
+**Dashboard wiring + honesty pass**
+- Settings tab (Security Defaults + General) and Data Privacy tab now load
+  from / persist to the live plane; Edge Routing failover is a live toggle.
+- Replaced fake toggles with real gates; removed hardcoded dev token/localhost
+  from help text; centralized gateway base URL; relabeled non-backed tabs
+  "Demo data" → "Preview"/"Reference".
+
+**Robustness**
+- Plugin-runtime init is now non-fatal (degrades to disabled stage).
+- New `/ready` readiness probe (DB hard dep; Redis/ML reported).
+- Turnkey `gateway/.env` scaffold (one line to paste a key); smoke.sh asserts
+  /ready + a settings PUT round-trip.
+
+**Verified live:** gateway boots clean, all 6→7 migrations apply incl. 006;
+settings GET/PUT round-trip with clamping (99999→10000) and per-entity merge;
+overrides persist across a gateway restart (reload from DB); `/ready` green;
+full Go suite + `next build` green; ML push fails open when engine absent.
+
+**Remaining manual step for the demo:** paste a provider key into
+`gateway/.env` (GROQ_API_KEY=...), then `docker compose up -d --build`.
 
 ## 2026-06-13 — Finish-Everything-Remaining Session
 
