@@ -193,27 +193,38 @@ class InjectionDetector:
                 n_samples, n_positive,
             )
 
-        # Attempt to load HuggingFace transformer model as primary Layer 2.
+        # Attempt to load a HuggingFace transformer as the *preferred* Layer 2.
+        # Default to the public v2 model; the original protectai/deberta-v3-base-
+        # injection became gated and returns HTTP 401 (set INJECTION_MODEL to
+        # override, or INJECTION_HF_DISABLED=true to force the TF-IDF path —
+        # useful for fully-offline demos). The TF-IDF classifier above is a real
+        # trained fallback now that the dataset clears the sample threshold, so
+        # the ML layer is active either way.
         self._hf_pipe = None
-        try:
-            from transformers import pipeline as hf_pipeline  # noqa: PLC0415
-            self._hf_pipe = hf_pipeline(
-                "text-classification",
-                model="protectai/deberta-v3-base-injection",
-                device=-1,       # CPU inference; set device=0 for GPU
-                truncation=True,
-                max_length=512,
-            )
+        hf_disabled = os.getenv("INJECTION_HF_DISABLED", "false").lower() in ("true", "1")
+        model_name = os.getenv("INJECTION_MODEL", "protectai/deberta-v3-base-prompt-injection-v2")
+        if hf_disabled:
             logger.info(
-                "InjectionDetector Layer 2: HuggingFace model loaded — "
-                "protectai/deberta-v3-base-injection"
+                "INJECTION_HF_DISABLED set — Layer 2 using TF-IDF + LogisticRegression (%s samples)",
+                n_samples,
             )
-        except Exception as exc:
-            logger.warning(
-                "HuggingFace model unavailable (%s) — "
-                "Layer 2 falling back to TF-IDF + LogisticRegression",
-                exc,
-            )
+        else:
+            try:
+                from transformers import pipeline as hf_pipeline  # noqa: PLC0415
+                self._hf_pipe = hf_pipeline(
+                    "text-classification",
+                    model=model_name,
+                    device=-1,       # CPU inference; set device=0 for GPU
+                    truncation=True,
+                    max_length=512,
+                )
+                logger.info("InjectionDetector Layer 2: HuggingFace model loaded — %s", model_name)
+            except Exception as exc:
+                fallback = "TF-IDF + LogisticRegression" if self._fallback_pipeline else "heuristics only"
+                logger.warning(
+                    "HuggingFace model %s unavailable (%s) — Layer 2 using %s",
+                    model_name, exc, fallback,
+                )
 
     def detect(self, text: str) -> DetectionResult:
         if not text or not text.strip():

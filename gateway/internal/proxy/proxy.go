@@ -24,8 +24,8 @@ import (
 	"github.com/sharvik/llm-firewall/gateway/internal/config"
 	"github.com/sharvik/llm-firewall/gateway/internal/events"
 	"github.com/sharvik/llm-firewall/gateway/internal/logger"
-	mw "github.com/sharvik/llm-firewall/gateway/internal/middleware"
 	"github.com/sharvik/llm-firewall/gateway/internal/metrics"
+	mw "github.com/sharvik/llm-firewall/gateway/internal/middleware"
 	"github.com/sharvik/llm-firewall/gateway/internal/policy"
 	"github.com/sharvik/llm-firewall/gateway/internal/ratelimit"
 	"github.com/sharvik/llm-firewall/gateway/internal/store"
@@ -69,6 +69,43 @@ type LLMProxy struct {
 	mlClient      *analyzer.Client
 	st            *store.Store
 	cfg           *config.Config
+	provider      string // upstream provider label derived from TargetURL host
+}
+
+// providerFromHost maps an upstream host to a human-readable provider label for
+// audit events (e.g. "api.groq.com" → "Groq"). Falls back to the bare host.
+func providerFromHost(host string) string {
+	h := strings.ToLower(host)
+	switch {
+	case strings.Contains(h, "groq"):
+		return "Groq"
+	case strings.Contains(h, "openai"):
+		return "OpenAI"
+	case strings.Contains(h, "anthropic"):
+		return "Anthropic"
+	case strings.Contains(h, "googleapis") || strings.Contains(h, "generativelanguage"):
+		return "Google"
+	case h == "":
+		return "unknown"
+	default:
+		return host
+	}
+}
+
+// parseModel extracts the "model" field from an OpenAI-format request body for
+// audit attribution. Returns "unknown" when absent or unparseable so analytics
+// never attribute traffic to a hardcoded model.
+func parseModel(body []byte) string {
+	if len(body) == 0 {
+		return "unknown"
+	}
+	var req struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil || req.Model == "" {
+		return "unknown"
+	}
+	return req.Model
 }
 
 func NewLLMProxy(
@@ -95,6 +132,7 @@ func NewLLMProxy(
 		mlClient:      mlClient,
 		st:            st,
 		cfg:           cfg,
+		provider:      providerFromHost(target.Host),
 	}
 
 	// Build optional fallback reverse proxy first so ErrorHandler can close over it.
@@ -178,9 +216,9 @@ func NewLLMProxy(
 }
 
 func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	start  := time.Now()
-	reqID  := chimiddleware.GetReqID(r.Context())
-	log    := logger.Get().With(slog.String("request_id", reqID))
+	start := time.Now()
+	reqID := chimiddleware.GetReqID(r.Context())
+	log := logger.Get().With(slog.String("request_id", reqID))
 
 	// Stage 1: Payload firewall — reads body once, restores it.
 	body, err := p.inspectPayload(w, r)
@@ -190,13 +228,14 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Stage 2: Auth context — set by APIKeyAuth middleware (fail-closed).
-	auth       := mw.GetAuthContext(r.Context())
-	tenantID   := auth.TenantID
+	auth := mw.GetAuthContext(r.Context())
+	tenantID := auth.TenantID
 	tenantName := auth.TenantName
-	apiKeyID   := auth.APIKeyID
+	apiKeyID := auth.APIKeyID
 
 	isStream := cache.IsStreaming(body)
 	cacheKey := p.cache.Key(tenantID.String(), r.URL.Path, body)
+	model := parseModel(body) // real requested model for audit attribution
 
 	// Resolve request region from Cloudflare or a custom header early so every
 	// audit event carries it regardless of where in the pipeline the request exits.
@@ -230,7 +269,7 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.writeError(w, http.StatusTooManyRequests, "rate_limit_exceeded",
 			fmt.Sprintf("Rate limit of %d rpm exceeded. Retry later.", rl.Limit))
 		p.emitKafka(reqID, tenantID, apiKeyID, "RATE_LIMITED", 0, r.URL.Path,
-			http.StatusTooManyRequests, time.Since(start).Milliseconds(), "RPM rate limit exceeded", region)
+			http.StatusTooManyRequests, time.Since(start).Milliseconds(), "RPM rate limit exceeded", region, model)
 		return
 	}
 
@@ -252,7 +291,7 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			p.writeError(w, http.StatusTooManyRequests, "rate_limit_exceeded",
 				fmt.Sprintf("Token limit of %d tokens/min exceeded. Retry later.", tpm.Limit))
 			p.emitKafka(reqID, tenantID, apiKeyID, "RATE_LIMITED", 0, r.URL.Path,
-				http.StatusTooManyRequests, time.Since(start).Milliseconds(), "TPM token limit exceeded", region)
+				http.StatusTooManyRequests, time.Since(start).Milliseconds(), "TPM token limit exceeded", region, model)
 			return
 		}
 		if tpmErr == nil {
@@ -276,7 +315,7 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Titan-Decision", "BLOCK")
 		p.writeError(w, http.StatusForbidden, "policy_violation", analysis.Reason)
 		p.emitKafka(reqID, tenantID, apiKeyID, "ML_BLOCKED", float64(analysis.RiskScore), r.URL.Path,
-			http.StatusForbidden, time.Since(start).Milliseconds(), analysis.Reason, region)
+			http.StatusForbidden, time.Since(start).Milliseconds(), analysis.Reason, region, model)
 		return
 
 	case analyzer.ActionMask:
@@ -311,7 +350,7 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		p.pushEvent(reqID, tenantName, "CEDAR_BLOCKED", float64(analysis.RiskScore), r.URL.Path, reason)
 		p.writeError(w, http.StatusForbidden, "policy_violation", reason)
 		p.emitKafka(reqID, tenantID, apiKeyID, "CEDAR_BLOCKED", float64(analysis.RiskScore), r.URL.Path,
-			http.StatusForbidden, time.Since(start).Milliseconds(), reason, region)
+			http.StatusForbidden, time.Since(start).Milliseconds(), reason, region, model)
 		return
 	}
 
@@ -320,14 +359,14 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		riskF := float64(analysis.RiskScore)
 		if entry, hit, _ := p.cache.Get(r.Context(), cacheKey); hit {
 			log.Info("cache HIT (exact)")
-			p.serveCachedEntry(w, r, entry, "HIT", reqID, tenantName, tenantID, apiKeyID, riskF, start, region)
+			p.serveCachedEntry(w, r, entry, "HIT", reqID, tenantName, tenantID, apiKeyID, riskF, start, region, model)
 			return
 		}
 		// Semantic cache: vector similarity search in Qdrant.
 		if p.semanticCache != nil {
 			if entry, hit := p.semanticCache.Get(r.Context(), body); hit {
 				log.Info("cache HIT (semantic)")
-				p.serveCachedEntry(w, r, entry, "SEMANTIC-HIT", reqID, tenantName, tenantID, apiKeyID, riskF, start, region)
+				p.serveCachedEntry(w, r, entry, "SEMANTIC-HIT", reqID, tenantName, tenantID, apiKeyID, riskF, start, region, model)
 				return
 			}
 		}
@@ -365,7 +404,7 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	metrics.Latency.Record(latencyMs)
 	p.pushEvent(reqID, tenantName, "ALLOWED", float64(analysis.RiskScore), r.URL.Path, "")
 	p.emitKafka(reqID, tenantID, apiKeyID, "ALLOWED", float64(analysis.RiskScore), r.URL.Path,
-		http.StatusOK, latencyMs, "", region)
+		http.StatusOK, latencyMs, "", region, model)
 }
 
 // inspectPayload reads body once, enforces structural invariants, restores r.Body.
@@ -431,7 +470,7 @@ func (p *LLMProxy) emitKafka(
 	path string,
 	statusCode int,
 	latencyMs int64,
-	reason, region string,
+	reason, region, model string,
 ) {
 	if p.producer == nil {
 		return
@@ -440,6 +479,9 @@ func (p *LLMProxy) emitKafka(
 	if apiKeyID != uuid.Nil {
 		apiKeyStr = apiKeyID.String()
 	}
+	if model == "" {
+		model = "unknown"
+	}
 	event := events.AuditEvent{
 		EventID:    uuid.New().String(),
 		RequestID:  reqID,
@@ -447,8 +489,8 @@ func (p *LLMProxy) emitKafka(
 		APIKeyID:   apiKeyStr,
 		Action:     action,
 		RiskScore:  risk,
-		Provider:   "Groq",
-		Model:      "llama3-8b",
+		Provider:   p.provider,
+		Model:      model,
 		Prompt:     "[REDACTED]",
 		StatusCode: statusCode,
 		LatencyMs:  latencyMs,
@@ -470,7 +512,7 @@ func (p *LLMProxy) serveCachedEntry(
 	reqID, tenantName string, tenantID, apiKeyID uuid.UUID,
 	riskScore float64,
 	start time.Time,
-	region string,
+	region, model string,
 ) {
 	latencyMs := time.Since(start).Milliseconds()
 	metrics.Global.CacheHits.Add(1)
@@ -484,7 +526,7 @@ func (p *LLMProxy) serveCachedEntry(
 	w.WriteHeader(entry.StatusCode)
 	w.Write(entry.Body) //nolint:errcheck
 	p.emitKafka(reqID, tenantID, apiKeyID, "CACHE_HIT", riskScore, r.URL.Path,
-		entry.StatusCode, latencyMs, xCacheVal, region)
+		entry.StatusCode, latencyMs, xCacheVal, region, model)
 }
 
 // estimateTokens approximates the number of tokens in an OpenAI-format request
@@ -543,9 +585,9 @@ const maxCacheBodyBytes = 5 * 1024 * 1024 // 5 MB
 //     storing a partial response left behind by a client disconnect.
 type responseCapture struct {
 	http.ResponseWriter
-	body         bytes.Buffer
-	statusCode   int
-	overflowed   bool
+	body       bytes.Buffer
+	statusCode int
+	overflowed bool
 }
 
 func newResponseCapture(w http.ResponseWriter) *responseCapture {
