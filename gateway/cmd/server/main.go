@@ -17,15 +17,16 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/sharvik/llm-firewall/gateway/internal/analytics"
-	adminapi "github.com/sharvik/llm-firewall/gateway/internal/api"
 	"github.com/sharvik/llm-firewall/gateway/internal/analyzer"
+	adminapi "github.com/sharvik/llm-firewall/gateway/internal/api"
 	"github.com/sharvik/llm-firewall/gateway/internal/batch"
 	"github.com/sharvik/llm-firewall/gateway/internal/cache"
 	"github.com/sharvik/llm-firewall/gateway/internal/config"
 	"github.com/sharvik/llm-firewall/gateway/internal/events"
 	"github.com/sharvik/llm-firewall/gateway/internal/logger"
-	gatewaymw "github.com/sharvik/llm-firewall/gateway/internal/middleware"
 	"github.com/sharvik/llm-firewall/gateway/internal/metrics"
+	gatewaymw "github.com/sharvik/llm-firewall/gateway/internal/middleware"
+	"github.com/sharvik/llm-firewall/gateway/internal/plugins"
 	"github.com/sharvik/llm-firewall/gateway/internal/policy"
 	"github.com/sharvik/llm-firewall/gateway/internal/proxy"
 	"github.com/sharvik/llm-firewall/gateway/internal/ratelimit"
@@ -83,7 +84,7 @@ func main() {
 	}
 	defer redisClient.Close()
 
-	limiter    := ratelimit.New(redisClient, cfg.RateLimitRPM, time.Duration(cfg.RateLimitWindowSec)*time.Second, cfg.RateLimitTPM)
+	limiter := ratelimit.New(redisClient, cfg.RateLimitRPM, time.Duration(cfg.RateLimitWindowSec)*time.Second, cfg.RateLimitTPM)
 	exactCache := cache.New(redisClient, time.Duration(cfg.CacheTTLSec)*time.Second)
 
 	// Semantic cache is optional — only created when QDRANT_URL is set.
@@ -165,8 +166,21 @@ func main() {
 	// ── Policy Engine (DB-backed, 30s refresh) ────────────────────────────────
 	policyEngine := policy.NewEngine(st)
 
+	// ── WASM custom-rule plugins (optional) ───────────────────────────────────
+	pluginRT, err := plugins.Load(ctx, cfg.PluginDir, time.Duration(cfg.PluginTimeoutMs)*time.Millisecond)
+	if err != nil {
+		log.Error("plugin runtime init failed", slog.String("error", err.Error()))
+		os.Exit(1)
+	}
+	if pluginRT.Enabled() {
+		log.Info("WASM plugins enabled", slog.Int("count", pluginRT.Count()), slog.String("dir", cfg.PluginDir))
+		defer pluginRT.Close(context.Background())
+	} else {
+		log.Info("WASM plugins disabled — set PLUGIN_DIR to enable")
+	}
+
 	// ── Proxy ─────────────────────────────────────────────────────────────────
-	llmProxy, err := proxy.NewLLMProxy(cfg, policyEngine, producer, limiter, exactCache, semCache, mlClient, st)
+	llmProxy, err := proxy.NewLLMProxy(cfg, policyEngine, producer, limiter, exactCache, semCache, mlClient, st, pluginRT)
 	if err != nil {
 		log.Error("proxy init failed", slog.String("error", err.Error()))
 		os.Exit(1)
@@ -202,13 +216,13 @@ func main() {
 			})
 		})
 		r.Get("/metrics", metricsHandler)
-		r.Get("/events",  eventsHandler)
+		r.Get("/events", eventsHandler)
 
 		// ClickHouse-backed OLAP analytics (503 when CLICKHOUSE_URL unset)
 		ah := adminapi.NewAnalyticsHandler(chClient)
-		r.Get("/analytics/overview",   ah.Overview)
+		r.Get("/analytics/overview", ah.Overview)
 		r.Get("/analytics/timeseries", ah.Timeseries)
-		r.Get("/analytics/threats",    ah.Threats)
+		r.Get("/analytics/threats", ah.Threats)
 	})
 
 	// API reference (public — the contract exposes no secrets)

@@ -23,6 +23,8 @@ FROM alpine:3.20
 
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /gateway /gateway
+# Ship the prebuilt sample WASM detection plugin; PLUGIN_DIR activates it.
+COPY --from=builder /build/plugins /plugins
 
 EXPOSE 8080
 ENTRYPOINT ["/gateway"]

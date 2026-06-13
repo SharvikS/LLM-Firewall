@@ -217,6 +217,9 @@ services:
       CLICKHOUSE_DATABASE: "titan"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
       OTEL_SERVICE_NAME: "titan-gateway"
+      # WASM custom-rule plugins baked into the image at /plugins (sample:
+      # confidential_terms.wasm). Unset to disable the plugin stage.
+      PLUGIN_DIR: "/plugins"
     ports:
       - "8080:8080"
     depends_on:

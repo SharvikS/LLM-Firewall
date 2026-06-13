@@ -51,11 +51,11 @@ type plugin struct {
 }
 
 type instance struct {
-	mod     api.Module
-	bufPtr  uint32
-	bufCap  uint32
-	scan    api.Function
-	scanMu  sync.Mutex // one in-flight scan per instance (shared buffer)
+	mod    api.Module
+	bufPtr uint32
+	bufCap uint32
+	scan   api.Function
+	scanMu sync.Mutex // one in-flight scan per instance (shared buffer)
 }
 
 // Runtime holds the compiled plugins and the shared wazero runtime.

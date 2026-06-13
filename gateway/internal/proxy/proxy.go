@@ -26,6 +26,7 @@ import (
 	"github.com/sharvik/llm-firewall/gateway/internal/logger"
 	"github.com/sharvik/llm-firewall/gateway/internal/metrics"
 	mw "github.com/sharvik/llm-firewall/gateway/internal/middleware"
+	"github.com/sharvik/llm-firewall/gateway/internal/plugins"
 	"github.com/sharvik/llm-firewall/gateway/internal/policy"
 	"github.com/sharvik/llm-firewall/gateway/internal/ratelimit"
 	"github.com/sharvik/llm-firewall/gateway/internal/store"
@@ -69,7 +70,7 @@ type LLMProxy struct {
 	mlClient      *analyzer.Client
 	st            *store.Store
 	cfg           *config.Config
-	provider      string          // upstream provider label derived from TargetURL host
+	provider      string           // upstream provider label derived from TargetURL host
 	plugins       *plugins.Runtime // WASM custom-rule stage; nil-safe when disabled
 }
 
@@ -118,6 +119,7 @@ func NewLLMProxy(
 	semanticCache *cache.SemanticCache,
 	mlClient *analyzer.Client,
 	st *store.Store,
+	pluginRT *plugins.Runtime,
 ) (*LLMProxy, error) {
 	target, err := url.Parse(cfg.TargetURL)
 	if err != nil {
@@ -134,6 +136,7 @@ func NewLLMProxy(
 		st:            st,
 		cfg:           cfg,
 		provider:      providerFromHost(target.Host),
+		plugins:       pluginRT,
 	}
 
 	// Build optional fallback reverse proxy first so ErrorHandler can close over it.
@@ -337,6 +340,29 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// This must happen after the ML Analyzer so the fallback provider never
 	// receives the original unredacted payload.
 	r = r.WithContext(context.WithValue(r.Context(), reqBodyKey{}, body))
+
+	// Stage 4b: WASM custom-rule plugins. Operator-supplied .wasm detectors run
+	// on the (post-mask) prompt text; any block verdict denies the request.
+	// Fail-open: a misbehaving plugin is skipped inside the runtime, never here.
+	if p.plugins.Enabled() {
+		for _, v := range p.plugins.Scan(r.Context(), string(body)) {
+			if v.Block {
+				reason := "blocked by plugin " + v.Plugin
+				if v.Reason != "" {
+					reason = v.Reason + " (" + v.Plugin + ")"
+				}
+				log.Warn("PLUGIN BLOCK", slog.String("plugin", v.Plugin), slog.String("reason", v.Reason))
+				metrics.Global.BlockedRequests.Add(1)
+				metrics.HourlyTraffic.Record(true)
+				p.pushEvent(reqID, tenantName, "PLUGIN_BLOCKED", v.Score, r.URL.Path, reason)
+				w.Header().Set("X-Titan-Decision", "BLOCK")
+				p.writeError(w, http.StatusForbidden, "policy_violation", reason)
+				p.emitKafka(reqID, tenantID, apiKeyID, "PLUGIN_BLOCKED", v.Score, r.URL.Path,
+					http.StatusForbidden, time.Since(start).Milliseconds(), reason, region, model)
+				return
+			}
+		}
+	}
 
 	// Stage 5: Policy gate.
 	ctxData := map[string]interface{}{
