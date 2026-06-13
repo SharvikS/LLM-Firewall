@@ -375,8 +375,37 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Stage 7: Forward.
+	outputMasked := false
 	if isStream {
+		// Streaming responses are not buffered, so output scanning is skipped.
 		p.rp.ServeHTTP(w, r)
+	} else if p.cfg.OutputScanEnabled {
+		// Buffer the response (no tee), scan/mask the assistant text, then send.
+		bw := newBufferingResponse(w)
+		p.rp.ServeHTTP(bw, r)
+
+		finalBody := bw.body.Bytes()
+		scannable := bw.statusCode == http.StatusOK && !bw.overflowed &&
+			bw.body.Len() > 0 && r.Context().Err() == nil
+
+		if scannable {
+			if rewritten, did := p.scanResponseBody(r.Context(), reqID, tenantName, finalBody); did {
+				finalBody = rewritten
+				outputMasked = true
+				w.Header().Set("X-Titan-Output-Masked", "true")
+				metrics.Global.PIIMasked.Add(1)
+				log.Info("output scan — response PII/secrets masked")
+			}
+			// Cache the post-mask body so masked content is served on cache hits.
+			ct := map[string]string{"Content-Type": bw.Header().Get("Content-Type")}
+			p.cache.Set(r.Context(), cacheKey, bw.statusCode, ct, finalBody)
+			if p.semanticCache != nil {
+				p.semanticCache.Set(r.Context(), body, bw.statusCode, ct, finalBody)
+			}
+			bw.finalize(finalBody)
+		} else {
+			bw.finalize(nil) // not scannable — send the captured body verbatim
+		}
 	} else {
 		rc := newResponseCapture(w)
 		p.rp.ServeHTTP(rc, r)
@@ -402,8 +431,12 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	latencyMs := time.Since(start).Milliseconds()
 	metrics.Global.AllowedRequests.Add(1)
 	metrics.Latency.Record(latencyMs)
-	p.pushEvent(reqID, tenantName, "ALLOWED", float64(analysis.RiskScore), r.URL.Path, "")
-	p.emitKafka(reqID, tenantID, apiKeyID, "ALLOWED", float64(analysis.RiskScore), r.URL.Path,
+	auditAction := "ALLOWED"
+	if outputMasked {
+		auditAction = "OUTPUT_MASKED"
+	}
+	p.pushEvent(reqID, tenantName, auditAction, float64(analysis.RiskScore), r.URL.Path, "")
+	p.emitKafka(reqID, tenantID, apiKeyID, auditAction, float64(analysis.RiskScore), r.URL.Path,
 		http.StatusOK, latencyMs, "", region, model)
 }
 

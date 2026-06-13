@@ -33,9 +33,9 @@ type Config struct {
 	CacheTTLSec int
 
 	// ML Engine (Python gRPC)
-	AnalyzerAddr       string
-	AnalyzerTimeoutMs  int
-	AnalyzerTLSEnabled bool   // set ANALYZER_TLS_ENABLED=true to enable mTLS
+	AnalyzerAddr        string
+	AnalyzerTimeoutMs   int
+	AnalyzerTLSEnabled  bool   // set ANALYZER_TLS_ENABLED=true to enable mTLS
 	AnalyzerTLSCertFile string // CA cert (or server cert) for client-side verification
 
 	// Provider failover — optional secondary upstream for 5xx/transport errors
@@ -45,10 +45,16 @@ type Config struct {
 	// Token-based rate limiting (Tokens Per Minute); 0 = disabled
 	RateLimitTPM int64
 
+	// Response-side output scanning: run the (non-streaming) upstream LLM
+	// response through the ML engine to mask PII/secrets the model may emit
+	// before it reaches the client. Default on; fail-open on any error.
+	OutputScanEnabled   bool
+	OutputScanTimeoutMs int // ML deadline for output scans (looser than inline)
+
 	// Semantic cache (Qdrant vector DB + embedding service)
-	QdrantURL                string  // e.g. "http://localhost:6333"; empty = disabled
-	EmbeddingURL             string  // embedding HTTP endpoint, e.g. "http://localhost:8001/embed"
-	SemanticCacheThreshold   float64 // cosine similarity threshold (0 < x ≤ 1.0)
+	QdrantURL              string  // e.g. "http://localhost:6333"; empty = disabled
+	EmbeddingURL           string  // embedding HTTP endpoint, e.g. "http://localhost:8001/embed"
+	SemanticCacheThreshold float64 // cosine similarity threshold (0 < x ≤ 1.0)
 
 	// Admin API
 	AdminToken string // master secret for /admin/* routes — never NEXT_PUBLIC_
@@ -88,9 +94,11 @@ func Load() (*Config, error) {
 		AnalyzerTLSEnabled:  getEnvBool("ANALYZER_TLS_ENABLED", false),
 		AnalyzerTLSCertFile: getEnv("ANALYZER_TLS_CERT_FILE", "/etc/certs/tls.crt"),
 
-		FallbackTargetURL: os.Getenv("FALLBACK_TARGET_URL"),
-		FallbackAPIKey:    os.Getenv("FALLBACK_API_KEY"),
-		RateLimitTPM:      getEnvInt64("RATE_LIMIT_TPM", 0),
+		FallbackTargetURL:   os.Getenv("FALLBACK_TARGET_URL"),
+		FallbackAPIKey:      os.Getenv("FALLBACK_API_KEY"),
+		RateLimitTPM:        getEnvInt64("RATE_LIMIT_TPM", 0),
+		OutputScanEnabled:   getEnvBool("OUTPUT_SCAN_ENABLED", true),
+		OutputScanTimeoutMs: getEnvInt("OUTPUT_SCAN_TIMEOUT_MS", 2000),
 
 		QdrantURL:              os.Getenv("QDRANT_URL"),
 		EmbeddingURL:           getEnv("EMBEDDING_URL", "http://localhost:8001/embed"),

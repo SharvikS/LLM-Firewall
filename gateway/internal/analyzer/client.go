@@ -94,10 +94,22 @@ func New(addr string, timeout time.Duration, tlsEnabled bool, certFile string) (
 // performance proxy.
 func (c *Client) Analyze(ctx context.Context, reqID, tenantID, promptBody string) Result {
 	if c == nil {
+		// Guard here too: reading c.timeout below would nil-deref on a nil client.
 		logger.Get().Warn("analyzer client is nil — failing open", slog.String("request_id", reqID))
 		return Result{Action: ActionAllow, RiskScore: 0}
 	}
-	rctx, cancel := context.WithTimeout(ctx, c.timeout)
+	return c.AnalyzeWithTimeout(ctx, reqID, tenantID, promptBody, c.timeout)
+}
+
+// AnalyzeWithTimeout is Analyze with an explicit per-call deadline. Response-side
+// output scanning uses a longer budget than the tight inline-request timeout,
+// because scanning generated text runs the full (transformer-backed) pipeline.
+func (c *Client) AnalyzeWithTimeout(ctx context.Context, reqID, tenantID, promptBody string, timeout time.Duration) Result {
+	if c == nil {
+		logger.Get().Warn("analyzer client is nil — failing open", slog.String("request_id", reqID))
+		return Result{Action: ActionAllow, RiskScore: 0}
+	}
+	rctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	resp, err := c.stub.AnalyzePrompt(rctx, &pb.PromptRequest{

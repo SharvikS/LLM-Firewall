@@ -200,7 +200,10 @@ services:
       KAFKA_BROKERS: "redpanda:29092"
       REDIS_ADDR: "redis:6379"
       ANALYZER_ADDR: "ml_engine:50051"
-      ANALYZER_TIMEOUT_MS: "150"
+      # 500ms (not 150ms): the active deberta-v2 injection transformer runs
+      # ~90-135ms per call on CPU, so a tight budget would make benign/novel
+      # prompts fail open. Regex-matched attacks still block in ~1ms.
+      ANALYZER_TIMEOUT_MS: "500"
       RATE_LIMIT_RPM: "60"
       RATE_LIMIT_WINDOW_SEC: "60"
       RATE_LIMIT_TPM: "0"
@@ -250,9 +253,34 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # ── Grafana (pre-built dashboards over the ClickHouse audit store) ─────────
+  # Reads titan.audit_events via the native protocol (port 9000). Datasource
+  # and dashboards are provisioned from ./platform/grafana, so the demo boots
+  # with the TITAN Overview dashboard ready and no manual setup. Anonymous
+  # viewer access is enabled for zero-friction demos; admin/titan-admin can edit.
+  grafana:
+    image: grafana/grafana:11.3.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: titan-admin
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./platform/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./platform/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3001:3000"   # 3000 is taken by the dashboard
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   redis_data:
   cockroach_data:
   redpanda_data:
   qdrant_data:
   clickhouse_data:
+  grafana_data:
