@@ -2,9 +2,10 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Cpu, Globe, Plus, Trash2, Loader2, Check, AlertTriangle,
+  Cpu, Globe, Plus, Trash2, Loader2, Check, AlertTriangle, X,
 } from 'lucide-react';
 import { fetchSettings, saveSettings, type GatewaySettings } from '@/lib/settings';
+import { ROLE_LABEL, type Role } from '@/lib/me';
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
 
@@ -121,45 +122,141 @@ export function EdgeRoutingTab() {
   );
 }
 
-// ─── Team (preview) ──────────────────────────────────────────────────────────
+// ─── Team (live — control-plane user management with RBAC) ───────────────────
 
-const TEAM = [
-  { name: 'Sharvik Sutar', email: 'aryantuntune42@gmail.com', role: 'Enterprise Admin',  avatar: 'S', joined: '2025-11-01', lastActive: '2026-06-05' },
-  { name: 'Priya Sharma',  email: 'priya@acme.corp',          role: 'Security Engineer', avatar: 'P', joined: '2026-01-15', lastActive: '2026-06-04' },
-  { name: 'Kai Nakamura',  email: 'kai@acme.corp',            role: 'Platform Engineer', avatar: 'K', joined: '2026-02-01', lastActive: '2026-06-03' },
-  { name: 'Aisha Okonkwo', email: 'aisha@acme.corp',          role: 'Compliance Officer',avatar: 'A', joined: '2026-03-10', lastActive: '2026-05-28' },
-];
+interface UserRow {
+  id: string;
+  email: string;
+  role: Role;
+  auth_provider: string;
+  disabled: boolean;
+  last_login?: string;
+}
 
-const ROLES = ['Enterprise Admin','Security Engineer','Platform Engineer','Compliance Officer','Viewer'];
+const ROLE_OPTIONS: Role[] = ['viewer', 'compliance', 'security', 'admin'];
 
-export function TeamTab() {
+export function TeamTab({ myRole }: { myRole?: Role }) {
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [state, setState] = useState<'loading' | 'ready' | 'offline' | 'forbidden'>('loading');
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({ email: '', password: '', role: 'viewer' as Role });
+  const [formErr, setFormErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const isAdmin = myRole === 'admin';
+
+  const load = useCallback(() => {
+    fetch('/api/admin/users', { cache: 'no-store' })
+      .then(async res => {
+        if (res.status === 403) { setState('forbidden'); return; }
+        const data = await res.json();
+        if (data._offline) { setState('offline'); return; }
+        setUsers(data.users ?? []);
+        setState('ready');
+      })
+      .catch(() => setState('offline'));
+  }, []);
+
+  // Initial load (fetch + setState lives in the .then callback, not the effect body).
+  useEffect(() => {
+    fetch('/api/admin/users', { cache: 'no-store' })
+      .then(async res => {
+        if (res.status === 403) { setState('forbidden'); return; }
+        const data = await res.json();
+        if (data._offline) { setState('offline'); return; }
+        setUsers(data.users ?? []);
+        setState('ready');
+      })
+      .catch(() => setState('offline'));
+  }, []);
+
+  const addUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true); setFormErr('');
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      if (res.ok) { setShowAdd(false); setForm({ email: '', password: '', role: 'viewer' }); load(); }
+      else { const d = await res.json().catch(() => ({})); setFormErr(d.error ?? 'Could not create user'); }
+    } catch { setFormErr('Gateway unavailable'); }
+    finally { setBusy(false); }
+  };
+
+  const changeRole = async (id: string, role: Role) => {
+    await fetch(`/api/admin/users/${id}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role }),
+    });
+    load();
+  };
+
+  const removeUser = async (id: string) => {
+    await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+    load();
+  };
+
   return (
     <div className="max-w-4xl mx-auto">
-      <PageHeader title="Team" sub="Manage team members and their access roles." badge="Preview"/>
-      <Card>
-        <div className="flex justify-between items-center mb-5">
-          <h3 className="text-sm font-semibold">{TEAM.length} Members</h3>
-          <button className="flex items-center gap-1.5 text-xs bg-base-text text-base-main px-3 py-1.5 rounded-lg hover:scale-[1.02] transition-transform font-medium">
-            <Plus size={12}/> Invite Member
-          </button>
-        </div>
-        <div className="space-y-2">
-          {TEAM.map(m => (
-            <div key={m.email} className="flex items-center gap-4 px-4 py-3 border border-base-border/60 rounded-lg hover:bg-base-sec/30 transition-colors">
-              <div className="w-8 h-8 rounded-full bg-base-sec border border-base-border flex items-center justify-center text-xs font-semibold text-base-text shrink-0">{m.avatar}</div>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-base-text">{m.name}</div>
-                <div className="text-xs text-base-muted">{m.email}</div>
+      <PageHeader title="Team" sub="Control-plane users and their RBAC roles. Changes take effect immediately." badge="Live" badgeColor="green"/>
+
+      {state === 'forbidden' && (
+        <Card><div className="text-sm text-base-muted">You need the <strong className="text-base-text">admin</strong> role to manage users.</div></Card>
+      )}
+      {state === 'offline' && (
+        <Card><div className="flex items-center gap-2 text-sm text-yellow-500"><AlertTriangle size={14}/> Gateway offline — cannot load users.</div></Card>
+      )}
+
+      {(state === 'ready' || state === 'loading') && (
+        <Card>
+          <div className="flex justify-between items-center mb-5">
+            <h3 className="text-sm font-semibold">{users.length} Member{users.length === 1 ? '' : 's'}</h3>
+            {isAdmin && (
+              <button onClick={() => setShowAdd(s => !s)} className="flex items-center gap-1.5 text-xs bg-base-text text-base-main px-3 py-1.5 rounded-lg hover:scale-[1.02] transition-transform font-medium">
+                {showAdd ? <><X size={12}/> Cancel</> : <><Plus size={12}/> Add User</>}
+              </button>
+            )}
+          </div>
+
+          {showAdd && isAdmin && (
+            <form onSubmit={addUser} className="mb-5 p-4 border border-base-border rounded-lg space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <input required type="email" placeholder="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+                  className="px-3 py-2 bg-base-sec border border-base-border rounded-md text-sm outline-none"/>
+                <input required type="password" placeholder="password (min 8)" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+                  className="px-3 py-2 bg-base-sec border border-base-border rounded-md text-sm outline-none"/>
+                <select value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value as Role }))}
+                  className="px-3 py-2 bg-base-sec border border-base-border rounded-md text-sm outline-none">
+                  {ROLE_OPTIONS.map(r => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+                </select>
               </div>
-              <div className="hidden md:block text-xs text-base-muted">Last active {m.lastActive}</div>
-              <select defaultValue={m.role} className="px-2 py-1 bg-base-sec border border-base-border rounded-md text-xs text-base-text outline-none">
-                {ROLES.map(r => <option key={r}>{r}</option>)}
-              </select>
-              <button className="p-1.5 text-base-muted hover:text-red-400 hover:bg-red-400/10 rounded-md transition-colors"><Trash2 size={12}/></button>
-            </div>
-          ))}
-        </div>
-      </Card>
+              {formErr && <div className="text-xs text-red-400">{formErr}</div>}
+              <button type="submit" disabled={busy} className="flex items-center gap-1.5 text-xs bg-base-accent/15 text-base-accent border border-base-accent/30 px-3 py-1.5 rounded-lg font-medium disabled:opacity-60">
+                {busy ? <Loader2 size={12} className="animate-spin"/> : <Check size={12}/>} Create User
+              </button>
+            </form>
+          )}
+
+          <div className="space-y-2">
+            {users.map(u => (
+              <div key={u.id} className="flex items-center gap-4 px-4 py-3 border border-base-border/60 rounded-lg hover:bg-base-sec/30 transition-colors">
+                <div className="w-8 h-8 rounded-full bg-base-sec border border-base-border flex items-center justify-center text-xs font-semibold text-base-text shrink-0 uppercase">{u.email[0]}</div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-base-text truncate">{u.email}</div>
+                  <div className="text-xs text-base-muted">{u.auth_provider === 'oidc' ? 'SSO' : 'Local'}{u.last_login ? ` · last login ${new Date(u.last_login).toLocaleDateString()}` : ' · never signed in'}</div>
+                </div>
+                <select value={u.role} disabled={!isAdmin} onChange={e => changeRole(u.id, e.target.value as Role)}
+                  className="px-2 py-1 bg-base-sec border border-base-border rounded-md text-xs text-base-text outline-none disabled:opacity-50">
+                  {ROLE_OPTIONS.map(r => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
+                </select>
+                {isAdmin && (
+                  <button onClick={() => removeUser(u.id)} className="p-1.5 text-base-muted hover:text-red-400 hover:bg-red-400/10 rounded-md transition-colors"><Trash2 size={12}/></button>
+                )}
+              </div>
+            ))}
+            {state === 'loading' && <div className="py-6 text-center text-xs text-base-muted flex items-center justify-center gap-2"><Loader2 size={12} className="animate-spin"/> Loading users…</div>}
+          </div>
+        </Card>
+      )}
     </div>
   );
 }

@@ -20,6 +20,8 @@ import {
   EdgeRoutingTab, TeamTab, BillingTab, AccessControlTab,
   DataPrivacyTab, SandboxesTab, VulnerabilitiesTab,
 } from './components/tabs/RemainingTabs';
+import { fetchMe, logout, ROLE_LABEL, type Me } from '@/lib/me';
+import { LogOut } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -252,6 +254,7 @@ export default function Dashboard() {
   const [rail, setRail]             = useState(false);
   const [isCmdkOpen, setCmdk]       = useState(false);
   const [gatewayOnline, setGateway] = useState<boolean | null>(null);
+  const [me, setMe]                 = useState<Me | null>(null);
 
   // Restore persisted UI state (theme class itself is applied pre-paint by
   // the boot script in layout.tsx — here we only sync React state).
@@ -286,6 +289,14 @@ export default function Dashboard() {
     return () => clearInterval(id);
   }, []);
 
+  // Current session identity (the proxy guarantees we're authenticated here).
+  useEffect(() => { fetchMe().then(setMe); }, []);
+
+  const doLogout = useCallback(async () => {
+    await logout();
+    window.location.href = '/login';
+  }, []);
+
   // Global shortcuts
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -316,7 +327,7 @@ export default function Dashboard() {
       case 'Access Control': return <AccessControlTab/>;
       case 'Data Privacy':   return <DataPrivacyTab/>;
       case 'Settings':       return <SettingsTab theme={theme} onThemeChange={setTheme}/>;
-      case 'Team':           return <TeamTab/>;
+      case 'Team':           return <TeamTab myRole={me?.role}/>;
       case 'API Keys':       return <ApiKeysTab/>;
       case 'Billing':        return <BillingTab/>;
     }
@@ -389,21 +400,27 @@ export default function Dashboard() {
         </div>
 
         {/* User footer */}
-        <div className={`h-12 flex items-center shrink-0 cursor-pointer transition-colors hover:bg-white/[0.03] ${rail ? 'justify-center' : 'px-3 gap-2.5'}`}
+        <div className={`h-12 flex items-center shrink-0 transition-colors ${rail ? 'justify-center' : 'px-3 gap-2.5'}`}
           style={{ borderTop: '1px solid var(--border-color)' }}>
-          <div className="relative shrink-0 rail-tip" data-tip="Sharvik — Enterprise Admin">
-            <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold relative z-10"
+          <div className="relative shrink-0 rail-tip" data-tip={`${me?.email ?? '…'} — ${me?.role ? ROLE_LABEL[me.role] : ''}`}>
+            <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold relative z-10 uppercase"
               style={{ background: 'linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 50%, var(--bg-card)) 100%)', color: 'var(--bg-main)' }}>
-              S
+              {(me?.email?.[0] ?? '?')}
             </div>
             <span className="absolute -bottom-px -right-px w-2 h-2 rounded-full border-2 z-20"
               style={{ background: '#4ade80', borderColor: 'var(--bg-sec)' }}/>
           </div>
           {!rail && (
-            <div className="min-w-0">
-              <div className="text-[12px] font-semibold leading-tight whitespace-nowrap">Sharvik</div>
-              <div className="text-[10px] leading-tight whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>Enterprise Admin</div>
-            </div>
+            <>
+              <div className="min-w-0 flex-1">
+                <div className="text-[12px] font-semibold leading-tight truncate">{me?.email ?? '…'}</div>
+                <div className="text-[10px] leading-tight whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>{me?.role ? ROLE_LABEL[me.role] : ''}</div>
+              </div>
+              <button onClick={doLogout} aria-label="Sign out" data-tip="Sign out"
+                className="p-1.5 rounded-md transition-colors hover:bg-white/[0.06]" style={{ color: 'var(--text-muted)' }}>
+                <LogOut size={14}/>
+              </button>
+            </>
           )}
         </div>
       </motion.aside>

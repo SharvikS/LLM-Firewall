@@ -147,8 +147,9 @@ func (h *authHandler) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "issue token", err)
 		return
 	}
-	// Hand the token to the dashboard's SSO landing route, which sets the cookie.
-	dest := strings.TrimRight(h.dashboardURL, "/") + "/login/sso?token=" + url.QueryEscape(token)
+	// Hand the token to the dashboard's SSO landing route, which sets the
+	// httpOnly session cookie and redirects into the app.
+	dest := strings.TrimRight(h.dashboardURL, "/") + "/api/auth/sso?token=" + url.QueryEscape(token)
 	http.Redirect(w, r, dest, http.StatusFound)
 }
 
