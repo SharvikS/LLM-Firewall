@@ -72,6 +72,22 @@ check "admin audit log" "200" "$(
   curl -s -o /dev/null -w '%{http_code}' "$GW/admin/v1/audit?limit=5" \
     -H "X-Admin-Token: $ADMIN")"
 
+check "readiness probe" "200" \
+  "$(curl -s -o /dev/null -w '%{http_code}' "$GW/ready")"
+
+check "settings GET" "200" \
+  "$(curl -s -o /dev/null -w '%{http_code}' "$GW/admin/v1/settings" -H "X-Admin-Token: $ADMIN")"
+
+# Live settings round-trip: change RPM via PUT, confirm the new value is returned.
+RPM_OUT="$(curl -s "$GW/admin/v1/settings" -X PUT \
+  -H "X-Admin-Token: $ADMIN" -H 'Content-Type: application/json' \
+  -d '{"rate_limit_rpm":77}' | grep -o '"rate_limit_rpm":77')"
+check "settings PUT applies live" '"rate_limit_rpm":77' "$RPM_OUT"
+# Restore the default so reruns are idempotent.
+curl -s -o /dev/null "$GW/admin/v1/settings" -X PUT \
+  -H "X-Admin-Token: $ADMIN" -H 'Content-Type: application/json' \
+  -d '{"rate_limit_rpm":60}'
+
 echo "──────────────────────────────────────────────────────"
 echo "PASS=$PASS FAIL=$FAIL"
 [ "$FAIL" -eq 0 ] && echo "🎉 ALL GREEN — demo ready" || echo "⚠️  fix the ❌ items above before the demo"
