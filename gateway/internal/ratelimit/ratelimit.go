@@ -102,11 +102,20 @@ func (rl *RateLimiter) TPMLimit() int64 { return rl.tpmLimit.Load() }
 // On any Redis error the limiter fails open (returns Allowed: true) and logs a
 // warning — a Redis outage must never take the gateway down.
 func (rl *RateLimiter) Allow(ctx context.Context, tenantID string) (Result, error) {
+	return rl.AllowWithLimit(ctx, tenantID, rl.limit.Load())
+}
+
+// AllowWithLimit is Allow with an explicit per-tenant RPM limit (from the
+// per-tenant settings plane). A limit of 0 disables RPM enforcement (always
+// allowed). This lets each tenant carry its own quota without a shared global.
+func (rl *RateLimiter) AllowWithLimit(ctx context.Context, tenantID string, limit int64) (Result, error) {
+	if limit <= 0 {
+		return Result{Allowed: true, Limit: 0, Remaining: 0}, nil
+	}
 	key := fmt.Sprintf("gateway:rl:%s", tenantID)
 	nowMs := time.Now().UnixMilli()
 	windowMs := rl.window.Milliseconds()
 	member := uuid.New().String() // unique per request to avoid sorted-set collisions
-	limit := rl.limit.Load()
 
 	vals, err := slidingWindowScript.Run(
 		ctx, rl.client,
@@ -170,9 +179,17 @@ return {1, new_total, limit}
 // The window is a 1-minute tumbling bucket (key includes the Unix minute).
 // Fails open on Redis error — same policy as Allow.
 func (rl *RateLimiter) AllowTokens(ctx context.Context, tenantID string, tokens int64) (Result, error) {
+	return rl.AllowTokensWithLimit(ctx, tenantID, tokens, rl.tpmLimit.Load())
+}
+
+// AllowTokensWithLimit is AllowTokens with an explicit per-tenant TPM limit.
+// A limit of 0 disables token enforcement (always allowed).
+func (rl *RateLimiter) AllowTokensWithLimit(ctx context.Context, tenantID string, tokens, tpmLimit int64) (Result, error) {
+	if tpmLimit <= 0 {
+		return Result{Allowed: true, Limit: 0, Remaining: 0}, nil
+	}
 	minuteBucket := time.Now().Unix() / 60
 	key := fmt.Sprintf("gateway:tpm:%s:%d", tenantID, minuteBucket)
-	tpmLimit := rl.tpmLimit.Load()
 
 	vals, err := tpmScript.Run(
 		ctx, rl.client,

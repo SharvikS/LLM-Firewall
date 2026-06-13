@@ -1,10 +1,15 @@
 import { NextResponse } from 'next/server';
 import { adminFetch } from '@/lib/gateway';
 
-// GET — current runtime settings document from the gateway control plane.
-export async function GET() {
+// Forward an optional ?tenant=<uuid> so the gateway resolves global vs per-tenant.
+function qs(req: Request): string {
+  const t = new URL(req.url).searchParams.get('tenant');
+  return t ? `?tenant=${encodeURIComponent(t)}` : '';
+}
+
+export async function GET(req: Request) {
   try {
-    const res = await adminFetch('/settings');
+    const res = await adminFetch(`/settings${qs(req)}`);
     const data = await res.json();
     return NextResponse.json(data, { status: res.status });
   } catch {
@@ -12,11 +17,21 @@ export async function GET() {
   }
 }
 
-// PUT — merge a partial settings patch and apply it live.
 export async function PUT(req: Request) {
   try {
     const body = await req.json();
-    const res = await adminFetch('/settings', { method: 'PUT', body: JSON.stringify(body) });
+    const res = await adminFetch(`/settings${qs(req)}`, { method: 'PUT', body: JSON.stringify(body) });
+    const data = await res.json();
+    return NextResponse.json(data, { status: res.status });
+  } catch {
+    return NextResponse.json({ error: 'gateway unavailable' }, { status: 502 });
+  }
+}
+
+// DELETE ?tenant=<uuid> — revert a tenant to the global defaults.
+export async function DELETE(req: Request) {
+  try {
+    const res = await adminFetch(`/settings${qs(req)}`, { method: 'DELETE' });
     const data = await res.json();
     return NextResponse.json(data, { status: res.status });
   } catch {

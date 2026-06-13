@@ -67,6 +67,10 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
   const [loading, setLoading] = useState(true);
   const [saveState, setSaveState] = useState<SaveState>('idle');
 
+  // Settings scope: '' = global default, or a tenant UUID for a per-tenant override.
+  const [scope, setScope] = useState('');
+  const [tenants, setTenants] = useState<{ id: string; name: string }[]>([]);
+
   // Notification prefs are client-side preferences (persisted in localStorage).
   const [notif, setNotif] = useState({ critical: true, rateLimit: true, pii: false, health: true });
 
@@ -75,6 +79,11 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
       if (s) setSettings(s); else setOffline(true);
       setLoading(false);
     });
+    // Tenant list for the per-tenant scope selector.
+    fetch('/api/admin/tenants', { cache: 'no-store' })
+      .then(r => r.json())
+      .then(d => setTenants((d.tenants ?? []).map((t: { id: string; name: string }) => ({ id: t.id, name: t.name }))))
+      .catch(() => {});
     // Read client-side prefs after paint (avoids synchronous setState-in-effect).
     const id = requestAnimationFrame(() => {
       setCompact(localStorage.getItem('titan-compact') === '1');
@@ -86,6 +95,17 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
     return () => cancelAnimationFrame(id);
   }, []);
 
+  // Reload settings when the scope (global vs a tenant) changes.
+  const changeScope = useCallback((next: string) => {
+    setScope(next);
+    setLoading(true);
+    setSaveState('idle');
+    fetchSettings(next || undefined).then(s => {
+      if (s) { setSettings(s); setOffline(false); } else setOffline(true);
+      setLoading(false);
+    });
+  }, []);
+
   const patch = useCallback((p: Partial<GatewaySettings>) => {
     setSettings(s => (s ? { ...s, ...p } : s));
     setSaveState('idle');
@@ -94,10 +114,10 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
   const save = useCallback(async () => {
     if (!settings) return;
     setSaveState('saving');
-    const updated = await saveSettings(settings);
+    const updated = await saveSettings(settings, scope || undefined);
     if (updated) { setSettings(updated); setSaveState('saved'); setTimeout(() => setSaveState('idle'), 2000); }
     else setSaveState('error');
-  }, [settings]);
+  }, [settings, scope]);
 
   const toggleCompact = () => setCompact(v => { const nv = !v; localStorage.setItem('titan-compact', nv ? '1' : '0'); return nv; });
   const setNotifKey = (k: keyof typeof notif) => setNotif(n => { const nn = { ...n, [k]: !n[k] }; localStorage.setItem('titan-notif', JSON.stringify(nn)); return nn; });
@@ -126,6 +146,19 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
         {offline && active !== 'Appearance' && active !== 'Notifications' && (
           <div className="mb-6 flex items-center gap-2 px-4 py-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-500 text-xs">
             <AlertTriangle size={14}/> Gateway unreachable — live settings can&apos;t be loaded or saved right now.
+          </div>
+        )}
+        {active === 'General' && (
+          <div className="mb-6 flex flex-wrap items-center gap-3">
+            <label className="text-xs font-semibold uppercase tracking-widest text-base-muted">Apply to</label>
+            <select value={scope} onChange={e => changeScope(e.target.value)}
+              className="px-3 py-1.5 bg-base-sec border border-base-border rounded-lg text-sm outline-none">
+              <option value="">Global default (all tenants)</option>
+              {tenants.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+            {scope
+              ? <span className="text-xs text-base-muted">Per-tenant override — layers over the global defaults for this tenant only.</span>
+              : <span className="text-xs text-base-muted">Baseline applied to every tenant without an override.</span>}
           </div>
         )}
         <AnimatePresence mode="wait">

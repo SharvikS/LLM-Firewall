@@ -242,9 +242,10 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	tenantName := auth.TenantName
 	apiKeyID := auth.APIKeyID
 
-	// Live runtime settings snapshot (dashboard-tunable). Read once per request
-	// so a mid-request settings change can't produce inconsistent decisions.
-	set := p.settings.Get()
+	// Effective settings for this tenant: the global document with any per-tenant
+	// override applied. Read once per request so a mid-request settings change
+	// can't produce inconsistent decisions.
+	set := p.settings.GetForTenant(tenantID.String())
 
 	isStream := cache.IsStreaming(body)
 	cacheKey := p.cache.Key(tenantID.String(), r.URL.Path, body)
@@ -265,7 +266,8 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	metrics.HourlyTraffic.Record(false)
 
 	// Stage 3: Rate limiting — RPM (sliding window) then TPM (tumbling bucket).
-	rl, rlErr := p.limiter.Allow(r.Context(), tenantID.String())
+	// Limits are per-tenant (from the effective settings), not a single global.
+	rl, rlErr := p.limiter.AllowWithLimit(r.Context(), tenantID.String(), set.RateLimitRPM)
 	if rlErr == nil {
 		w.Header().Set("X-RateLimit-Limit", fmt.Sprintf("%d", rl.Limit))
 		w.Header().Set("X-RateLimit-Remaining", fmt.Sprintf("%d", rl.Remaining))
@@ -287,10 +289,10 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TPM check (skipped when the live TPM limit is 0).
-	if p.limiter.TPMLimit() > 0 {
+	// TPM check (skipped when the tenant's effective TPM limit is 0).
+	if set.RateLimitTPM > 0 {
 		tokenCount := estimateTokens(body)
-		tpm, tpmErr := p.limiter.AllowTokens(r.Context(), tenantID.String(), tokenCount)
+		tpm, tpmErr := p.limiter.AllowTokensWithLimit(r.Context(), tenantID.String(), tokenCount, set.RateLimitTPM)
 		if tpmErr == nil && !tpm.Allowed {
 			log.Warn("token rate limit exceeded (TPM)",
 				slog.String("tenant", tenantName),

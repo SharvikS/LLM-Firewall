@@ -18,9 +18,14 @@ export interface GatewaySettings {
   _offline?: boolean;
 }
 
-export async function fetchSettings(): Promise<GatewaySettings | null> {
+// tenant is an optional tenant UUID; omit/empty for the global document.
+function url(tenant?: string): string {
+  return tenant ? `/api/admin/settings?tenant=${encodeURIComponent(tenant)}` : '/api/admin/settings';
+}
+
+export async function fetchSettings(tenant?: string): Promise<GatewaySettings | null> {
   try {
-    const res = await fetch('/api/admin/settings', { cache: 'no-store' });
+    const res = await fetch(url(tenant), { cache: 'no-store' });
     if (!res.ok) return null;
     const data = await res.json();
     if (data?._offline) return null;
@@ -32,9 +37,10 @@ export async function fetchSettings(): Promise<GatewaySettings | null> {
 
 export async function saveSettings(
   patch: Partial<GatewaySettings>,
+  tenant?: string,
 ): Promise<GatewaySettings | null> {
   try {
-    const res = await fetch('/api/admin/settings', {
+    const res = await fetch(url(tenant), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),

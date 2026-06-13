@@ -5,27 +5,55 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/google/uuid"
+
 	"github.com/sharvik/llm-firewall/gateway/internal/settings"
 )
 
 // settingsHandler serves the runtime-settings plane at /admin/v1/settings.
+// Without a tenant query param it operates on the global document; with
+// ?tenant=<uuid> it reads/writes that tenant's sparse override (layered over
+// global at request time).
 type settingsHandler struct{ mgr *settings.Manager }
 
-// getSettings returns the full current settings document.
-func (h *settingsHandler) getSettings(w http.ResponseWriter, _ *http.Request) {
+// tenantParam returns the validated tenant UUID string, or "" for the global doc.
+// The bool is false when a tenant param was given but is not a valid UUID.
+func tenantParam(r *http.Request) (string, bool) {
+	t := r.URL.Query().Get("tenant")
+	if t == "" {
+		return "", true
+	}
+	if _, err := uuid.Parse(t); err != nil {
+		return "", false
+	}
+	return t, true
+}
+
+func (h *settingsHandler) getSettings(w http.ResponseWriter, r *http.Request) {
 	if h.mgr == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings unavailable"})
 		return
 	}
-	writeJSON(w, http.StatusOK, h.mgr.Get())
+	tenant, ok := tenantParam(r)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid tenant id"})
+		return
+	}
+	if tenant == "" {
+		writeJSON(w, http.StatusOK, h.mgr.Get())
+		return
+	}
+	writeJSON(w, http.StatusOK, h.mgr.GetForTenant(tenant))
 }
 
-// updateSettings merges a partial JSON patch, persists it, and applies it live.
-// The full, clamped document is returned so the dashboard reflects normalized
-// values immediately.
 func (h *settingsHandler) updateSettings(w http.ResponseWriter, r *http.Request) {
 	if h.mgr == nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings unavailable"})
+		return
+	}
+	tenant, ok := tenantParam(r)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid tenant id"})
 		return
 	}
 	patch, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
@@ -33,15 +61,37 @@ func (h *settingsHandler) updateSettings(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unreadable body"})
 		return
 	}
-	// Validate JSON shape before handing to the manager for a clearer 400.
 	if !json.Valid(patch) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
-	updated, err := h.mgr.Update(r.Context(), patch)
+	var updated settings.Settings
+	if tenant == "" {
+		updated, err = h.mgr.Update(r.Context(), patch)
+	} else {
+		updated, err = h.mgr.UpdateForTenant(r.Context(), tenant, patch)
+	}
 	if err != nil {
 		internalError(w, "update settings", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, updated)
+}
+
+// deleteSettings clears a tenant's override, reverting it to the global doc.
+func (h *settingsHandler) deleteSettings(w http.ResponseWriter, r *http.Request) {
+	if h.mgr == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings unavailable"})
+		return
+	}
+	tenant, ok := tenantParam(r)
+	if !ok || tenant == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant id required"})
+		return
+	}
+	if err := h.mgr.ClearTenant(r.Context(), tenant); err != nil {
+		internalError(w, "clear tenant settings", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "reverted to global"})
 }

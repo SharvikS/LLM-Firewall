@@ -85,6 +85,7 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 
 		// security+ : edit configuration, policies, tenants
 		r.With(requireRole(auth.RoleSecurity)).Put("/settings", sh.updateSettings)
+		r.With(requireRole(auth.RoleSecurity)).Delete("/settings", sh.deleteSettings)
 		r.With(requireRole(auth.RoleSecurity)).Post("/tenants", h.createTenant)
 		r.With(requireRole(auth.RoleSecurity)).Post("/policies", h.createPolicy)
 		r.With(requireRole(auth.RoleSecurity)).Put("/policies/{id}", h.updatePolicy)
