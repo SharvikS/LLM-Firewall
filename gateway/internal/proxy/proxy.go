@@ -69,7 +69,8 @@ type LLMProxy struct {
 	mlClient      *analyzer.Client
 	st            *store.Store
 	cfg           *config.Config
-	provider      string // upstream provider label derived from TargetURL host
+	provider      string          // upstream provider label derived from TargetURL host
+	plugins       *plugins.Runtime // WASM custom-rule stage; nil-safe when disabled
 }
 
 // providerFromHost maps an upstream host to a human-readable provider label for

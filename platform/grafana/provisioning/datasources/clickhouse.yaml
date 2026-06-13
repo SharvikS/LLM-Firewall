@@ -1,0 +1,29 @@
+# TITAN Gateway — ClickHouse datasource for Grafana.
+#
+# Provisions the official grafana-clickhouse-datasource pointing at the
+# `clickhouse` compose service over the native protocol (port 9000). The
+# fixed uid `titan-clickhouse` is referenced by every panel in the
+# provisioned dashboards, so the wiring survives re-provisioning.
+apiVersion: 1
+
+# Drop any stale copy on restart so the uid/config below is authoritative.
+deleteDatasources:
+  - name: ClickHouse
+    orgId: 1
+
+datasources:
+  - name: ClickHouse
+    uid: titan-clickhouse
+    type: grafana-clickhouse-datasource
+    access: proxy
+    orgId: 1
+    isDefault: true
+    editable: true
+    jsonData:
+      server: clickhouse
+      port: 9000
+      protocol: native
+      username: default
+      defaultDatabase: titan
+      tlsSkipVerify: false
+    secureJsonData: {}

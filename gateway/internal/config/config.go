@@ -51,6 +51,11 @@ type Config struct {
 	OutputScanEnabled   bool
 	OutputScanTimeoutMs int // ML deadline for output scans (looser than inline)
 
+	// WASM custom-rule plugins: directory of .wasm detection modules run as an
+	// extra pipeline stage. Empty = disabled. Each call is bounded by the timeout.
+	PluginDir       string
+	PluginTimeoutMs int
+
 	// Semantic cache (Qdrant vector DB + embedding service)
 	QdrantURL              string  // e.g. "http://localhost:6333"; empty = disabled
 	EmbeddingURL           string  // embedding HTTP endpoint, e.g. "http://localhost:8001/embed"
@@ -99,6 +104,9 @@ func Load() (*Config, error) {
 		RateLimitTPM:        getEnvInt64("RATE_LIMIT_TPM", 0),
 		OutputScanEnabled:   getEnvBool("OUTPUT_SCAN_ENABLED", true),
 		OutputScanTimeoutMs: getEnvInt("OUTPUT_SCAN_TIMEOUT_MS", 2000),
+
+		PluginDir:       os.Getenv("PLUGIN_DIR"),
+		PluginTimeoutMs: getEnvInt("PLUGIN_TIMEOUT_MS", 100),
 
 		QdrantURL:              os.Getenv("QDRANT_URL"),
 		EmbeddingURL:           getEnv("EMBEDDING_URL", "http://localhost:8001/embed"),

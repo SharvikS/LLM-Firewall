@@ -1,0 +1,21 @@
+region          = "us-east-1"
+cluster_name    = "titan-us-east"
+cluster_version = "1.30"
+
+node_instance_type = "m5.large"
+node_min_size      = 3
+node_max_size      = 10
+node_desired_size  = 4
+
+release_name = "titan-us"
+namespace    = "titan"
+
+# Secrets — prefer environment variables (TF_VAR_admin_token,
+# TF_VAR_provider_api_key) or a secret manager over committing these.
+# Leave blank to keep the chart defaults.
+admin_token      = ""
+provider_api_key = ""
+
+tags = {
+  Owner = "platform-team"
+}

@@ -1,0 +1,17 @@
+# TITAN Gateway — dashboard provider.
+#
+# Loads every dashboard JSON under /var/lib/grafana/dashboards (mounted
+# read-only from ./platform/grafana/dashboards) on startup and keeps them
+# in sync on disk changes.
+apiVersion: 1
+
+providers:
+  - name: titan
+    orgId: 1
+    folder: TITAN
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
