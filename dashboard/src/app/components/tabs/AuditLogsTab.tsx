@@ -120,7 +120,7 @@ export default function AuditLogsTab() {
           ) : visible.length === 0 ? (
             <div className="py-16 text-center text-base-muted">
               <p className="text-sm">{offline ? 'Gateway offline — cannot load audit logs.' : 'No audit events yet. Send requests through the gateway.'}</p>
-              {!offline && <p className="text-xs mt-1 font-mono">curl -H "Authorization: Bearer titan_dev_localkeyfortesting1234" http://localhost:8080/v1/chat/completions</p>}
+              {!offline && <p className="text-xs mt-1 font-mono">curl -H &quot;Authorization: Bearer &lt;your-api-key&gt;&quot; &lt;gateway-url&gt;/v1/chat/completions</p>}
             </div>
           ) : visible.map(e => (
             <div key={e.id} className="grid grid-cols-[120px_1fr_140px_120px_80px_90px_90px] hover:bg-base-sec/30 transition-colors text-sm">

@@ -1,21 +1,21 @@
 'use client';
 
-import { useState } from 'react';
-import { motion } from 'framer-motion';
+import { useState, useEffect, useCallback } from 'react';
 import {
-  Network, Users, CreditCard, Fingerprint, Eye, Cpu,
-  ShieldAlert, Globe, Plus, Trash2, Activity,
+  Cpu, Globe, Plus, Trash2, Loader2, Check, AlertTriangle,
 } from 'lucide-react';
+import { fetchSettings, saveSettings, type GatewaySettings } from '@/lib/settings';
 
 // ─── Shared helpers ──────────────────────────────────────────────────────────
 
-function PageHeader({ title, sub, badge }: { title: string; sub: string; badge?: string }) {
+function PageHeader({ title, sub, badge, badgeColor = 'yellow' }: { title: string; sub: string; badge?: string; badgeColor?: 'yellow' | 'green' }) {
+  const colors = badgeColor === 'green' ? 'bg-green-500/10 text-green-500' : 'bg-yellow-500/10 text-yellow-500';
   return (
     <div className="mb-8">
       <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
       <p className="text-sm text-base-muted mt-1">
         {sub}
-        {badge && <span className="ml-2 px-1.5 py-0.5 bg-yellow-500/10 text-yellow-500 text-[10px] rounded font-semibold">{badge}</span>}
+        {badge && <span className={`ml-2 px-1.5 py-0.5 text-[10px] rounded font-semibold ${colors}`}>{badge}</span>}
       </p>
     </div>
   );
@@ -29,6 +29,47 @@ function Tag({ label, color }: { label: string; color: string }) {
   return <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md ${color}`}>{label}</span>;
 }
 
+function Toggle({ on, onChange, disabled }: { on: boolean; onChange: () => void; disabled?: boolean }) {
+  return (
+    <button onClick={onChange} disabled={disabled}
+      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 disabled:opacity-40 disabled:cursor-not-allowed ${on ? 'bg-base-accent' : 'bg-base-border'}`}>
+      <span className={`pointer-events-none inline-block h-[16px] w-[16px] transform rounded-full bg-white shadow-sm transition duration-200 ${on ? 'translate-x-4' : 'translate-x-0'}`}/>
+    </button>
+  );
+}
+
+// A tiny status pill shared by the live tabs.
+function LiveStatus({ state }: { state: 'idle' | 'saving' | 'saved' | 'error' | 'offline' }) {
+  if (state === 'idle') return null;
+  const map = {
+    saving: { icon: <Loader2 size={11} className="animate-spin"/>, text: 'Saving…', cls: 'text-base-muted' },
+    saved:  { icon: <Check size={11}/>,                            text: 'Saved',   cls: 'text-green-400' },
+    error:  { icon: <AlertTriangle size={11}/>,                    text: 'Save failed', cls: 'text-red-400' },
+    offline:{ icon: <AlertTriangle size={11}/>,                    text: 'Gateway offline', cls: 'text-yellow-500' },
+  }[state];
+  return <span className={`inline-flex items-center gap-1 text-xs ${map.cls}`}>{map.icon}{map.text}</span>;
+}
+
+// Shared hook: load live settings + a debounced-ish save helper.
+function useLiveSettings() {
+  const [settings, setSettings] = useState<GatewaySettings | null>(null);
+  const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error' | 'offline'>('idle');
+
+  useEffect(() => {
+    fetchSettings().then(s => { if (s) setSettings(s); else setState('offline'); });
+  }, []);
+
+  const apply = useCallback(async (p: Partial<GatewaySettings>) => {
+    setSettings(s => (s ? { ...s, ...p } : s));
+    setState('saving');
+    const updated = await saveSettings(p);
+    if (updated) { setSettings(updated); setState('saved'); setTimeout(() => setState('idle'), 1500); }
+    else setState('error');
+  }, []);
+
+  return { settings, state, apply };
+}
+
 // ─── Edge Routing ────────────────────────────────────────────────────────────
 
 const ROUTES = [
@@ -39,19 +80,27 @@ const ROUTES = [
 ];
 
 export function EdgeRoutingTab() {
-  const [routes, setRoutes] = useState(ROUTES);
+  const { settings, state, apply } = useLiveSettings();
   return (
     <div className="max-w-4xl mx-auto">
-      <PageHeader title="Edge Routing" sub="LLM provider routes and load balancing configuration." badge="Demo data"/>
+      <PageHeader title="Edge Routing" sub="LLM provider routing and automatic failover."/>
+      <Card className="mb-6">
+        <div className="flex justify-between items-center">
+          <div>
+            <div className="text-sm font-semibold">Provider Failover</div>
+            <div className="text-xs text-base-muted mt-1 max-w-md">When the primary upstream returns 5xx or is unreachable, replay the request to the configured backup provider. Applied live.</div>
+            <div className="mt-2"><LiveStatus state={state}/></div>
+          </div>
+          <Toggle on={!!settings?.failover_enabled} disabled={!settings} onChange={() => apply({ failover_enabled: !settings?.failover_enabled })}/>
+        </div>
+      </Card>
       <Card>
         <div className="flex justify-between items-center mb-5">
           <h3 className="text-sm font-semibold">Route Table</h3>
-          <button className="flex items-center gap-1.5 text-xs text-base-muted border border-base-border px-3 py-1.5 rounded-lg hover:text-base-text hover:bg-base-sec transition-colors">
-            <Plus size={12}/> Add Route
-          </button>
+          <span className="text-xs text-base-muted">Configured at deploy via TARGET_URL / FALLBACK_TARGET_URL</span>
         </div>
         <div className="space-y-2">
-          {routes.map((r, i) => (
+          {ROUTES.map((r, i) => (
             <div key={i} className={`flex items-center gap-4 px-4 py-3 border border-base-border rounded-lg text-sm transition-opacity ${r.status === 'disabled' ? 'opacity-40' : ''}`}>
               <Globe size={14} className="text-base-muted shrink-0"/>
               <code className="text-[12px] font-mono text-base-text flex-1">{r.path}</code>
@@ -72,7 +121,7 @@ export function EdgeRoutingTab() {
   );
 }
 
-// ─── Team ────────────────────────────────────────────────────────────────────
+// ─── Team (preview) ──────────────────────────────────────────────────────────
 
 const TEAM = [
   { name: 'Sharvik Sutar', email: 'aryantuntune42@gmail.com', role: 'Enterprise Admin',  avatar: 'S', joined: '2025-11-01', lastActive: '2026-06-05' },
@@ -86,7 +135,7 @@ const ROLES = ['Enterprise Admin','Security Engineer','Platform Engineer','Compl
 export function TeamTab() {
   return (
     <div className="max-w-4xl mx-auto">
-      <PageHeader title="Team" sub="Manage team members and their access roles." badge="Demo data"/>
+      <PageHeader title="Team" sub="Manage team members and their access roles." badge="Preview"/>
       <Card>
         <div className="flex justify-between items-center mb-5">
           <h3 className="text-sm font-semibold">{TEAM.length} Members</h3>
@@ -115,7 +164,7 @@ export function TeamTab() {
   );
 }
 
-// ─── Billing ─────────────────────────────────────────────────────────────────
+// ─── Billing (preview) ───────────────────────────────────────────────────────
 
 export function BillingTab() {
   const USAGE = [
@@ -126,7 +175,7 @@ export function BillingTab() {
   ];
   return (
     <div className="max-w-4xl mx-auto">
-      <PageHeader title="Billing & Usage" sub="Current plan and resource consumption." badge="Demo data"/>
+      <PageHeader title="Billing & Usage" sub="Current plan and resource consumption." badge="Preview"/>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
         <Card>
           <div className="flex justify-between items-start mb-4">
@@ -171,7 +220,7 @@ export function BillingTab() {
   );
 }
 
-// ─── Access Control ──────────────────────────────────────────────────────────
+// ─── Access Control (reference model) ────────────────────────────────────────
 
 const PERMISSIONS = [
   { resource: 'Gateway API',      admin: true,  engineer: true,  compliance: false, viewer: false },
@@ -186,7 +235,7 @@ const PERMISSIONS = [
 export function AccessControlTab() {
   return (
     <div className="max-w-4xl mx-auto">
-      <PageHeader title="Access Control" sub="Role-based permission matrix for all system resources." badge="Demo data"/>
+      <PageHeader title="Access Control" sub="Reference RBAC model. Enforcement is via API-key scoping and the admin token today; role assignment ships next." badge="Reference"/>
       <Card>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -219,49 +268,54 @@ export function AccessControlTab() {
   );
 }
 
-// ─── Data Privacy ────────────────────────────────────────────────────────────
+// ─── Data Privacy (live) ─────────────────────────────────────────────────────
 
-const PII_ENTITIES = [
-  { name: 'US_SSN',          label: 'Social Security Number', enabled: true,  threshold: 0.85 },
-  { name: 'EMAIL_ADDRESS',   label: 'Email Address',          enabled: true,  threshold: 0.90 },
-  { name: 'CREDIT_CARD',     label: 'Credit Card Number',     enabled: true,  threshold: 0.95 },
-  { name: 'PHONE_NUMBER',    label: 'Phone Number',           enabled: true,  threshold: 0.75 },
-  { name: 'PERSON',          label: 'Person Name (NER)',       enabled: true,  threshold: 0.70 },
-  { name: 'IP_ADDRESS',      label: 'IP Address',             enabled: true,  threshold: 0.95 },
-  { name: 'US_PASSPORT',     label: 'US Passport Number',     enabled: false, threshold: 0.90 },
-  { name: 'IBAN_CODE',       label: 'IBAN Bank Code',         enabled: true,  threshold: 0.85 },
-];
-
-function Toggle({ on, onChange }: { on: boolean; onChange: () => void }) {
-  return (
-    <button onClick={onChange} className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ${on ? 'bg-base-accent' : 'bg-base-border'}`}>
-      <span className={`pointer-events-none inline-block h-[16px] w-[16px] transform rounded-full bg-white shadow-sm transition duration-200 ${on ? 'translate-x-4' : 'translate-x-0'}`}/>
-    </button>
-  );
-}
+const PII_LABELS: Record<string, string> = {
+  US_SSN:        'Social Security Number',
+  EMAIL_ADDRESS: 'Email Address',
+  CREDIT_CARD:   'Credit Card Number',
+  PHONE_NUMBER:  'Phone Number',
+  PERSON:        'Person Name (NER)',
+  IP_ADDRESS:    'IP Address',
+  US_PASSPORT:   'US Passport Number',
+  IBAN_CODE:     'IBAN Bank Code',
+};
 
 export function DataPrivacyTab() {
-  const [entities, setEntities] = useState(PII_ENTITIES);
-  const toggle = (name: string) => setEntities(es => es.map(e => e.name === name ? { ...e, enabled: !e.enabled } : e));
+  const { settings, state, apply } = useLiveSettings();
+  const entities = settings?.pii_entities ?? {};
+
+  const toggleEntity = (name: string) =>
+    apply({ pii_entities: { ...entities, [name]: !entities[name] } });
+
   return (
     <div className="max-w-4xl mx-auto">
-      <PageHeader title="Data Privacy" sub="Configure Presidio PII entity detection. Changes apply to all new requests."/>
+      <PageHeader title="Data Privacy" sub="Configure Presidio PII recognizers. Changes apply live to all new requests." badge="Live" badgeColor="green"/>
+      <Card className="mb-6">
+        <div className="flex justify-between items-center">
+          <div>
+            <div className="text-sm font-semibold">PII Redaction</div>
+            <div className="text-xs text-base-muted mt-1 max-w-md">Master switch. When off, no PII is masked regardless of the recognizers below (secrets are always masked).</div>
+            <div className="mt-2"><LiveStatus state={state}/></div>
+          </div>
+          <Toggle on={!!settings?.pii_redaction_enabled} disabled={!settings} onChange={() => apply({ pii_redaction_enabled: !settings?.pii_redaction_enabled })}/>
+        </div>
+      </Card>
       <Card>
         <div className="flex justify-between items-center mb-5">
           <h3 className="text-sm font-semibold">PII Entity Recognizers</h3>
           <span className="text-xs text-base-muted">Engine: Microsoft Presidio · Model: en_core_web_sm</span>
         </div>
-        <div className="space-y-2">
-          {entities.map(e => (
-            <div key={e.name} className="flex items-center justify-between px-4 py-3 border border-base-border/60 rounded-lg hover:bg-base-sec/30 transition-colors">
+        <div className={`space-y-2 ${settings && !settings.pii_redaction_enabled ? 'opacity-50' : ''}`}>
+          {Object.keys(PII_LABELS).map(name => (
+            <div key={name} className="flex items-center justify-between px-4 py-3 border border-base-border/60 rounded-lg hover:bg-base-sec/30 transition-colors">
               <div className="flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-base-text">{e.label}</span>
-                  <code className="text-[10px] font-mono text-base-muted bg-base-sec px-1.5 py-0.5 rounded">{e.name}</code>
+                  <span className="text-sm font-medium text-base-text">{PII_LABELS[name]}</span>
+                  <code className="text-[10px] font-mono text-base-muted bg-base-sec px-1.5 py-0.5 rounded">{name}</code>
                 </div>
-                <div className="text-xs text-base-muted mt-0.5">Confidence threshold: {(e.threshold * 100).toFixed(0)}%</div>
               </div>
-              <Toggle on={e.enabled} onChange={() => toggle(e.name)}/>
+              <Toggle on={!!entities[name]} disabled={!settings || !settings.pii_redaction_enabled} onChange={() => toggleEntity(name)}/>
             </div>
           ))}
         </div>
@@ -273,7 +327,7 @@ export function DataPrivacyTab() {
   );
 }
 
-// ─── Sandboxes ───────────────────────────────────────────────────────────────
+// ─── Sandboxes (preview) ─────────────────────────────────────────────────────
 
 const SANDBOXES = [
   { id: 'sb-001', agent: 'DevOps-Agent-3',  tool: 'run_bash', status: 'running', cpu: '12%', mem: '48MB', started: '2m ago', riskScore: 4.2 },
@@ -287,7 +341,7 @@ export function SandboxesTab() {
   const kill = (id: string) => setSandboxes(ss => ss.filter(s => s.id !== id));
   return (
     <div className="max-w-4xl mx-auto">
-      <PageHeader title="Sandboxes" sub="Active Firecracker/Docker sandbox environments for agent tool execution." badge="Demo data"/>
+      <PageHeader title="Sandboxes" sub="Active Firecracker/Docker sandbox environments for agent tool execution." badge="Preview"/>
       <div className="grid grid-cols-3 gap-4 mb-6">
         {[
           { label: 'Active',  value: sandboxes.filter(s => s.status === 'running').length, color: 'text-green-400' },
@@ -329,7 +383,7 @@ export function SandboxesTab() {
   );
 }
 
-// ─── Vulnerabilities ─────────────────────────────────────────────────────────
+// ─── Vulnerabilities (preview) ───────────────────────────────────────────────
 
 const VULNS = [
   { id: 'CVE-2024-6387', name: 'RegreSSHion (sshd)', severity: 'Critical', cvss: 9.8, component: 'openssh', status: 'Patched', discovered: '2024-07-01' },
@@ -344,7 +398,7 @@ const SEV_COLOR: Record<string, string> = { Critical: 'text-red-400 bg-red-400/1
 export function VulnerabilitiesTab() {
   return (
     <div className="max-w-4xl mx-auto">
-      <PageHeader title="Vulnerabilities" sub="CVE tracking for all runtime components." badge="Demo data"/>
+      <PageHeader title="Vulnerabilities" sub="CVE tracking for all runtime components." badge="Preview"/>
       <Card>
         <div className="space-y-3">
           {VULNS.map(v => (

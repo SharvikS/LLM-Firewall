@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
-
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL ?? 'http://localhost:8080';
+import { GATEWAY } from '@/lib/gateway';
 
 export async function GET() {
   try {

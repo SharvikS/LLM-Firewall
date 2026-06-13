@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-
-const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL ?? 'http://localhost:8080';
+import { GATEWAY } from '@/lib/gateway';
 
 async function fetchJson(path: string) {
   const res = await fetch(`${GATEWAY}${path}`, {
