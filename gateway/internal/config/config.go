@@ -106,7 +106,7 @@ func Load() (*Config, error) {
 		OutputScanTimeoutMs: getEnvInt("OUTPUT_SCAN_TIMEOUT_MS", 2000),
 
 		PluginDir:       os.Getenv("PLUGIN_DIR"),
-		PluginTimeoutMs: getEnvInt("PLUGIN_TIMEOUT_MS", 100),
+		PluginTimeoutMs: getEnvInt("PLUGIN_TIMEOUT_MS", 500),
 
 		QdrantURL:              os.Getenv("QDRANT_URL"),
 		EmbeddingURL:           getEnv("EMBEDDING_URL", "http://localhost:8001/embed"),

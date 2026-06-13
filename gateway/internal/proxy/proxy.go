@@ -240,6 +240,7 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	isStream := cache.IsStreaming(body)
 	cacheKey := p.cache.Key(tenantID.String(), r.URL.Path, body)
 	model := parseModel(body) // real requested model for audit attribution
+	originalBody := body      // pre-mask copy: plugins inspect what the user actually sent
 
 	// Resolve request region from Cloudflare or a custom header early so every
 	// audit event carries it regardless of where in the pipeline the request exits.
@@ -345,7 +346,9 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// on the (post-mask) prompt text; any block verdict denies the request.
 	// Fail-open: a misbehaving plugin is skipped inside the runtime, never here.
 	if p.plugins.Enabled() {
-		for _, v := range p.plugins.Scan(r.Context(), string(body)) {
+		// Scan the original prompt, not the PII-masked body — masking would hide
+		// the very terms (names, codenames) a custom rule needs to see.
+		for _, v := range p.plugins.Scan(r.Context(), string(originalBody)) {
 			if v.Block {
 				reason := "blocked by plugin " + v.Plugin
 				if v.Reason != "" {

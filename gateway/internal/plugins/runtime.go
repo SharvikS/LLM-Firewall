@@ -36,6 +36,10 @@ import (
 	"github.com/sharvik/llm-firewall/gateway/internal/logger"
 )
 
+// instancePoolWarm is how many module instances each plugin pre-warms so the
+// hot path rarely pays cold-instantiation latency.
+const instancePoolWarm = 4
+
 // Verdict is the result of one plugin evaluating a prompt.
 type Verdict struct {
 	Block  bool    `json:"block"`
@@ -117,12 +121,24 @@ func Load(ctx context.Context, dir string, timeout time.Duration) (*Runtime, err
 			continue
 		}
 		p := &plugin{name: name, compiled: compiled}
-		// Validate the ABI by instantiating once up front.
-		if inst, err := r.newInstance(ctx, p); err != nil {
-			logger.Get().Warn("plugins: ABI check failed — skipped", "plugin", name, "error", err.Error())
-			continue
-		} else {
+		// Validate the ABI and pre-warm a small instance pool. Instantiating a
+		// wasm reactor (esp. Go-built ones, whose _initialize runs a runtime
+		// init) can take 100s of ms — doing it lazily on the hot path would blow
+		// the per-scan timeout and fail the plugin open. Pre-warming keeps
+		// steady-state scans at ~1ms.
+		ok := false
+		for i := 0; i < instancePoolWarm; i++ {
+			inst, err := r.newInstance(ctx, p)
+			if err != nil {
+				logger.Get().Warn("plugins: ABI check failed — skipped", "plugin", name, "error", err.Error())
+				ok = false
+				break
+			}
 			p.pool.Put(inst)
+			ok = true
+		}
+		if !ok {
+			continue
 		}
 		r.plugins = append(r.plugins, p)
 		logger.Get().Info("plugins: loaded", "plugin", name)
@@ -180,17 +196,13 @@ func (r *Runtime) Scan(ctx context.Context, prompt string) []Verdict {
 }
 
 func (r *Runtime) scanOne(ctx context.Context, p *plugin, prompt string) (Verdict, bool) {
-	cctx := ctx
-	if r.timeout > 0 {
-		var cancel context.CancelFunc
-		cctx, cancel = context.WithTimeout(ctx, r.timeout)
-		defer cancel()
-	}
-
+	// Instantiate (if the pool is empty) OUTSIDE the scan deadline: cold wasm
+	// instantiation can take 100s of ms and must not count against — or trip —
+	// the per-scan timeout, which would fail the plugin open.
 	inst, _ := p.pool.Get().(*instance)
 	if inst == nil {
 		var err error
-		inst, err = r.newInstance(cctx, p)
+		inst, err = r.newInstance(ctx, p)
 		if err != nil {
 			logger.Get().Warn("plugins: instantiate failed — skipped", "plugin", p.name, "error", err.Error())
 			return Verdict{}, false
@@ -200,6 +212,14 @@ func (r *Runtime) scanOne(ctx context.Context, p *plugin, prompt string) (Verdic
 
 	inst.scanMu.Lock()
 	defer inst.scanMu.Unlock()
+
+	// The timeout bounds only the actual scan execution.
+	cctx := ctx
+	if r.timeout > 0 {
+		var cancel context.CancelFunc
+		cctx, cancel = context.WithTimeout(ctx, r.timeout)
+		defer cancel()
+	}
 
 	data := []byte(prompt)
 	if uint32(len(data)) > inst.bufCap {

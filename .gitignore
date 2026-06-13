@@ -15,3 +15,7 @@ gateway/gateway
 __pycache__/
 *.pyc
 *.pyo
+
+# macOS Finder metadata
+.DS_Store
+**/.DS_Store

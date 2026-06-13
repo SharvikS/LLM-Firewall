@@ -1,7 +1,33 @@
 # LLM-Firewall (TITAN Gateway) — Project Status Log
 
 > **Auto-maintained log.** Updated at the end of every major session or when significant changes are made.
-> Last updated: 2026-06-13 (Demo-Readiness / E2E Verification Session)
+> Last updated: 2026-06-13 (Finish-Everything-Remaining Session)
+
+---
+
+## 2026-06-13 — Finish-Everything-Remaining Session
+
+Closed every remaining gap and roadmap item. All committed; full Go + Python
+suites green; 12/12 smoke; stack verified live.
+
+- **Real injection ML layer** — shipped a 188-sample trained corpus so the
+  TF-IDF fallback activates; switched the transformer to the public
+  `protectai/deberta-v3-base-prompt-injection-v2` (v1 went gated/401). Novel
+  non-regex injections now detected.
+- **Dynamic audit attribution** — provider derived from upstream host, model
+  parsed from the request body (was hardcoded Groq/llama3-8b).
+- **Real local sandbox isolation** — `analyzer/core/sandbox.py` now reaches
+  Docker (Desktop socket discovery) and the seccomp allowlist gained the modern
+  runc/glibc syscalls it needed to start; verified net-none + read-only rootfs.
+- **Response-side output scanning** — masks PII/secrets the model emits
+  (`OUTPUT_SCAN_ENABLED`, `X-Titan-Output-Masked`, audit `OUTPUT_MASKED`).
+  Bumped inline `ANALYZER_TIMEOUT_MS` 150→500 so the now-active transformer
+  reliably gates requests instead of failing open.
+- **WASM custom-rule plugins** — wazero stage running operator `.wasm` detectors
+  (`PLUGIN_DIR`); sample blocks internal codenames. Verified 403 live.
+- **Grafana** over ClickHouse (provisioned datasource + TITAN Overview, :3001),
+  **load/stress harness** (`loadtest/`), **AWS EKS Terraform** (`terraform/`).
+- Docs reorganized under `docs/MD_FILES/`; `.DS_Store` files untracked + ignored.
 
 ---
 
@@ -184,7 +210,7 @@ several latent faults that would have broken the client demo:
 - **Siloed events**: All gateway replicas now write to `gateway:events` Redis list; dashboard sees cluster-wide threat feed.
 
 **Remaining critical items:** #1 (Cedar policy engine), #2 (Firecracker sandbox), #3 (ClickHouse analytics)
-**Known gap (not fixed):** Audit queue silent drop under sustained DB slowdown — `EnqueueAudit` drops rows when queue hits 4096 capacity. Log warning is emitted but for strict SOC2 compliance a dead-letter channel or back-pressure mechanism is needed.
+**Resolved (Phase 10, 2026-06-08):** The former in-memory audit queue (`EnqueueAudit`, which dropped rows at 4096 capacity under DB slowdown) was removed. Kafka/Redpanda is now the durable audit write-ahead log: the request path fire-and-forgets to the `audit_logs` topic, and a consumer group persists to the DB at-least-once (offsets committed only after `InsertAuditBatch`; `event_id` + a partial unique index dedupe redelivery). Audit events are no longer dropped under DB back-pressure.
 
 ### 2026-06-07 — Phase 4 "Pitch Perfect" Edge Cases
 **Input:** Phase 4 audit — OOM crash, cache poisoning, plaintext gRPC, missing DB indexes, timeline algorithm corruption.

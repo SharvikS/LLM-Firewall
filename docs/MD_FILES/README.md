@@ -674,13 +674,17 @@ kubectl apply -f k8s/istio-gateway.yaml         # Istio ingress + mTLS policy
 - [x] **Phase 12** — ClickHouse OLAP layer: Kafka-native audit ingestion + `/api/analytics/*` read path
 - [x] **Compliance** — Audit-trail summary report + CSV/JSONL export (`/admin/v1/compliance/*`), keyset cursor pagination
 - [x] **Testing** — DB-backed E2E pipeline + multi-tenant isolation integration tests (verified on CockroachDB)
+- [x] **Phase 13** — End-to-end distributed tracing: ML-engine OTel spans + Jaeger UI, gateway→ML→provider trace propagation
+- [x] **Phase 14** — Response-side output scanning: masks PII/secrets the model emits (`OUTPUT_SCAN_ENABLED`, `X-Titan-Output-Masked`)
+- [x] **Phase 15** — WASM custom-rule plugins (wazero): drop-in `.wasm` detectors as a sandboxed pipeline stage (`PLUGIN_DIR`)
+- [x] **Phase 16** — Grafana dashboards over ClickHouse (pre-provisioned datasource + TITAN Overview), load/stress harness (`loadtest/`), AWS EKS Terraform modules (`terraform/`)
+- [x] **ML** — Real injection transformer (deberta-v2) + trained TF-IDF fallback; dynamic per-request provider/model audit attribution
 
 ### Planned
 
-- [ ] **Future** — Grafana dashboards with pre-built TITAN panels
-- [ ] **Future** — WASM plugin system for custom detection rules
-- [ ] **Future** — LLM output scanning (response-side PII, hallucination detection)
-- [ ] **Future** — Load/stress test harness; Terraform modules for cluster provisioning
+- [ ] **Future** — Response-side hallucination / factuality detection
+- [ ] **Future** — Grafana alerting rules + on-call integrations
+- [ ] **Future** — Managed cluster autoscaling policies and cost dashboards
 
 ---
 
