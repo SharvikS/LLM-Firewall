@@ -75,13 +75,23 @@ class PIIScanner:
         }
         logger.info("PIIScanner initialised with %d entity types", len(SENSITIVE_ENTITIES))
 
-    def scan(self, text: str) -> PIIResult:
+    def scan(self, text: str, entities: Optional[list[str]] = None) -> PIIResult:
         if not text or not text.strip():
+            return PIIResult(pii_detected=False, masked_text=text, entities_found=[])
+
+        # Restrict to the operator-enabled allowlist (Data Privacy tab) when one
+        # is supplied; otherwise scan for every supported entity. An empty
+        # allowlist means every recognizer was disabled → nothing to scan.
+        if entities is None:
+            scan_entities = SENSITIVE_ENTITIES
+        else:
+            scan_entities = [e for e in SENSITIVE_ENTITIES if e in entities]
+        if not scan_entities:
             return PIIResult(pii_detected=False, masked_text=text, entities_found=[])
 
         results = self._analyzer.analyze(
             text=text,
-            entities=SENSITIVE_ENTITIES,
+            entities=scan_entities,
             language="en",
             score_threshold=0.6,  # only flag high-confidence detections
         )

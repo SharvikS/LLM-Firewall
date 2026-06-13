@@ -25,6 +25,7 @@ from analyzer.pii_scanner import PIIScanner, PIIResult
 from analyzer.toxicity_detector import ToxicityDetector
 from analyzer.secret_scanner import SecretScanner
 from analyzer import embed
+from analyzer import runtime_config
 from analyzer import telemetry
 
 logging.basicConfig(
@@ -72,6 +73,9 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
         prompt_text = _extract_prompt(request.prompt)
         threats = []
 
+        # Live governance config pushed from the dashboard control plane.
+        rc = runtime_config.get()
+
         # --- Injection / Jailbreak detection ---
         with telemetry.span("InjectionDetector.detect"):
             inj = self._injection.detect(prompt_text)
@@ -99,9 +103,18 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
             )
 
         # --- Toxicity / sentiment detection (BLOCK gate) ---
-        with telemetry.span("ToxicityDetector.detect"):
-            tox = self._toxicity.detect(prompt_text)
-        if tox.should_block:
+        # Enablement and block threshold are dashboard-tunable at runtime.
+        if rc["toxicity_enabled"]:
+            with telemetry.span("ToxicityDetector.detect"):
+                tox = self._toxicity.detect(prompt_text)
+        else:
+            tox = self._toxicity.detect("")  # returns the clean sentinel
+        tox_block = (
+            rc["toxicity_enabled"]
+            and tox.is_toxic
+            and tox.score >= rc["toxicity_block_threshold"]
+        )
+        if tox_block:
             threats.append(
                 analyzer_pb2.ThreatDetail(
                     type="Toxicity",
@@ -125,12 +138,16 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
 
         # --- Combined masking pass — PII + secrets in a single per-message rewrite,
         #     plus a source-code-leak signal over the whole body. ---
+        # PII redaction and the per-entity allowlist are dashboard-tunable; when
+        # redaction is off we pass an empty allowlist so no PII is masked
+        # (secrets are always masked — they are not user-configurable).
+        pii_allow = runtime_config.enabled_pii_entities() if rc["pii_redaction_enabled"] else []
         with telemetry.span("PIIScanner.scan_and_mask"):
-            scan = _scan_and_mask_body(request.prompt, self._pii, self._secrets)
+            scan = _scan_and_mask_body(request.prompt, self._pii, self._secrets, pii_allow)
 
         # Base risk: injection confidence, raised by any sub-threshold toxicity.
         risk = inj.risk_score
-        if tox.is_toxic:
+        if rc["toxicity_enabled"] and tox.is_toxic:
             risk = max(risk, tox.score * 100.0)
             threats.append(
                 analyzer_pb2.ThreatDetail(
@@ -150,7 +167,7 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
                     description=f"Source-code paste detected (confidence {scan.code_confidence:.0%})",
                 )
             )
-            if self._secrets.code_leak_block:
+            if rc["code_leak_block"]:
                 logger.warning(
                     "BLOCK request_id=%s tenant=%s source_code_leak confidence=%.2f",
                     request.request_id, request.tenant_id, scan.code_confidence,
@@ -230,13 +247,15 @@ class BodyScan:
     code_confidence: float
 
 
-def _scan_one(text: str, pii_scanner: PIIScanner, secret_scanner: SecretScanner):
+def _scan_one(text: str, pii_scanner: PIIScanner, secret_scanner: SecretScanner,
+              pii_entities=None):
     """
     Run PII then secret masking over a single string. Secrets are masked on the
     PII-masked text so both rewrites compose into one output. Returns
-    (masked_text, pii_entities, secret_entities).
+    (masked_text, pii_entities, secret_entities). pii_entities restricts which
+    recognizers run (None = all supported).
     """
-    pii = pii_scanner.scan(text)
+    pii = pii_scanner.scan(text, pii_entities)
     masked = pii.masked_text if pii.pii_detected else text
     sec = secret_scanner.scan(masked)
     masked = sec.masked_text if sec.secrets_detected else masked
@@ -251,6 +270,7 @@ def _scan_and_mask_body(
     raw_body: str,
     pii_scanner: PIIScanner,
     secret_scanner: SecretScanner,
+    pii_entities=None,
 ) -> BodyScan:
     """
     Scan every message in the JSON body individually for PII *and* secrets and
@@ -271,7 +291,7 @@ def _scan_and_mask_body(
 
     if not messages:
         # Non-JSON or message-less body — scan the whole string.
-        masked, pii_ents, sec_ents = _scan_one(raw_body, pii_scanner, secret_scanner)
+        masked, pii_ents, sec_ents = _scan_one(raw_body, pii_scanner, secret_scanner, pii_entities)
         leak = secret_scanner.scan(raw_body)
         return BodyScan(
             masked_body=masked if (pii_ents or sec_ents) else raw_body,
@@ -290,7 +310,7 @@ def _scan_and_mask_body(
         if not isinstance(content, str):
             continue
         text_parts.append(content)
-        masked, pii_ents, sec_ents = _scan_one(content, pii_scanner, secret_scanner)
+        masked, pii_ents, sec_ents = _scan_one(content, pii_scanner, secret_scanner, pii_entities)
         if pii_ents or sec_ents:
             msg["content"] = masked
             all_pii.extend(pii_ents)
@@ -311,7 +331,7 @@ def _scan_and_mask_body(
 
 
 def serve() -> None:
-    # Start embedding HTTP server alongside gRPC (no-op if sentence-transformers absent)
+    # Start the HTTP side-channel (/embed + /config control plane) alongside gRPC.
     embed.start()
 
     # Tracing is opt-in: no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set.
