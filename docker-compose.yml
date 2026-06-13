@@ -170,9 +170,10 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
       OTEL_SERVICE_NAME: "titan-ml-engine"
     volumes:
-      # Persist HuggingFace model downloads (toxic-bert etc.) across container
-      # recreations — cold starts drop from minutes to seconds.
-      - hf_cache:/root/.cache/huggingface
+      # Share the host HuggingFace cache (toxic-bert, all-MiniLM-L6-v2) so the
+      # container never re-downloads models — cold starts are seconds and the
+      # demo works offline.
+      - ~/.cache/huggingface:/root/.cache/huggingface
     ports:
       - "50051:50051"
       - "8001:8001"   # embedding HTTP endpoint
@@ -255,4 +256,3 @@ volumes:
   redpanda_data:
   qdrant_data:
   clickhouse_data:
-  hf_cache:

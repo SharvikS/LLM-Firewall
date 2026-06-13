@@ -1,7 +1,40 @@
 # LLM-Firewall (TITAN Gateway) — Project Status Log
 
 > **Auto-maintained log.** Updated at the end of every major session or when significant changes are made.
-> Last updated: 2026-06-10 (Feature Completion Session)
+> Last updated: 2026-06-13 (Demo-Readiness / E2E Verification Session)
+
+---
+
+## 2026-06-13 — Demo-Readiness Session (claude_v1_handoff.md executed)
+
+The handoff plan was largely already shipped; this session closed the real gaps
+and — critically — ran the full stack live for the first time, which surfaced
+several latent faults that would have broken the client demo:
+
+**New work**
+- Python ML engine OTel tracing (`ml_engine/analyzer/telemetry.py`): opt-in,
+  gRPC context extraction, spans around Injection/Toxicity/PII scans
+- Jaeger all-in-one in compose (UI :16686); gateway + ml_engine export OTLP
+- Gateway → ML engine trace propagation (otelgrpc) and W3C traceparent
+  injection into upstream LLM requests
+- Dashboard Analytics tab now renders live ClickHouse data (new
+  `/api/gateway/analytics` proxy route, Live badge, demo-data fallback)
+- `scripts/smoke.sh` — 12-point pre-demo verification; `DEMO.md` — runbook
+
+**Latent faults found by live E2E and fixed**
+- ClickHouse client sent form-encoded body (parsed as SQL) → every
+  /api/analytics/* call failed; params now in URL, SQL in body
+- No baseline ALLOW seed policy → Cedar default-denied *every* request
+- `audit_logs` topic never created → audit events silently dropped
+  (redpanda auto_create_topics now enabled + topic created)
+- Gateway image was `FROM scratch` but healthcheck used wget → never
+  healthy → dashboard (depends_on healthy) could never start; now alpine
+- gateway Dockerfile pinned Go 1.23 vs go.mod 1.26 → image build failed
+- dashboard lockfile out of sync + unsupported `npm ci --frozen-lockfile`
+- qdrant/jaeger/clickhouse healthchecks unusable (no wget in image / IPv6
+  localhost); ml_engine now binds host HF cache (offline, fast cold start)
+- 3 injection-detector heuristic gaps (DAN ordering, "disable your safety",
+  "reveal the instructions you were given")
 
 ---
 
