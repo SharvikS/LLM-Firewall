@@ -11,7 +11,9 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -78,6 +80,7 @@ type LLMProxy struct {
 	alerts        *alerts.Dispatcher // real-time SOC alerting (nil-safe)
 	provider      string             // upstream provider label derived from TargetURL host
 	plugins       *plugins.Runtime   // WASM custom-rule stage; nil-safe when disabled
+	guardrailRE   sync.Map           // pattern → *regexp.Regexp (compiled-rule cache)
 }
 
 // providerFromHost maps an upstream host to a human-readable provider label for
@@ -277,6 +280,41 @@ func singleJoiningSlash(a, b string) string {
 	return a + b
 }
 
+// compileGuardrail returns a cached compiled regex for a pattern (case-insensitive),
+// or nil if the pattern is invalid. Bad patterns are cached as nil so they are not
+// recompiled on every request.
+func (p *LLMProxy) compileGuardrail(pattern string) *regexp.Regexp {
+	if v, ok := p.guardrailRE.Load(pattern); ok {
+		re, _ := v.(*regexp.Regexp)
+		return re
+	}
+	re, err := regexp.Compile("(?i)" + pattern)
+	if err != nil {
+		p.guardrailRE.Store(pattern, (*regexp.Regexp)(nil))
+		return nil
+	}
+	p.guardrailRE.Store(pattern, re)
+	return re
+}
+
+// firstGuardrailHit returns the name of the first enabled guardrail whose pattern
+// matches the request, or ("", false) if none do.
+func (p *LLMProxy) firstGuardrailHit(rules []settings.Guardrail, body []byte) (string, bool) {
+	if len(rules) == 0 {
+		return "", false
+	}
+	text := string(body)
+	for _, g := range rules {
+		if !g.Enabled {
+			continue
+		}
+		if re := p.compileGuardrail(g.Pattern); re != nil && re.MatchString(text) {
+			return g.Name, true
+		}
+	}
+	return "", false
+}
+
 func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	reqID := chimiddleware.GetReqID(r.Context())
@@ -382,7 +420,7 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Quota-Limit", fmt.Sprintf("%d", usage.Limit))
 		w.Header().Set("X-Quota-Used", fmt.Sprintf("%d", usage.Requests))
 		p.alerts.Emit(alerts.Event{Action: "QUOTA_EXCEEDED", Tenant: tenantName,
-			Reason: fmt.Sprintf("monthly quota of %d exceeded (%s plan)", usage.Limit, auth.Tier),
+			Reason:    fmt.Sprintf("monthly quota of %d exceeded (%s plan)", usage.Limit, auth.Tier),
 			RequestID: reqID, Path: r.URL.Path, Risk: 100})
 		p.pushEvent(reqID, tenantName, "QUOTA_EXCEEDED", 0, r.URL.Path, "monthly plan quota exceeded")
 		p.writeError(w, http.StatusTooManyRequests, "quota_exceeded",
@@ -401,6 +439,24 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		p.meter.Record(context.Background(), tenantID.String(), billedTokens, blockedOutcome, start)
 	}()
+
+	// Stage 3c: Custom guardrails — operator-defined deny rules, checked before the
+	// ML analyzer (cheap, deterministic) so a tenant's own policy blocks first.
+	if rule, hit := p.firstGuardrailHit(set.Guardrails, body); hit {
+		blockedOutcome = true
+		reason := "Blocked by custom guardrail: " + rule
+		log.Warn("custom guardrail block", slog.String("rule", rule))
+		metrics.Global.BlockedRequests.Add(1)
+		metrics.HourlyTraffic.Record(true)
+		p.alerts.Emit(alerts.Event{Action: "GUARDRAIL_BLOCKED", Tenant: tenantName, Reason: reason,
+			RequestID: reqID, Path: r.URL.Path, Risk: 100})
+		p.pushEvent(reqID, tenantName, "GUARDRAIL_BLOCKED", 100, r.URL.Path, reason)
+		w.Header().Set("X-Titan-Decision", "BLOCK")
+		p.writeError(w, http.StatusForbidden, "policy_violation", reason)
+		p.emitKafka(reqID, tenantID, apiKeyID, "GUARDRAIL_BLOCKED", 100, r.URL.Path,
+			http.StatusForbidden, time.Since(start).Milliseconds(), reason, region, model)
+		return
+	}
 
 	// Stage 4: ML Analyzer. The inline deadline is dashboard-tunable.
 	analysis := p.mlClient.AnalyzeWithTimeout(r.Context(), reqID, tenantName, string(body),

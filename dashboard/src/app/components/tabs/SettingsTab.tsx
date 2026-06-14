@@ -250,6 +250,35 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
               <SettingRow label="Audit All Requests" sub="Write every request — including clean ALLOWs — to the durable audit log. When off, only blocks and masks are persisted.">
                 <Toggle on={!!settings?.audit_all_requests} disabled={!settings} onChange={() => patch({ audit_all_requests: !settings?.audit_all_requests })}/>
               </SettingRow>
+
+              {/* Custom guardrails — no-code deny rules applied before the ML gate */}
+              <div className="mt-8 pt-6 border-t border-base-border">
+                <div className="flex items-center justify-between mb-1">
+                  <h4 className="text-sm font-semibold">Custom Guardrails</h4>
+                  <button type="button" disabled={!settings}
+                    onClick={() => patch({ guardrails: [...(settings?.guardrails ?? []), { name: '', pattern: '', enabled: true }] })}
+                    className="text-xs border border-base-border px-2.5 py-1 rounded-md hover:bg-base-sec transition-colors disabled:opacity-50">+ Add rule</button>
+                </div>
+                <p className="text-xs text-base-muted mb-3">Operator-defined deny rules (case-insensitive regex) matched against each prompt before the ML gate. A match blocks with 403 — e.g. <code className="bg-base-sec px-1 rounded">Project\s+Titan</code> to stop a codename leaking.</p>
+                <div className="space-y-2">
+                  {(settings?.guardrails ?? []).map((g, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <input value={g.name} placeholder="rule name" disabled={!settings}
+                        onChange={e => patch({ guardrails: (settings!.guardrails ?? []).map((x, j) => j === i ? { ...x, name: e.target.value } : x) })}
+                        className="w-40 px-2 py-1.5 bg-base-sec border border-base-border rounded-md text-xs outline-none"/>
+                      <input value={g.pattern} placeholder="regex pattern" disabled={!settings}
+                        onChange={e => patch({ guardrails: (settings!.guardrails ?? []).map((x, j) => j === i ? { ...x, pattern: e.target.value } : x) })}
+                        className="flex-1 px-2 py-1.5 bg-base-sec border border-base-border rounded-md text-xs font-mono outline-none"/>
+                      <Toggle on={g.enabled} disabled={!settings} onChange={() => patch({ guardrails: (settings!.guardrails ?? []).map((x, j) => j === i ? { ...x, enabled: !x.enabled } : x) })}/>
+                      <button type="button" aria-label="remove" disabled={!settings}
+                        onClick={() => patch({ guardrails: (settings!.guardrails ?? []).filter((_, j) => j !== i) })}
+                        className="p-1.5 text-base-muted hover:text-red-400 hover:bg-red-400/10 rounded-md transition-colors text-xs">✕</button>
+                    </div>
+                  ))}
+                  {(settings?.guardrails ?? []).length === 0 && <p className="text-xs text-base-muted italic">No custom rules. The ML detectors still apply.</p>}
+                </div>
+              </div>
+
               <div className="mt-6">
                 <SaveButton state={saveState} onClick={save}/>
               </div>

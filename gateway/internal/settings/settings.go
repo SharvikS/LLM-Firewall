@@ -44,12 +44,26 @@ type Settings struct {
 	AlertWebhookURL string  `json:"alert_webhook_url"`
 	AlertMinRisk    float64 `json:"alert_min_risk"`
 
+	// ── Custom guardrails (no-code deny rules, applied in-proxy) ──────────────
+	// Operator-defined regex/keyword rules that block matching prompts before they
+	// reach the model — layered on top of the ML detectors. Per-tenant capable.
+	Guardrails []Guardrail `json:"guardrails"`
+
 	// ── ML plane (pushed to the Python engine over HTTP) ──────────────────────
 	PIIRedactionEnabled    bool            `json:"pii_redaction_enabled"`
 	ToxicityEnabled        bool            `json:"toxicity_enabled"`
 	ToxicityBlockThreshold float64         `json:"toxicity_block_threshold"`
 	CodeLeakBlock          bool            `json:"code_leak_block"`
 	PIIEntities            map[string]bool `json:"pii_entities"`
+}
+
+// Guardrail is one operator-defined deny rule. Pattern is a Go regular
+// expression matched (case-insensitively) against the prompt text; a match on an
+// enabled rule blocks the request with HTTP 403.
+type Guardrail struct {
+	Name    string `json:"name"`
+	Pattern string `json:"pattern"`
+	Enabled bool   `json:"enabled"`
 }
 
 // store is the minimal persistence surface the Manager needs, satisfied by
@@ -317,4 +331,16 @@ func (s *Settings) clamp() {
 	if s.AlertMinRisk > 100 {
 		s.AlertMinRisk = 100
 	}
+	// Cap guardrail count and drop entries with no pattern so a bad rule set can't
+	// bloat the request path.
+	if len(s.Guardrails) > 100 {
+		s.Guardrails = s.Guardrails[:100]
+	}
+	kept := s.Guardrails[:0]
+	for _, g := range s.Guardrails {
+		if g.Pattern != "" {
+			kept = append(kept, g)
+		}
+	}
+	s.Guardrails = kept
 }

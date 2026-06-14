@@ -2,7 +2,14 @@
 // own /api/admin/settings route (which injects the admin token server-side), so
 // no secret is ever exposed to the browser.
 
+export interface Guardrail {
+  name: string;
+  pattern: string;
+  enabled: boolean;
+}
+
 export interface GatewaySettings {
+  guardrails: Guardrail[];
   upstream_url: string;
   upstream_api_key: string; // write-only; always returned blank
   alerts_enabled: boolean;
