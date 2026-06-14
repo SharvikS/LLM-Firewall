@@ -29,7 +29,11 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pip-audit
-      - run: pip-audit -r requirements.txt
+      # CVE-2025-3000 is a torch advisory with NO patched release available, so it
+      # can't be fixed by upgrading. It's explicitly acknowledged here so the gate
+      # still fails on any NEW or fixable vulnerability. Re-review when torch ships
+      # a fix and remove this ignore. (Reviewed 2026-06-14.)
+      - run: pip-audit -r requirements.txt --ignore-vuln CVE-2025-3000
         working-directory: ml_engine
 
   npm-audit:
