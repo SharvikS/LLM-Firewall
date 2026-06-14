@@ -559,40 +559,63 @@ export function SandboxesTab() {
   );
 }
 
-// ─── Vulnerabilities (preview) ───────────────────────────────────────────────
+// ─── Vulnerabilities (live — dependency CVE scan report) ─────────────────────
 
-const VULNS = [
-  { id: 'CVE-2024-6387', name: 'RegreSSHion (sshd)', severity: 'Critical', cvss: 9.8, component: 'openssh', status: 'Patched', discovered: '2024-07-01' },
-  { id: 'CVE-2024-3094', name: 'XZ Utils Backdoor',  severity: 'Critical', cvss: 10.0,component: 'xz-utils',status: 'N/A',    discovered: '2024-03-29' },
-  { id: 'CVE-2025-1234', name: 'gRPC TLS bypass',    severity: 'High',     cvss: 7.5, component: 'grpc-go', status: 'Open',    discovered: '2025-04-12' },
-  { id: 'CVE-2024-9999', name: 'Redis ACL bypass',   severity: 'Medium',   cvss: 5.3, component: 'redis',   status: 'Open',    discovered: '2024-11-20' },
-  { id: 'CVE-2025-0042', name: 'Kafka auth bypass',  severity: 'Medium',   cvss: 6.1, component: 'kafka',   status: 'Patched', discovered: '2025-01-08' },
-];
-
-const SEV_COLOR: Record<string, string> = { Critical: 'text-red-400 bg-red-400/10', High: 'text-orange-400 bg-orange-400/10', Medium: 'text-yellow-400 bg-yellow-400/10' };
+interface ScanComponent { name: string; scanner: string; findings: number; }
+interface ScanReport { generated_at: string; status: string; components: ScanComponent[]; }
 
 export function VulnerabilitiesTab() {
+  const [report, setReport] = useState<ScanReport | null>(null);
+  const [state, setState] = useState<'loading' | 'ready' | 'none' | 'offline'>('loading');
+
+  useEffect(() => {
+    fetch('/api/admin/security/vulnerabilities', { cache: 'no-store' })
+      .then(async r => {
+        const d = await r.json();
+        if (d?._offline) { setState('offline'); return; }
+        if (!d?.available) { setState('none'); return; }
+        setReport(d.report);
+        setState('ready');
+      })
+      .catch(() => setState('offline'));
+  }, []);
+
+  const findingColor = (n: number) =>
+    n < 0 ? 'bg-base-sec text-base-muted' : n === 0 ? 'bg-green-400/10 text-green-400' : 'bg-yellow-400/10 text-yellow-400';
+  const findingLabel = (n: number) => (n < 0 ? 'not scanned' : n === 0 ? 'clean' : `${n} finding${n === 1 ? '' : 's'}`);
+
   return (
     <div className="max-w-4xl mx-auto">
-      <PageHeader title="Vulnerabilities" sub="CVE tracking for all runtime components." badge="Preview"/>
-      <Card>
-        <div className="space-y-3">
-          {VULNS.map(v => (
-            <div key={v.id} className="flex items-center gap-4 px-4 py-3 border border-base-border/60 rounded-lg">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <code className="text-xs font-mono text-base-muted">{v.id}</code>
-                  <span className="text-sm font-medium text-base-text">{v.name}</span>
-                  <Tag label={v.severity} color={SEV_COLOR[v.severity] ?? 'text-base-muted bg-base-sec'}/>
+      <PageHeader title="Vulnerabilities" sub="Dependency CVE scan across all components (govulncheck · pip-audit · npm audit). Run via scripts/security-scan.sh or the security-scan CI workflow." badge="Live" badgeColor="green"/>
+
+      {state === 'offline' && (
+        <Card><div className="flex items-center gap-2 text-sm text-yellow-500"><AlertTriangle size={14}/> Gateway offline — cannot load scan report.</div></Card>
+      )}
+      {state === 'none' && (
+        <Card><div className="text-sm text-base-muted">No scan report found yet. Run <code className="bg-base-sec px-1 rounded">./scripts/security-scan.sh</code> (or let CI run it) to populate this view.</div></Card>
+      )}
+      {state === 'ready' && report && (
+        <Card>
+          <div className="flex justify-between items-center mb-5">
+            <h3 className="text-sm font-semibold">Latest scan</h3>
+            <span className="text-xs text-base-muted">{report.generated_at}</span>
+          </div>
+          <div className="space-y-3">
+            {report.components.map(c => (
+              <div key={c.name} className="flex items-center gap-4 px-4 py-3 border border-base-border/60 rounded-lg">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-base-text">{c.name}</div>
+                  <div className="text-xs text-base-muted mt-0.5">scanner: <code className="font-mono">{c.scanner}</code></div>
                 </div>
-                <div className="text-xs text-base-muted mt-0.5"><code className="font-mono">{v.component}</code> · Discovered {v.discovered}</div>
+                <Tag label={findingLabel(c.findings)} color={findingColor(c.findings)}/>
               </div>
-              <div className="text-sm font-semibold text-base-text hidden md:block">CVSS {v.cvss}</div>
-              <Tag label={v.status} color={v.status === 'Patched' ? 'bg-green-400/10 text-green-400' : v.status === 'N/A' ? 'bg-base-sec text-base-muted' : 'bg-red-400/10 text-red-400'}/>
-            </div>
-          ))}
-        </div>
-      </Card>
+            ))}
+          </div>
+          <div className="mt-5 p-4 bg-base-sec/50 rounded-lg border border-base-border/60 text-xs text-base-muted">
+            CI fails the build on high+ severity. The Python findings are in heavy ML/eval dependencies (torch, transformers) installed in the dev venv — pin/upgrade or scan <code className="bg-base-sec px-1 rounded">requirements.txt</code> only to scope them out of the production image.
+          </div>
+        </Card>
+      )}
     </div>
   );
 }

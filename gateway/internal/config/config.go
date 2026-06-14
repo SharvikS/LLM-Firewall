@@ -88,6 +88,10 @@ type Config struct {
 	// DashboardURL is where SSO bounces the browser back after login.
 	DashboardURL string
 
+	// SecurityScanReportPath is the consolidated CVE-scan report served to the
+	// dashboard Vulnerabilities tab (written by scripts/security-scan.sh / CI).
+	SecurityScanReportPath string
+
 	// ClickHouse analytics (OLAP read path); empty URL = disabled
 	ClickHouseURL      string // e.g. "http://localhost:8123"
 	ClickHouseUser     string
@@ -154,6 +158,8 @@ func Load() (*Config, error) {
 		OIDCRedirectURL:  os.Getenv("OIDC_REDIRECT_URL"),
 		OIDCDefaultRole:  getEnv("OIDC_DEFAULT_ROLE", "viewer"),
 		DashboardURL:     getEnv("DASHBOARD_URL", "http://localhost:3000"),
+
+		SecurityScanReportPath: getEnv("SCAN_REPORT_PATH", "docs/security/scan-report.json"),
 
 		ClickHouseURL:      os.Getenv("CLICKHOUSE_URL"),
 		ClickHouseUser:     getEnv("CLICKHOUSE_USER", "default"),

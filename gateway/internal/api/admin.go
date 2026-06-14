@@ -30,6 +30,7 @@ type AdminDeps struct {
 	MasterToken     string // machine super-user token (maps to admin role)
 	Settings        *settings.Manager
 	Meter           *billing.Meter
+	ScanReportPath  string
 	Issuer          *auth.Issuer
 	OIDC            *auth.OIDCClient
 	OIDCEnabled     bool
@@ -54,6 +55,7 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 	sh := &settingsHandler{mgr: d.Settings}
 	uh := &userHandler{st: d.Store}
 	bh := &billingHandler{st: d.Store, meter: d.Meter}
+	sech := &securityHandler{reportPath: d.ScanReportPath}
 	ah := &authHandler{
 		st:           d.Store,
 		issuer:       d.Issuer,
@@ -85,6 +87,7 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 		// billing: usage is viewer-readable; changing a plan is admin-only.
 		r.With(requireRole(auth.RoleViewer)).Get("/billing/usage", bh.listUsage)
 		r.With(requireRole(auth.RoleViewer)).Get("/billing/plans", bh.listPlans)
+		r.With(requireRole(auth.RoleViewer)).Get("/security/vulnerabilities", sech.scanReport)
 
 		// compliance+ : audit exports
 		r.With(requireRole(auth.RoleCompliance)).Get("/compliance/report", h.complianceReport)

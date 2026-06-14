@@ -1,0 +1,21 @@
+{
+  "generated_at": "2026-06-14T07:23:55Z",
+  "status": "findings",
+  "components": [
+    {
+      "name": "gateway (Go)",
+      "scanner": "govulncheck",
+      "findings": 0
+    },
+    {
+      "name": "ml_engine (Python)",
+      "scanner": "pip-audit",
+      "findings": 7
+    },
+    {
+      "name": "dashboard (Node)",
+      "scanner": "npm audit",
+      "findings": 2
+    }
+  ]
+}

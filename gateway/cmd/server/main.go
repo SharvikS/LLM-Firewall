@@ -335,6 +335,7 @@ func main() {
 		MasterToken:     cfg.AdminToken,
 		Settings:        settingsMgr,
 		Meter:           meter,
+		ScanReportPath:  cfg.SecurityScanReportPath,
 		Issuer:          sessionIssuer,
 		OIDC:            oidcClient,
 		OIDCEnabled:     oidcCfg.Enabled(),
