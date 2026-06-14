@@ -1,9 +1,60 @@
 # LLM-Firewall (TITAN Gateway) — Project Status Log
 
 > **Auto-maintained log.** Updated at the end of every major session or when significant changes are made.
-> Last updated: 2026-06-14 (Investor-Demo Readiness Session)
+> Last updated: 2026-06-14 (Enterprise-Readiness / Sellability Session)
 
 ---
+
+## 2026-06-14 — Enterprise-Readiness Session (the 5 "can't sell without" blockers)
+
+Closed the five hard blockers between "great demo" and "sellable to an
+enterprise security buyer". All committed; gateway build + full Go suite green.
+
+**1. Dashboard auth + RBAC** (committed prior in this session set)
+- First-party login (bcrypt + dependency-free HS256 JWT sessions), 4-tier role
+  model (viewer/compliance/security/admin) enforced *in the gateway* per route,
+  machine master-token path preserved, config-gated OIDC SSO. Team + user mgmt
+  are live; default admin bootstrapped on first boot.
+
+**2. Per-tenant configuration**
+- Settings are now layered: a `global` document with sparse per-tenant override
+  patches (keyed by tenant UUID). Proxy enforces per-tenant RPM/TPM and reads
+  per-tenant effective settings each request. `?tenant=<uuid>` on the settings
+  API + a dashboard scope selector; revert-to-global supported.
+
+**3. Detection-efficacy benchmark** (`ml_engine/eval/`)
+- Reproducible harness over a 60-sample **held-out** corpus (asserts zero
+  train/eval overlap). Also fixed Layer 2 being disabled in practice (corpus was
+  under the 100-sample threshold) by expanding the generator to 228 balanced
+  samples → TF-IDF Layer 2 now actually trains.
+- **Production (deberta-v3 transformer): precision 96.2%, recall 83.3%, F1 89.3%,
+  FPR 3.3%, 75% recall on regex-evading paraphrased attacks.** Offline TF-IDF
+  fallback: 94.7% / 60.0% / 3.3% / 25%. Corpus is synthetic/in-house — an
+  internal regression baseline, not a third-party claim. See `eval/REPORT.md`.
+
+**4. Streaming output scanning**
+- Streamed (SSE) responses are no longer a governance hole: an inline masker
+  rewrites assistant deltas as they flow, with a carry buffer so PII/secrets
+  split across chunks (or Write boundaries) are still caught. Fail-open; flushes
+  held content if the upstream ends without `[DONE]`. Covered by 7 unit tests.
+
+**5. Secrets & transport**
+- File-based secret loading (`<KEY>_FILE` — Vault/K8s/Docker-secrets convention)
+  for admin token, signing secret, provider key, OIDC secret. Production guard:
+  refuses to start with public default secrets when `APP_ENV=production`.
+- gRPC TLS now turnkey: `scripts/gen-certs.sh` (portable, SAN-correct) +
+  `docker-compose.tls.yml` overlay; ML server fails closed on a missing cert.
+  Corrected comments that overclaimed "mTLS" (it is one-way TLS).
+
+**Verified live this session:** cert generates with correct SAN and the Go gRPC
+client loads it; streaming masker tests pass (incl. cross-chunk SSN/card);
+efficacy benchmark runs both configs and writes reports; gateway build + full Go
+suite green.
+
+**Honest gaps remaining for full GA:** true mTLS (client certs), the 4 "Preview"
+tabs (Team is now live; Billing/Vulnerabilities/Sandboxes still need backends),
+published load/SLO numbers, third-party pentest + SOC2 certification of the
+product itself.
 
 ## 2026-06-14 — Investor-Demo Readiness Session
 
