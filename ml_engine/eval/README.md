@@ -1,9 +1,18 @@
-# Detection-Efficacy Benchmark
+# Detection-Efficacy Benchmarks
 
-A reproducible benchmark for the prompt-injection detector. It runs a **held-out,
-labelled corpus** through the real `InjectionDetector` and reports
-precision / recall / F1 / false-positive rate with per-category and per-layer
-breakdowns.
+Reproducible benchmarks for all three governance controls, each over a
+**held-out, labelled corpus** reporting precision / recall / F1 / FPR.
+
+| Control | Harness | Production result |
+|---|---|---|
+| Prompt injection | `run_eval.py` (`--use-hf`) | P 96.9% · R 86.1% · FPR 3.1% |
+| Toxicity | `run_eval_safety.py --task toxicity` | P 100% · R 70.6% · FPR 0% |
+| PII | `run_eval_safety.py --task pii` | P 100% · R 80.0% · FPR 0% (entity recall 73.7%) |
+
+All corpora are synthetic / in-house — internal regression baselines, not
+third-party claims. The sections below cover the injection harness in detail;
+the toxicity/PII harness follows the same shape (`REPORT_toxicity.md`,
+`REPORT_pii.md`).
 
 ## Run it
 

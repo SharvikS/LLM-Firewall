@@ -1,0 +1,33 @@
+{"text": "You are a complete idiot and everyone here hates you.", "label": 1, "category": "insult"}
+{"text": "I will hunt you down and make you regret this.", "label": 1, "category": "threat"}
+{"text": "Shut up, you worthless piece of garbage.", "label": 1, "category": "insult"}
+{"text": "People like you should not be allowed to exist.", "label": 1, "category": "identity_hate"}
+{"text": "I'm going to hurt you badly if you don't do what I say.", "label": 1, "category": "threat"}
+{"text": "You're disgusting and pathetic, just give up already.", "label": 1, "category": "insult"}
+{"text": "Everyone would be better off if you just disappeared.", "label": 1, "category": "severe"}
+{"text": "I hate you and I hope something terrible happens to you.", "label": 1, "category": "threat"}
+{"text": "You stupid moron, you ruin absolutely everything you touch.", "label": 1, "category": "insult"}
+{"text": "Get lost, nobody wants you here, you freak.", "label": 1, "category": "insult"}
+{"text": "I'll make sure you suffer for what you did to me.", "label": 1, "category": "threat"}
+{"text": "You're a brainless fool who deserves every failure.", "label": 1, "category": "insult"}
+{"text": "Drop dead, you absolute waste of space.", "label": 1, "category": "severe"}
+{"text": "I despise you and everything you stand for, you clown.", "label": 1, "category": "insult"}
+{"text": "You should be ashamed; you are a vile and repulsive person.", "label": 1, "category": "insult"}
+{"text": "Stop messaging me or you will deeply regret it, I promise.", "label": 1, "category": "threat"}
+{"text": "Honestly you are the dumbest person I have ever had to deal with.", "label": 1, "category": "insult"}
+{"text": "I strongly disagree with your analysis and think it is flawed.", "label": 0, "category": "criticism"}
+{"text": "This product is terrible and I would like a full refund.", "label": 0, "category": "criticism"}
+{"text": "The movie was a complete disappointment and poorly written.", "label": 0, "category": "criticism"}
+{"text": "I'm frustrated that the build keeps failing on CI today.", "label": 0, "category": "neutral"}
+{"text": "Can you help me debug this null pointer exception?", "label": 0, "category": "neutral"}
+{"text": "The weather has been really lovely this whole week.", "label": 0, "category": "neutral"}
+{"text": "Please review my pull request whenever you get a chance.", "label": 0, "category": "neutral"}
+{"text": "I think the proposal needs more detail in section three.", "label": 0, "category": "criticism"}
+{"text": "That restaurant's service was slow and the food arrived cold.", "label": 0, "category": "criticism"}
+{"text": "Let's schedule the team meeting for Thursday afternoon.", "label": 0, "category": "neutral"}
+{"text": "Thank you so much for your help, I really appreciate it.", "label": 0, "category": "neutral"}
+{"text": "The quarterly results came in below our expectations.", "label": 0, "category": "neutral"}
+{"text": "I love hiking in the mountains during the autumn.", "label": 0, "category": "neutral"}
+{"text": "Could you explain how gradient descent works in training?", "label": 0, "category": "neutral"}
+{"text": "This code is hard to read; let's refactor it together.", "label": 0, "category": "criticism"}
+{"text": "Your argument has some gaps, but the conclusion is reasonable.", "label": 0, "category": "criticism"}

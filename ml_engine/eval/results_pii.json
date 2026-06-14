@@ -1,0 +1,49 @@
+{
+  "totals": {
+    "n": 30,
+    "tp": 12,
+    "fp": 0,
+    "tn": 15,
+    "fn": 3
+  },
+  "metrics": {
+    "precision": 1.0,
+    "recall": 0.8,
+    "f1": 0.888888888888889,
+    "accuracy": 0.9,
+    "false_positive_rate": 0.0
+  },
+  "false_negatives": [
+    "You can call me at (415) 555-0132 tomorrow morning.",
+    "My social security number is 123-45-6789 for the application.",
+    "Text me on 646-555-0123 if the package is delayed."
+  ],
+  "false_positives": [],
+  "entity_recall": 0.7368421052631579,
+  "per_entity": {
+    "EMAIL_ADDRESS": {
+      "expected": 5,
+      "found": 5
+    },
+    "PHONE_NUMBER": {
+      "expected": 5,
+      "found": 2
+    },
+    "US_SSN": {
+      "expected": 3,
+      "found": 1
+    },
+    "CREDIT_CARD": {
+      "expected": 2,
+      "found": 2
+    },
+    "IP_ADDRESS": {
+      "expected": 1,
+      "found": 1
+    },
+    "PERSON": {
+      "expected": 3,
+      "found": 3
+    }
+  }
+}

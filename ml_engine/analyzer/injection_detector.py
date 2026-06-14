@@ -60,7 +60,11 @@ _HEURISTIC_SIGNATURES: list[tuple[re.Pattern, str, float]] = [
     (re.compile(r"(print|output|reveal|show|display)\s+(your\s+)?(system\s+)?prompt", re.I), "system_prompt_exfiltration", 0.93),
     (re.compile(r"(print|output|reveal|show|display)\s+((the\s+)?instructions?\s+(you\s+were\s+given|given\s+to\s+you)|your\s+(initial\s+|original\s+|hidden\s+)?instructions?)", re.I), "system_prompt_exfiltration", 0.93),
     (re.compile(r"(pretend|act|roleplay|simulate).{0,40}(no\s+rules|no\s+restrictions|no\s+limits)", re.I), "jailbreak_roleplay", 0.92),
-    (re.compile(r"(translate|encode|decode).{0,30}(base64|rot13|hex)", re.I), "encoded_bypass", 0.88),
+    # encoded_bypass: the attack asks the model to encode/exfiltrate ITS OWN
+    # content (instructions/prompt/rules/secrets). The leading look-ahead requires
+    # such a self-referential cue so benign developer questions ("decode a base64
+    # string in JavaScript") no longer false-positive.
+    (re.compile(r"(?=.*(instruction|prompt|rule|guideline|config|secret|context|system|policy|your|previous|hidden|initial))(translate|encode|decode).{0,40}(base64|rot13|hex)", re.I), "encoded_bypass", 0.88),
     (re.compile(r"as\s+(an?\s+)?(AI|assistant|model)\s+(without|with\s+no)\s+(ethics|restrictions|guidelines)", re.I), "ethical_bypass", 0.91),
     (re.compile(r"(for\s+educational|for\s+research|hypothetically|theoretically).{0,60}(how\s+to\s+(make|build|create|synthesize))", re.I), "dangerous_content", 0.85),
     (re.compile(r"<!-{2,}|<\?xml|<script", re.I), "markup_injection", 0.80),

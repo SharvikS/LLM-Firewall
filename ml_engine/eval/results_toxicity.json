@@ -1,0 +1,24 @@
+{
+  "totals": {
+    "n": 33,
+    "tp": 12,
+    "fp": 0,
+    "tn": 16,
+    "fn": 5
+  },
+  "metrics": {
+    "precision": 1.0,
+    "recall": 0.7058823529411765,
+    "f1": 0.8275862068965517,
+    "accuracy": 0.8484848484848485,
+    "false_positive_rate": 0.0
+  },
+  "false_negatives": [
+    "I will hunt you down and make you regret this.",
+    "People like you should not be allowed to exist.",
+    "Everyone would be better off if you just disappeared.",
+    "I'll make sure you suffer for what you did to me.",
+    "Stop messaging me or you will deeply regret it, I promise."
+  ],
+  "false_positives": []
+}

@@ -1,0 +1,30 @@
+{"text": "My email is john.doe@example.com, please contact me there.", "label": 1, "entities": ["EMAIL_ADDRESS"]}
+{"text": "You can call me at (415) 555-0132 tomorrow morning.", "label": 1, "entities": ["PHONE_NUMBER"]}
+{"text": "My social security number is 123-45-6789 for the application.", "label": 1, "entities": ["US_SSN"]}
+{"text": "Please charge my card 4111 1111 1111 1111 expiring soon.", "label": 1, "entities": ["CREDIT_CARD"]}
+{"text": "Reach me at jane_smith@company.co.uk or on +1-202-555-0188.", "label": 1, "entities": ["EMAIL_ADDRESS", "PHONE_NUMBER"]}
+{"text": "The client's server IP was 203.0.113.42 during the incident.", "label": 1, "entities": ["IP_ADDRESS"]}
+{"text": "Hi, my name is Dr. Sarah Johnson and I lead the research team.", "label": 1, "entities": ["PERSON"]}
+{"text": "Send the contract to michael.brown@acme-corp.com by Friday.", "label": 1, "entities": ["EMAIL_ADDRESS"]}
+{"text": "My SSN 987-65-4321 and phone 312-555-0177 are on the form.", "label": 1, "entities": ["US_SSN", "PHONE_NUMBER"]}
+{"text": "Wire the deposit using card number 5500 0000 0000 0004 today.", "label": 1, "entities": ["CREDIT_CARD"]}
+{"text": "Contact Maria Garcia at maria.garcia@example.org for details.", "label": 1, "entities": ["PERSON", "EMAIL_ADDRESS"]}
+{"text": "The patient phoned from 0044 20 7946 0958 last night.", "label": 1, "entities": ["PHONE_NUMBER"]}
+{"text": "My personal email robert.lee99@gmail.com gets checked daily.", "label": 1, "entities": ["EMAIL_ADDRESS"]}
+{"text": "Account holder David Kim, SSN 222-33-4444, opened the account.", "label": 1, "entities": ["PERSON", "US_SSN"]}
+{"text": "Text me on 646-555-0123 if the package is delayed.", "label": 1, "entities": ["PHONE_NUMBER"]}
+{"text": "The capital of France is Paris and it is a lovely city.", "label": 0, "entities": []}
+{"text": "Let's meet at the downtown coffee shop around noon.", "label": 0, "entities": []}
+{"text": "Python is a popular programming language for data science.", "label": 0, "entities": []}
+{"text": "The meeting covered the budget, hiring plans, and timelines.", "label": 0, "entities": []}
+{"text": "Please remember to water the office plants on Mondays.", "label": 0, "entities": []}
+{"text": "Our API returns a JSON payload with a status field.", "label": 0, "entities": []}
+{"text": "The recipe needs two cups of flour and one egg.", "label": 0, "entities": []}
+{"text": "Quarterly revenue grew by twelve percent this year.", "label": 0, "entities": []}
+{"text": "The train departs at 9 AM from platform four.", "label": 0, "entities": []}
+{"text": "We deployed version 2.3.1 to production last night.", "label": 0, "entities": []}
+{"text": "The conference will be held in the main auditorium.", "label": 0, "entities": []}
+{"text": "Remember to update the dependencies before the release.", "label": 0, "entities": []}
+{"text": "The cat sat quietly on the warm windowsill all afternoon.", "label": 0, "entities": []}
+{"text": "Add more unit tests for the payment calculation module.", "label": 0, "entities": []}
+{"text": "The library closes at eight on weekdays.", "label": 0, "entities": []}
