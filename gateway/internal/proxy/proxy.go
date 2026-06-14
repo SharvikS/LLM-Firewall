@@ -419,8 +419,25 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Stage 7: Forward.
 	outputMasked := false
 	if isStream {
-		// Streaming responses are not buffered, so output scanning is skipped.
-		p.rp.ServeHTTP(w, r)
+		if set.OutputScanEnabled {
+			// Streamed (SSE) responses can't be buffered without destroying the
+			// streaming UX, so high-confidence PII/secrets are masked inline as
+			// the deltas flow through — cross-chunk safe via a carry buffer. The
+			// X-Titan-Output-Masked header can't be set (headers already flushed),
+			// so the outcome is reflected in the audit log after the stream ends.
+			sm := newStreamMasker(w)
+			p.rp.ServeHTTP(sm, r)
+			if err := sm.Close(); err != nil {
+				log.Warn("stream masker flush failed", slog.String("error", err.Error()))
+			}
+			if sm.masked {
+				outputMasked = true
+				metrics.Global.PIIMasked.Add(1)
+				log.Info("output scan — streamed PII/secrets masked")
+			}
+		} else {
+			p.rp.ServeHTTP(w, r)
+		}
 	} else if set.OutputScanEnabled {
 		// Buffer the response (no tee), scan/mask the assistant text, then send.
 		bw := newBufferingResponse(w)
