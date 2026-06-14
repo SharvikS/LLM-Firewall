@@ -352,18 +352,33 @@ def serve() -> None:
     if tls_enabled:
         cert_file = os.getenv("GRPC_TLS_CERT", "/etc/certs/tls.crt")
         key_file  = os.getenv("GRPC_TLS_KEY",  "/etc/certs/tls.key")
+        # When a client CA is provided, require and verify client certificates
+        # (mutual TLS) so only the gateway can call the analyzer.
+        client_ca = os.getenv("GRPC_TLS_CLIENT_CA", "")
         try:
             with open(cert_file, "rb") as f:
                 cert_chain = f.read()
             with open(key_file, "rb") as f:
                 private_key = f.read()
-            server_creds = grpc.ssl_server_credentials([(private_key, cert_chain)])
+            if client_ca:
+                with open(client_ca, "rb") as f:
+                    ca = f.read()
+                server_creds = grpc.ssl_server_credentials(
+                    [(private_key, cert_chain)],
+                    root_certificates=ca,
+                    require_client_auth=True,
+                )
+            else:
+                server_creds = grpc.ssl_server_credentials([(private_key, cert_chain)])
             server.add_secure_port(f"[::]:{port}", server_creds)
-            logger.info("gRPC AnalyzerService TLS enabled on port %s (cert=%s)", port, cert_file)
+            logger.info(
+                "gRPC AnalyzerService TLS enabled on port %s (cert=%s, mutual=%s)",
+                port, cert_file, bool(client_ca),
+            )
         except Exception as exc:
             logger.critical(
                 "Failed to load TLS credentials (%s) — refusing to start on plaintext. "
-                "Fix GRPC_TLS_CERT / GRPC_TLS_KEY before retrying.", exc
+                "Fix GRPC_TLS_CERT / GRPC_TLS_KEY / GRPC_TLS_CLIENT_CA before retrying.", exc
             )
             sys.exit(1)
     else:

@@ -35,8 +35,10 @@ type Config struct {
 	// ML Engine (Python gRPC)
 	AnalyzerAddr        string
 	AnalyzerTimeoutMs   int
-	AnalyzerTLSEnabled  bool   // set ANALYZER_TLS_ENABLED=true to encrypt the gRPC channel
-	AnalyzerTLSCertFile string // CA cert (or server cert) for client-side verification
+	AnalyzerTLSEnabled    bool   // set ANALYZER_TLS_ENABLED=true to encrypt the gRPC channel
+	AnalyzerTLSCertFile   string // CA cert (or server cert) for client-side verification
+	AnalyzerTLSClientCert string // client cert for mutual TLS (optional)
+	AnalyzerTLSClientKey  string // client key for mutual TLS (optional)
 
 	// Provider failover — optional secondary upstream for 5xx/transport errors
 	FallbackTargetURL string // e.g. "https://api.openai.com/v1"
@@ -124,8 +126,10 @@ func Load() (*Config, error) {
 
 		AnalyzerAddr:        getEnv("ANALYZER_ADDR", "localhost:50051"),
 		AnalyzerTimeoutMs:   getEnvInt("ANALYZER_TIMEOUT_MS", 150),
-		AnalyzerTLSEnabled:  getEnvBool("ANALYZER_TLS_ENABLED", false),
-		AnalyzerTLSCertFile: getEnv("ANALYZER_TLS_CERT_FILE", "/etc/certs/tls.crt"),
+		AnalyzerTLSEnabled:    getEnvBool("ANALYZER_TLS_ENABLED", false),
+		AnalyzerTLSCertFile:   getEnv("ANALYZER_TLS_CERT_FILE", "/etc/certs/ca.crt"),
+		AnalyzerTLSClientCert: getEnv("ANALYZER_TLS_CLIENT_CERT", ""),
+		AnalyzerTLSClientKey:  getEnv("ANALYZER_TLS_CLIENT_KEY", ""),
 
 		FallbackTargetURL:   os.Getenv("FALLBACK_TARGET_URL"),
 		FallbackAPIKey:      os.Getenv("FALLBACK_API_KEY"),

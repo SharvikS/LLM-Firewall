@@ -5,8 +5,12 @@ package analyzer
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
+	"net"
+	"os"
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
@@ -50,22 +54,43 @@ type Client struct {
 // New dials the gRPC server at addr.  The connection is lazy — if the server
 // is not yet up, the first RPC will fail and return a fail-open result.
 //
-// When tlsEnabled is true the client loads the certificate from certFile
-// (a PEM-encoded CA cert or self-signed server cert) and uses TLS transport
-// credentials to verify and encrypt the channel.  The default is plaintext so
-// existing local deployments are unaffected; set ANALYZER_TLS_ENABLED=true (and
-// run scripts/gen-certs.sh) to encrypt the analyzer channel.
-func New(addr string, timeout time.Duration, tlsEnabled bool, certFile string) (*Client, error) {
+// TLS modes (set ANALYZER_TLS_ENABLED=true and run scripts/gen-certs.sh):
+//   - one-way TLS: certFile is the CA (or self-signed server cert) the client
+//     trusts; the channel is encrypted and the server identity verified.
+//   - mutual TLS: additionally set clientCertFile/clientKeyFile and the client
+//     presents its certificate, so the server can authenticate the gateway too.
+//
+// The default is plaintext so existing local deployments are unaffected.
+func New(addr string, timeout time.Duration, tlsEnabled bool, certFile, clientCertFile, clientKeyFile string) (*Client, error) {
 	var cred grpc.DialOption
 	if tlsEnabled {
-		tlsCreds, err := credentials.NewClientTLSFromFile(certFile, "")
+		caPEM, err := os.ReadFile(certFile)
 		if err != nil {
-			return nil, fmt.Errorf("analyzer: load TLS cert %q: %w", certFile, err)
+			return nil, fmt.Errorf("analyzer: read CA/cert %q: %w", certFile, err)
 		}
-		cred = grpc.WithTransportCredentials(tlsCreds)
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caPEM) {
+			return nil, fmt.Errorf("analyzer: no certificates parsed from %q", certFile)
+		}
+		host := addr
+		if h, _, splitErr := net.SplitHostPort(addr); splitErr == nil {
+			host = h
+		}
+		tlsCfg := &tls.Config{RootCAs: pool, ServerName: host, MinVersion: tls.VersionTLS12}
+
+		mtls := clientCertFile != "" && clientKeyFile != ""
+		if mtls {
+			pair, err := tls.LoadX509KeyPair(clientCertFile, clientKeyFile)
+			if err != nil {
+				return nil, fmt.Errorf("analyzer: load client cert/key: %w", err)
+			}
+			tlsCfg.Certificates = []tls.Certificate{pair}
+		}
+		cred = grpc.WithTransportCredentials(credentials.NewTLS(tlsCfg))
 		logger.Get().Info("analyzer gRPC using TLS",
 			slog.String("addr", addr),
-			slog.String("cert", certFile),
+			slog.String("server_name", host),
+			slog.Bool("mutual", mtls),
 		)
 	} else {
 		cred = grpc.WithTransportCredentials(insecure.NewCredentials())

@@ -202,6 +202,8 @@ func main() {
 		time.Duration(cfg.AnalyzerTimeoutMs)*time.Millisecond,
 		cfg.AnalyzerTLSEnabled,
 		cfg.AnalyzerTLSCertFile,
+		cfg.AnalyzerTLSClientCert,
+		cfg.AnalyzerTLSClientKey,
 	)
 	if err != nil {
 		log.Warn("ML analyzer unavailable — requests will fail-open on ML gate",

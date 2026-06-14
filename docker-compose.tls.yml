@@ -14,6 +14,8 @@ services:
       GRPC_TLS_ENABLED: "true"
       GRPC_TLS_CERT: "/etc/certs/tls.crt"
       GRPC_TLS_KEY: "/etc/certs/tls.key"
+      # Require and verify the gateway's client cert (mutual TLS).
+      GRPC_TLS_CLIENT_CA: "/etc/certs/ca.crt"
     volumes:
       - ./certs:/etc/certs:ro
     healthcheck:
@@ -29,6 +31,9 @@ services:
   gateway:
     environment:
       ANALYZER_TLS_ENABLED: "true"
-      ANALYZER_TLS_CERT_FILE: "/etc/certs/tls.crt"
+      ANALYZER_TLS_CERT_FILE: "/etc/certs/ca.crt"
+      # Present the gateway's client cert for mutual TLS.
+      ANALYZER_TLS_CLIENT_CERT: "/etc/certs/client.crt"
+      ANALYZER_TLS_CLIENT_KEY: "/etc/certs/client.key"
     volumes:
       - ./certs:/etc/certs:ro
