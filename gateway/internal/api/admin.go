@@ -56,6 +56,7 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 	uh := &userHandler{st: d.Store}
 	bh := &billingHandler{st: d.Store, meter: d.Meter}
 	sech := &securityHandler{reportPath: d.ScanReportPath}
+	uph := &upstreamHandler{}
 	ah := &authHandler{
 		st:           d.Store,
 		issuer:       d.Issuer,
@@ -96,6 +97,7 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 		// security+ : edit configuration, policies, tenants
 		r.With(requireRole(auth.RoleSecurity)).Put("/settings", sh.updateSettings)
 		r.With(requireRole(auth.RoleSecurity)).Delete("/settings", sh.deleteSettings)
+		r.With(requireRole(auth.RoleSecurity)).Post("/upstream/test", uph.test)
 		r.With(requireRole(auth.RoleSecurity)).Post("/tenants", h.createTenant)
 		r.With(requireRole(auth.RoleSecurity)).Post("/policies", h.createPolicy)
 		r.With(requireRole(auth.RoleSecurity)).Put("/policies/{id}", h.updatePolicy)

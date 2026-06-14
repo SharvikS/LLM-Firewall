@@ -28,8 +28,13 @@ echo "── TITAN smoke test ────────────────�
 check "gateway /health" "200" \
   "$(curl -s -o /dev/null -w '%{http_code}' "$GW/health")"
 
-check "dashboard responds" "200" \
+# The dashboard root redirects unauthenticated users to /login (auth proxy
+# guard) — a 307 confirms both "serving" and "auth enforced". The login page
+# itself must render 200.
+check "dashboard auth redirect" "307" \
   "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000)"
+check "dashboard login page" "200" \
+  "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/login)"
 
 check "jaeger UI responds" "200" \
   "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:16686)"

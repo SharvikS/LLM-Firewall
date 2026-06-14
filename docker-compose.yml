@@ -222,6 +222,11 @@ services:
       PLUGIN_DIR: "/plugins"
     ports:
       - "8080:8080"
+    # Lets the gateway reach a local LLM (LM Studio/Ollama) running on the host
+    # via http://host.docker.internal:<port>. Automatic on Docker Desktop;
+    # explicit here so it also works on Linux engines.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       redis:
         condition: service_healthy

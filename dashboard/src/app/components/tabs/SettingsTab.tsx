@@ -76,6 +76,9 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
   // keyless local model explicitly clears it (never leaks the old key upstream).
   const [keyTouched, setKeyTouched] = useState(false);
 
+  // Upstream connection-test result (does the gateway reach the configured LLM?).
+  const [conn, setConn] = useState<{ state: 'idle' | 'testing' | 'done'; reachable?: boolean; detail?: string; models?: string[] }>({ state: 'idle' });
+
   // Notification prefs are client-side preferences (persisted in localStorage).
   const [notif, setNotif] = useState({ critical: true, rateLimit: true, pii: false, health: true });
 
@@ -127,6 +130,22 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
     if (updated) { setSettings(updated); setKeyTouched(false); setSaveState('saved'); setTimeout(() => setSaveState('idle'), 2000); }
     else setSaveState('error');
   }, [settings, scope, keyTouched]);
+
+  const testUpstream = useCallback(async () => {
+    if (!settings?.upstream_url) return;
+    setConn({ state: 'testing' });
+    try {
+      const res = await fetch('/api/admin/upstream/test', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        // Only include the key if the user just typed one (else the gateway has it).
+        body: JSON.stringify({ url: settings.upstream_url, key: keyTouched ? settings.upstream_api_key : '' }),
+      });
+      const d = await res.json();
+      setConn({ state: 'done', reachable: d.reachable, detail: d.detail, models: d.models });
+    } catch {
+      setConn({ state: 'done', reachable: false, detail: 'request failed' });
+    }
+  }, [settings, keyTouched]);
 
   const toggleCompact = () => setCompact(v => { const nv = !v; localStorage.setItem('titan-compact', nv ? '1' : '0'); return nv; });
   const setNotifKey = (k: keyof typeof notif) => setNotif(n => { const nn = { ...n, [k]: !n[k] }; localStorage.setItem('titan-notif', JSON.stringify(nn)); return nn; });
@@ -272,7 +291,21 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
                   placeholder="leave blank to keep current · not needed for local models"
                   className="w-full max-w-xl px-3 py-2.5 bg-base-sec border border-base-border rounded-lg text-sm outline-none focus:border-base-muted/60 transition-colors font-mono disabled:opacity-50"/>
                 <p className="text-xs text-base-muted mt-1.5">Write-only — never displayed. Required for hosted APIs; leave blank for keyless local servers.</p>
-                <div className="mt-4"><SaveButton state={saveState} onClick={save}/></div>
+                <div className="mt-4 flex items-center gap-3 flex-wrap">
+                  <SaveButton state={saveState} onClick={save}/>
+                  <button type="button" disabled={!settings || conn.state === 'testing'} onClick={testUpstream}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-base-border hover:bg-base-sec transition-colors disabled:opacity-60">
+                    {conn.state === 'testing' ? <><Loader2 size={14} className="animate-spin"/>Testing…</> : 'Test connection'}
+                  </button>
+                  {conn.state === 'done' && (
+                    conn.reachable
+                      ? <span className="inline-flex items-center gap-1.5 text-xs text-green-400"><Check size={13}/>Reachable{conn.models && conn.models.length > 0 ? ` · ${conn.models.length} model(s)` : ''}</span>
+                      : <span className="inline-flex items-center gap-1.5 text-xs text-red-400"><AlertTriangle size={13}/>{conn.detail || 'unreachable'}</span>
+                  )}
+                </div>
+                {conn.state === 'done' && conn.reachable && conn.models && conn.models.length > 0 && (
+                  <p className="text-xs text-base-muted mt-2">Models: <code className="bg-base-sec px-1 rounded">{conn.models.slice(0, 6).join(', ')}</code> — use one of these as the <code className="bg-base-sec px-1 rounded">model</code> in requests.</p>
+                )}
               </div>
 
               <div className="space-y-5">
