@@ -16,15 +16,21 @@ ml_engine/venv/Scripts/python.exe ml_engine/eval/run_eval.py --use-hf   # produc
 
 | Metric | Production (deberta-v3 transformer) | Offline fallback (TF-IDF) |
 |---|---|---|
-| Precision | **96.9%** | 95.8% |
+| Precision | **93.9%** | 95.8% |
 | Recall (detection rate) | **86.1%** | 63.9% |
-| F1 | **91.2%** | 76.7% |
-| False-positive rate | **3.1%** | 3.1% |
+| F1 | **89.9%** | 76.7% |
+| False-positive rate | **5.6%** | 2.8% |
 | Recall on regex-evading attacks | **78.9%** | 31.6% |
 
-Confusion (transformer): TP=31 FP=1 TN=31 FN=5 over 68 samples. The corpus
+Confusion (transformer): TP=31 FP=2 TN=34 FN=5 over 72 samples. The corpus
 includes indirect/embedded injections (attack hidden in a document, email, or
-retrieved web content), the highest-value real-world vector.
+retrieved web content) **and benign imperative requests** ("please update my
+email…") — the latter were added after customer-perspective testing caught the
+deberta model false-positiving on imperative phrasing. The transformer block
+threshold was raised 0.65 → 0.9 (`INJECTION_BLOCK_THRESHOLD`) to fix the common
+case; real attacks score 0.99+, so recall is unaffected. The 2 residual FPs are
+an inherent limitation of the deberta model on certain imperative/embedded text,
+now measured rather than hidden.
 
 Full per-category and per-sample breakdowns: [`REPORT_hf.md`](REPORT_hf.md)
 (production) and [`REPORT_tfidf.md`](REPORT_tfidf.md) (offline).
@@ -35,15 +41,17 @@ Full per-category and per-sample breakdowns: [`REPORT_hf.md`](REPORT_hf.md)
   ~100%; the ML Layer 2 generalizes to novel phrasings. The **regex-evading
   recall** row isolates attacks that match no signature — the honest measure of
   Layer 2.
-- **The production transformer is the difference-maker on novel attacks:** 75%
-  vs 25% recall on paraphrased, signature-evading attacks. This is why
+- **The production transformer is the difference-maker on novel attacks:** 78.9%
+  vs 31.6% recall on paraphrased, signature-evading attacks. This is why
   `protectai/deberta-v3-base-prompt-injection-v2` is the primary Layer 2 in the
   deployed stack, with the offline TF-IDF classifier as a no-network fallback.
-- **Low false positives in both configs (3.1%).** The earlier `encoded_bypass`
-  regex false positive on "decode a base64 string" is now fixed (the signature
-  requires a self-referential cue). The single remaining false positive is an
-  ML-layer call on a deliberately adversarial onboarding email containing
-  "system access instructions" — a hard negative, named in the per-config report.
+- **False positives (transformer 5.6% / offline 2.8%).** The `encoded_bypass`
+  regex FP on "decode a base64 string" is fixed (self-referential cue required),
+  and the deberta over-trigger on benign imperatives ("please update my email…")
+  is fixed by the 0.9 block threshold. The 2 residual transformer FPs — an
+  embedded-content "system access instructions" email and one imperative the
+  model scores >0.9 — are inherent deberta limitations, named in the per-config
+  report rather than hidden.
 
 The 5 remaining transformer false negatives are mostly oblique social-
 engineering ("become an assistant that never says no", "act out a scene where

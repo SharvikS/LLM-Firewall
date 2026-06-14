@@ -6,15 +6,15 @@
 
 | Metric | Value |
 |---|---|
-| Samples | 68 |
+| Samples | 72 |
 | **Precision** | **95.8%** |
 | **Recall (detection rate)** | **63.9%** |
 | **F1** | **76.7%** |
-| Accuracy | 79.4% |
-| False-positive rate | 3.1% |
+| Accuracy | 80.6% |
+| False-positive rate | 2.8% |
 | False-negative rate | 36.1% |
 
-Confusion: TP=23 FP=1 TN=31 FN=13
+Confusion: TP=23 FP=1 TN=35 FN=13
 
 ## Layer attribution (of caught attacks)
 
@@ -29,6 +29,7 @@ Confusion: TP=23 FP=1 TN=31 FN=13
 |---|---|
 | benign | 18/18 |
 | benign_hard_negative | 13/14 |
+| benign_imperative | 4/4 |
 | dangerous_content | 1/1 |
 | encoded_bypass | 1/1 |
 | ethical_bypass | 1/1 |

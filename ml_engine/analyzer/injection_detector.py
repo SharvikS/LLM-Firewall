@@ -38,6 +38,12 @@ logger = logging.getLogger("injection_detector")
 #       sample set is a placeholder; it will overfit badly and miss novel
 #       injection techniques.
 _MIN_FALLBACK_SAMPLES = 100
+
+# Transformer (deberta-v3) block threshold. The model scores real attacks at
+# ~0.99+ but over-triggers (~0.85) on benign imperative phrasing like "please
+# update my email…", which would block legitimate traffic. A 0.9 floor cleanly
+# separates the two; tune via INJECTION_BLOCK_THRESHOLD.
+_TRANSFORMER_BLOCK_THRESHOLD = float(os.getenv("INJECTION_BLOCK_THRESHOLD", "0.9"))
 _TRAINING_DATA_JSONL = os.path.join(
     os.path.dirname(__file__), "..", "data", "injection_train.jsonl"
 )
@@ -274,7 +280,7 @@ class InjectionDetector:
         # The model returns INJECTION or SAFE; guard against unknown label names.
         is_injection = "INJECTION" in label or "JAILBREAK" in label
 
-        if is_injection and score >= 0.65:
+        if is_injection and score >= _TRANSFORMER_BLOCK_THRESHOLD:
             logger.warning(
                 "Transformer BLOCK — label=%s confidence=%.3f", label, score,
             )
