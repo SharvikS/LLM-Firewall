@@ -7,13 +7,14 @@ sys.path.append(os.path.abspath("."))
 
 from analyzer.pii_scanner import PIIScanner
 from analyzer.injection_detector import InjectionDetector
-import openai
 
 def run_tests():
     print("\n--- TITAN Gateway Real-World ML Test ---\n")
     print("[*] Initializing ML models... (this may take a moment)")
     start = time.time()
-    
+
+    import openai  # lazy: this script makes live Groq calls; it is not a unit test
+
     pii = PIIScanner()
     detector = InjectionDetector()
     
