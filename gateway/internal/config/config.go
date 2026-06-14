@@ -35,7 +35,7 @@ type Config struct {
 	// ML Engine (Python gRPC)
 	AnalyzerAddr        string
 	AnalyzerTimeoutMs   int
-	AnalyzerTLSEnabled  bool   // set ANALYZER_TLS_ENABLED=true to enable mTLS
+	AnalyzerTLSEnabled  bool   // set ANALYZER_TLS_ENABLED=true to encrypt the gRPC channel
 	AnalyzerTLSCertFile string // CA cert (or server cert) for client-side verification
 
 	// Provider failover — optional secondary upstream for 5xx/transport errors

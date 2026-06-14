@@ -52,8 +52,9 @@ type Client struct {
 //
 // When tlsEnabled is true the client loads the certificate from certFile
 // (a PEM-encoded CA cert or self-signed server cert) and uses TLS transport
-// credentials.  Set ANALYZER_TLS_ENABLED=false explicitly to keep plaintext —
-// the default is plaintext so existing deployments are unaffected.
+// credentials to verify and encrypt the channel.  The default is plaintext so
+// existing local deployments are unaffected; set ANALYZER_TLS_ENABLED=true (and
+// run scripts/gen-certs.sh) to encrypt the analyzer channel.
 func New(addr string, timeout time.Duration, tlsEnabled bool, certFile string) (*Client, error) {
 	var cred grpc.DialOption
 	if tlsEnabled {
@@ -68,7 +69,7 @@ func New(addr string, timeout time.Duration, tlsEnabled bool, certFile string) (
 		)
 	} else {
 		cred = grpc.WithTransportCredentials(insecure.NewCredentials())
-		logger.Get().Warn("analyzer gRPC using plaintext — set ANALYZER_TLS_ENABLED=true to enable mTLS",
+		logger.Get().Warn("analyzer gRPC using plaintext — set ANALYZER_TLS_ENABLED=true to encrypt the channel",
 			slog.String("addr", addr),
 		)
 	}

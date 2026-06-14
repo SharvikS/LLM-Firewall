@@ -370,7 +370,7 @@ def serve() -> None:
         server.add_insecure_port(f"[::]:{port}")
         logger.warning(
             "gRPC AnalyzerService listening on plaintext port %s — "
-            "set GRPC_TLS_ENABLED=true to enable mTLS", port
+            "set GRPC_TLS_ENABLED=true to encrypt the channel", port
         )
 
     server.start()
