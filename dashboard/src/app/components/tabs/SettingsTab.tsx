@@ -79,8 +79,9 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
   // Upstream connection-test result (does the gateway reach the configured LLM?).
   const [conn, setConn] = useState<{ state: 'idle' | 'testing' | 'done'; reachable?: boolean; detail?: string; models?: string[] }>({ state: 'idle' });
 
-  // Notification prefs are client-side preferences (persisted in localStorage).
-  const [notif, setNotif] = useState({ critical: true, rateLimit: true, pii: false, health: true });
+  // Alerting (SOC webhook): the webhook URL is write-only like the upstream key.
+  const [webhookTouched, setWebhookTouched] = useState(false);
+  const [alertTest, setAlertTest] = useState<{ state: 'idle' | 'sending' | 'done'; ok?: boolean; detail?: string }>({ state: 'idle' });
 
   useEffect(() => {
     fetchSettings().then(s => {
@@ -95,10 +96,6 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
     // Read client-side prefs after paint (avoids synchronous setState-in-effect).
     const id = requestAnimationFrame(() => {
       setCompact(localStorage.getItem('titan-compact') === '1');
-      try {
-        const n = localStorage.getItem('titan-notif');
-        if (n) setNotif(JSON.parse(n));
-      } catch { /* ignore */ }
     });
     return () => cancelAnimationFrame(id);
   }, []);
@@ -126,10 +123,23 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
     // never clears the stored upstream key.
     const payload: Partial<GatewaySettings> = { ...settings };
     if (!keyTouched) delete payload.upstream_api_key;
+    if (!webhookTouched) delete payload.alert_webhook_url;
     const updated = await saveSettings(payload, scope || undefined);
-    if (updated) { setSettings(updated); setKeyTouched(false); setSaveState('saved'); setTimeout(() => setSaveState('idle'), 2000); }
+    if (updated) { setSettings(updated); setKeyTouched(false); setWebhookTouched(false); setSaveState('saved'); setTimeout(() => setSaveState('idle'), 2000); }
     else setSaveState('error');
-  }, [settings, scope, keyTouched]);
+  }, [settings, scope, keyTouched, webhookTouched]);
+
+  const sendTestAlert = useCallback(async () => {
+    setAlertTest({ state: 'sending' });
+    try {
+      const res = await fetch('/api/admin/alerts/test', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: webhookTouched ? settings?.alert_webhook_url : '' }),
+      });
+      const d = await res.json();
+      setAlertTest({ state: 'done', ok: d.delivered, detail: d.detail });
+    } catch { setAlertTest({ state: 'done', ok: false, detail: 'request failed' }); }
+  }, [settings, webhookTouched]);
 
   const testUpstream = useCallback(async () => {
     if (!settings?.upstream_url) return;
@@ -148,7 +158,6 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
   }, [settings, keyTouched]);
 
   const toggleCompact = () => setCompact(v => { const nv = !v; localStorage.setItem('titan-compact', nv ? '1' : '0'); return nv; });
-  const setNotifKey = (k: keyof typeof notif) => setNotif(n => { const nn = { ...n, [k]: !n[k] }; localStorage.setItem('titan-notif', JSON.stringify(nn)); return nn; });
 
   const sections = ['Appearance', 'Security Defaults', 'General', 'Notifications'];
 
@@ -335,19 +344,40 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
           {active === 'Notifications' && (
             <motion.div key="notif" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.18 }}>
               <div className="mb-8">
-                <h3 className="text-xl font-semibold">Notifications</h3>
-                <p className="text-sm text-base-muted mt-1">Alert preferences for this workspace (saved to your browser).</p>
+                <h3 className="text-xl font-semibold">Alerting &amp; SIEM</h3>
+                <p className="text-sm text-base-muted mt-1">Stream security events to your SOC in real time. Works with Slack/Teams incoming webhooks, PagerDuty, Splunk HEC, or any HTTP collector. Applied live.</p>
               </div>
-              {([
-                { key: 'critical' as const,  label: 'Critical Block Alert', sub: 'Surface a banner when an ML_BLOCKED event has risk_score ≥ 90.' },
-                { key: 'rateLimit' as const, label: 'Rate Limit Breach',    sub: 'Alert when any tenant is rate-limited more than 5 times per minute.' },
-                { key: 'pii' as const,       label: 'PII Mask Report',      sub: 'Daily digest of PII entities detected and masked in prompts.' },
-                { key: 'health' as const,    label: 'System Health Alerts', sub: 'Notify when the ML engine or Redis is unreachable for > 30 seconds.' },
-              ]).map(({ key, label, sub }) => (
-                <SettingRow key={key} label={label} sub={sub}>
-                  <Toggle on={notif[key]} onChange={() => setNotifKey(key)}/>
-                </SettingRow>
-              ))}
+              <SettingRow label="Enable real-time alerts" sub="POST high-risk blocks and quota breaches to your webhook as they happen (coalesced to avoid alert storms).">
+                <Toggle on={!!settings?.alerts_enabled} disabled={!settings} onChange={() => patch({ alerts_enabled: !settings?.alerts_enabled })}/>
+              </SettingRow>
+              <div className="mt-5">
+                <label className="text-xs font-semibold text-base-muted uppercase tracking-widest block mb-1.5">Webhook URL</label>
+                <input type="password" value={settings ? (settings.alert_webhook_url ?? '') : ''} disabled={!settings}
+                  onChange={e => { patch({ alert_webhook_url: e.target.value }); setWebhookTouched(true); }}
+                  placeholder="https://hooks.slack.com/services/…  (leave blank to keep current)"
+                  className="w-full max-w-xl px-3 py-2.5 bg-base-sec border border-base-border rounded-lg text-sm outline-none focus:border-base-muted/60 transition-colors font-mono disabled:opacity-50"/>
+                <p className="text-xs text-base-muted mt-1.5">Write-only — never displayed. Slack/Teams render the message; SIEMs receive structured JSON (action, tenant, risk, request_id, timestamp).</p>
+              </div>
+              <div className="mt-5 max-w-xs">
+                <label className="text-xs font-semibold text-base-muted uppercase tracking-widest block mb-1.5">Minimum risk to alert (0–100)</label>
+                <input type="number" min={0} max={100} value={settings ? String(settings.alert_min_risk ?? 90) : ''} disabled={!settings}
+                  onChange={e => patch({ alert_min_risk: Number(e.target.value) })}
+                  className="w-full px-3 py-2.5 bg-base-sec border border-base-border rounded-lg text-sm outline-none focus:border-base-muted/60 transition-colors font-mono disabled:opacity-50"/>
+                <p className="text-xs text-base-muted mt-1.5">Blocked requests at/above this risk alert; quota breaches always alert.</p>
+              </div>
+              <div className="mt-6 flex items-center gap-3 flex-wrap">
+                <SaveButton state={saveState} onClick={save}/>
+                <button type="button" disabled={!settings || alertTest.state === 'sending'} onClick={sendTestAlert}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border border-base-border hover:bg-base-sec transition-colors disabled:opacity-60">
+                  {alertTest.state === 'sending' ? <><Loader2 size={14} className="animate-spin"/>Sending…</> : 'Send test alert'}
+                </button>
+                {alertTest.state === 'done' && (
+                  alertTest.ok
+                    ? <span className="inline-flex items-center gap-1.5 text-xs text-green-400"><Check size={13}/>Delivered</span>
+                    : <span className="inline-flex items-center gap-1.5 text-xs text-red-400"><AlertTriangle size={13}/>{alertTest.detail || 'failed'}</span>
+                )}
+              </div>
+              <p className="mt-3 text-xs text-base-muted">Tip: save the webhook first, then send a test (or paste a fresh URL above and test it before saving).</p>
             </motion.div>
           )}
         </AnimatePresence>

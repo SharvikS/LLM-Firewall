@@ -51,6 +51,7 @@ func (h *settingsHandler) getSettings(w http.ResponseWriter, r *http.Request) {
 // callers send it only when changing it.
 func redactSecrets(s settings.Settings) settings.Settings {
 	s.UpstreamAPIKey = ""
+	s.AlertWebhookURL = "" // Slack/SIEM webhook URLs are secrets (bearer-in-URL)
 	return s
 }
 

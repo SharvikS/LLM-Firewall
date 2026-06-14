@@ -19,6 +19,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 
+	"github.com/sharvik/llm-firewall/gateway/internal/alerts"
 	"github.com/sharvik/llm-firewall/gateway/internal/analyzer"
 	"github.com/sharvik/llm-firewall/gateway/internal/billing"
 	"github.com/sharvik/llm-firewall/gateway/internal/cache"
@@ -72,10 +73,11 @@ type LLMProxy struct {
 	mlClient      *analyzer.Client
 	st            *store.Store
 	cfg           *config.Config
-	settings      *settings.Manager // live runtime knobs (rate limits, timeouts, gates)
-	meter         *billing.Meter    // per-tenant usage metering + quota (nil-safe)
-	provider      string            // upstream provider label derived from TargetURL host
-	plugins       *plugins.Runtime  // WASM custom-rule stage; nil-safe when disabled
+	settings      *settings.Manager  // live runtime knobs (rate limits, timeouts, gates)
+	meter         *billing.Meter     // per-tenant usage metering + quota (nil-safe)
+	alerts        *alerts.Dispatcher // real-time SOC alerting (nil-safe)
+	provider      string             // upstream provider label derived from TargetURL host
+	plugins       *plugins.Runtime   // WASM custom-rule stage; nil-safe when disabled
 }
 
 // providerFromHost maps an upstream host to a human-readable provider label for
@@ -126,6 +128,7 @@ func NewLLMProxy(
 	pluginRT *plugins.Runtime,
 	settingsMgr *settings.Manager,
 	meter *billing.Meter,
+	alertD *alerts.Dispatcher,
 ) (*LLMProxy, error) {
 	target, err := url.Parse(cfg.TargetURL)
 	if err != nil {
@@ -143,6 +146,7 @@ func NewLLMProxy(
 		cfg:           cfg,
 		settings:      settingsMgr,
 		meter:         meter,
+		alerts:        alertD,
 		provider:      providerFromHost(target.Host),
 		plugins:       pluginRT,
 	}
@@ -377,6 +381,9 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		metrics.HourlyTraffic.Record(true)
 		w.Header().Set("X-Quota-Limit", fmt.Sprintf("%d", usage.Limit))
 		w.Header().Set("X-Quota-Used", fmt.Sprintf("%d", usage.Requests))
+		p.alerts.Emit(alerts.Event{Action: "QUOTA_EXCEEDED", Tenant: tenantName,
+			Reason: fmt.Sprintf("monthly quota of %d exceeded (%s plan)", usage.Limit, auth.Tier),
+			RequestID: reqID, Path: r.URL.Path, Risk: 100})
 		p.pushEvent(reqID, tenantName, "QUOTA_EXCEEDED", 0, r.URL.Path, "monthly plan quota exceeded")
 		p.writeError(w, http.StatusTooManyRequests, "quota_exceeded",
 			fmt.Sprintf("Monthly request quota of %d for the %q plan exceeded. Upgrade to continue.", usage.Limit, auth.Tier))
@@ -409,6 +416,8 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		metrics.Global.BlockedRequests.Add(1)
 		metrics.HourlyTraffic.Record(true)
 		blockedOutcome = true // recorded by the deferred meter
+		p.alerts.Emit(alerts.Event{Action: "ML_BLOCKED", Tenant: tenantName, Reason: analysis.Reason,
+			RequestID: reqID, Path: r.URL.Path, Risk: float64(analysis.RiskScore)})
 		p.pushEvent(reqID, tenantName, "ML_BLOCKED", float64(analysis.RiskScore), r.URL.Path, analysis.Reason)
 		w.Header().Set("X-Titan-Decision", "BLOCK")
 		p.writeError(w, http.StatusForbidden, "policy_violation", analysis.Reason)

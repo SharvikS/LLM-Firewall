@@ -36,6 +36,14 @@ type Settings struct {
 	UpstreamURL    string `json:"upstream_url"`
 	UpstreamAPIKey string `json:"upstream_api_key"`
 
+	// ── Real-time alerting / SIEM integration ─────────────────────────────────
+	// Security events at or above AlertMinRisk (plus quota breaches) are POSTed to
+	// AlertWebhookURL — a Slack/Teams incoming webhook or any HTTP collector
+	// (PagerDuty/Splunk HEC/generic). The URL is a write-only secret (redacted).
+	AlertsEnabled   bool    `json:"alerts_enabled"`
+	AlertWebhookURL string  `json:"alert_webhook_url"`
+	AlertMinRisk    float64 `json:"alert_min_risk"`
+
 	// ── ML plane (pushed to the Python engine over HTTP) ──────────────────────
 	PIIRedactionEnabled    bool            `json:"pii_redaction_enabled"`
 	ToxicityEnabled        bool            `json:"toxicity_enabled"`
@@ -99,6 +107,9 @@ func DefaultsFromConfig(cfg *config.Config) Settings {
 
 		UpstreamURL:    cfg.TargetURL,
 		UpstreamAPIKey: cfg.APIKey,
+
+		AlertsEnabled: false,
+		AlertMinRisk:  90,
 
 		PIIRedactionEnabled:    true,
 		ToxicityEnabled:        cfg.ToxicityEnabled,
@@ -299,5 +310,11 @@ func (s *Settings) clamp() {
 	}
 	if s.PIIEntities == nil {
 		s.PIIEntities = DefaultPIIEntities()
+	}
+	if s.AlertMinRisk < 0 {
+		s.AlertMinRisk = 0
+	}
+	if s.AlertMinRisk > 100 {
+		s.AlertMinRisk = 100
 	}
 }

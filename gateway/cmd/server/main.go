@@ -17,6 +17,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/sharvik/llm-firewall/gateway/internal/alerts"
 	"github.com/sharvik/llm-firewall/gateway/internal/analytics"
 	"github.com/sharvik/llm-firewall/gateway/internal/analyzer"
 	adminapi "github.com/sharvik/llm-firewall/gateway/internal/api"
@@ -149,6 +150,12 @@ func main() {
 	settingsMgr.ApplyAll()
 	log.Info("runtime settings plane ready")
 
+	// Real-time SOC alerting — reads webhook config live from the settings plane.
+	alertDispatcher := alerts.New(func() alerts.Config {
+		s := settingsMgr.Get()
+		return alerts.Config{Enabled: s.AlertsEnabled, WebhookURL: s.AlertWebhookURL, MinRisk: s.AlertMinRisk}
+	})
+
 	// Semantic cache is optional — only created when QDRANT_URL is set.
 	var semCache *cache.SemanticCache
 	if cfg.QdrantURL != "" {
@@ -247,7 +254,7 @@ func main() {
 	}
 
 	// ── Proxy ─────────────────────────────────────────────────────────────────
-	llmProxy, err := proxy.NewLLMProxy(cfg, policyEngine, producer, limiter, exactCache, semCache, mlClient, st, pluginRT, settingsMgr, meter)
+	llmProxy, err := proxy.NewLLMProxy(cfg, policyEngine, producer, limiter, exactCache, semCache, mlClient, st, pluginRT, settingsMgr, meter, alertDispatcher)
 	if err != nil {
 		log.Error("proxy init failed", slog.String("error", err.Error()))
 		os.Exit(1)
@@ -337,6 +344,7 @@ func main() {
 		MasterToken:     cfg.AdminToken,
 		Settings:        settingsMgr,
 		Meter:           meter,
+		Alerts:          alertDispatcher,
 		ScanReportPath:  cfg.SecurityScanReportPath,
 		Issuer:          sessionIssuer,
 		OIDC:            oidcClient,

@@ -17,6 +17,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/google/uuid"
 
+	"github.com/sharvik/llm-firewall/gateway/internal/alerts"
 	"github.com/sharvik/llm-firewall/gateway/internal/auth"
 	"github.com/sharvik/llm-firewall/gateway/internal/billing"
 	"github.com/sharvik/llm-firewall/gateway/internal/logger"
@@ -30,6 +31,7 @@ type AdminDeps struct {
 	MasterToken     string // machine super-user token (maps to admin role)
 	Settings        *settings.Manager
 	Meter           *billing.Meter
+	Alerts          *alerts.Dispatcher
 	ScanReportPath  string
 	Issuer          *auth.Issuer
 	OIDC            *auth.OIDCClient
@@ -57,6 +59,7 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 	bh := &billingHandler{st: d.Store, meter: d.Meter}
 	sech := &securityHandler{reportPath: d.ScanReportPath}
 	uph := &upstreamHandler{}
+	alh := &alertsHandler{dispatcher: d.Alerts, mgr: d.Settings}
 	ah := &authHandler{
 		st:           d.Store,
 		issuer:       d.Issuer,
@@ -98,6 +101,7 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 		r.With(requireRole(auth.RoleSecurity)).Put("/settings", sh.updateSettings)
 		r.With(requireRole(auth.RoleSecurity)).Delete("/settings", sh.deleteSettings)
 		r.With(requireRole(auth.RoleSecurity)).Post("/upstream/test", uph.test)
+		r.With(requireRole(auth.RoleSecurity)).Post("/alerts/test", alh.sendTest)
 		r.With(requireRole(auth.RoleSecurity)).Post("/tenants", h.createTenant)
 		r.With(requireRole(auth.RoleSecurity)).Post("/policies", h.createPolicy)
 		r.With(requireRole(auth.RoleSecurity)).Put("/policies/{id}", h.updatePolicy)

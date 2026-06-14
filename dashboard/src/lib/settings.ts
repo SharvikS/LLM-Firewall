@@ -5,6 +5,9 @@
 export interface GatewaySettings {
   upstream_url: string;
   upstream_api_key: string; // write-only; always returned blank
+  alerts_enabled: boolean;
+  alert_webhook_url: string; // write-only; always returned blank
+  alert_min_risk: number;
   rate_limit_rpm: number;
   rate_limit_tpm: number;
   cache_ttl_sec: number;
