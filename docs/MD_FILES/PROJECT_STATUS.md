@@ -1,7 +1,48 @@
 # LLM-Firewall (TITAN Gateway) — Project Status Log
 
 > **Auto-maintained log.** Updated at the end of every major session or when significant changes are made.
-> Last updated: 2026-06-14 (Enterprise-Readiness / Sellability Session)
+> Last updated: 2026-06-14 (GA-Hardening + Customer-Journey Testing Session)
+
+---
+
+## 2026-06-14 — GA-Hardening + Customer-Journey Testing Session
+
+Built out the remaining sellability items and then tested the whole product
+from a customer's perspective, fixing what broke.
+
+**Billing & metering (revenue blocker)** — `internal/billing`: plan catalog
+(free/starter/pro/enterprise) keyed by `tenants.tier`, Redis usage counters
+(requests/tokens/blocked per tenant per month, fail-open), monthly quota
+enforced at admission (429), admin APIs (`/billing/usage`, `/billing/plans`,
+`PUT /tenants/{id}/plan`), migration 008 widens the tier CHECK. Dashboard
+Billing tab is live. Verified live: plan change persists, usage meters, quota → 429.
+
+**Dependency CVE scanning** — `scripts/security-scan.sh` + `scan_report.py`
+(govulncheck/pip-audit/npm audit → `docs/security/scan-report.json`),
+`.github/workflows/security.yml`, gateway `GET /security/vulnerabilities`,
+live Vulnerabilities tab. Real result: Go 0, Python 7 (heavy dev deps), Node 2.
+
+**Backup/DR** — `scripts/backup.sh` + `restore.sh` (CockroachDB core BACKUP,
+nodelocal or S3/GCS), `DR_RUNBOOK.md` (RPO/RTO, restore drill). Verified
+backup → restore-into-staging → row-count.
+
+**True mTLS** — analyzer gRPC upgraded from one-way to mutual TLS: `gen-certs.sh`
+issues CA + server + client certs; Go client presents a client cert; Python
+server `require_client_auth`. compose TLS overlay wires it. One-way TLS and
+plaintext still supported.
+
+**Customer-journey testing (live, full stack incl. real ML engine):**
+- Injection → 403 BLOCK; benign → ALLOW; **benign imperative + PII → MASK**.
+- Found & fixed a real FP: deberta blocked "please update my email…" (0.849).
+  Raised block threshold 0.65 → 0.9 (`INJECTION_BLOCK_THRESHOLD`); real attacks
+  score 0.99+ so recall held (86.1%). Re-measured: transformer P 93.9% / R 86.1%
+  / FPR 5.6% (honest, with residual deberta FPs documented).
+- Dashboard E2E: redirect→login→session, RBAC (viewer reads OK / writes 403),
+  live billing, live CVE scan, live event feed, logout — all pass.
+- All suites green: gateway `go test ./...`, ML `pytest` (39), dashboard build.
+  Fixed pytest collection (scoped to tests/) and the encoded_bypass test.
+- Note: durable audit (`/admin/v1/audit`) needs Kafka (full stack); the live
+  in-memory event ring works standalone.
 
 ---
 
