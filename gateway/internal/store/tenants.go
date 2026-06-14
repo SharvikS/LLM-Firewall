@@ -55,6 +55,16 @@ func (s *Store) CreateTenant(ctx context.Context, name, tier string, rateLimit i
 	return &t, err
 }
 
+// UpdateTenantTier changes a tenant's plan tier. Returns the updated tenant, or
+// nil if no such tenant exists.
+func (s *Store) UpdateTenantTier(ctx context.Context, id uuid.UUID, tier string) (*Tenant, error) {
+	row := s.pool.QueryRow(ctx,
+		`UPDATE tenants SET tier=$2 WHERE id=$1 RETURNING id,name,tier,rate_limit,active,created_at`,
+		id, tier,
+	)
+	return scanTenant(row)
+}
+
 // scanTenant works with both pgx.Row and pgx.Rows.
 func scanTenant(row interface {
 	Scan(dest ...any) error

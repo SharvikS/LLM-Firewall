@@ -20,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 
 	"github.com/sharvik/llm-firewall/gateway/internal/analyzer"
+	"github.com/sharvik/llm-firewall/gateway/internal/billing"
 	"github.com/sharvik/llm-firewall/gateway/internal/cache"
 	"github.com/sharvik/llm-firewall/gateway/internal/config"
 	"github.com/sharvik/llm-firewall/gateway/internal/events"
@@ -72,6 +73,7 @@ type LLMProxy struct {
 	st            *store.Store
 	cfg           *config.Config
 	settings      *settings.Manager // live runtime knobs (rate limits, timeouts, gates)
+	meter         *billing.Meter    // per-tenant usage metering + quota (nil-safe)
 	provider      string            // upstream provider label derived from TargetURL host
 	plugins       *plugins.Runtime  // WASM custom-rule stage; nil-safe when disabled
 }
@@ -123,6 +125,7 @@ func NewLLMProxy(
 	st *store.Store,
 	pluginRT *plugins.Runtime,
 	settingsMgr *settings.Manager,
+	meter *billing.Meter,
 ) (*LLMProxy, error) {
 	target, err := url.Parse(cfg.TargetURL)
 	if err != nil {
@@ -139,6 +142,7 @@ func NewLLMProxy(
 		st:            st,
 		cfg:           cfg,
 		settings:      settingsMgr,
+		meter:         meter,
 		provider:      providerFromHost(target.Host),
 		plugins:       pluginRT,
 	}
@@ -315,6 +319,37 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Stage 3b: Monthly volume quota (plan entitlement). RPM/TPM cap burst; this
+	// caps total monthly volume by the tenant's plan tier. Fail-open on Redis error.
+	if over, usage := p.meter.OverQuota(r.Context(), tenantID.String(), auth.Tier, start); over {
+		log.Warn("monthly quota exceeded",
+			slog.String("tenant", tenantName),
+			slog.String("tier", auth.Tier),
+			slog.Int64("used", usage.Requests),
+			slog.Int64("limit", usage.Limit),
+		)
+		metrics.Global.BlockedRequests.Add(1)
+		metrics.HourlyTraffic.Record(true)
+		w.Header().Set("X-Quota-Limit", fmt.Sprintf("%d", usage.Limit))
+		w.Header().Set("X-Quota-Used", fmt.Sprintf("%d", usage.Requests))
+		p.pushEvent(reqID, tenantName, "QUOTA_EXCEEDED", 0, r.URL.Path, "monthly plan quota exceeded")
+		p.writeError(w, http.StatusTooManyRequests, "quota_exceeded",
+			fmt.Sprintf("Monthly request quota of %d for the %q plan exceeded. Upgrade to continue.", usage.Limit, auth.Tier))
+		p.emitKafka(reqID, tenantID, apiKeyID, "QUOTA_EXCEEDED", 0, r.URL.Path,
+			http.StatusTooManyRequests, time.Since(start).Milliseconds(), "monthly quota exceeded", region, model)
+		return
+	}
+
+	// Meter every admitted request exactly once on exit, with input-token volume
+	// and the final block outcome. Background context so a client disconnect
+	// can't drop the meter write. Rejected requests above are intentionally not
+	// metered (they never consumed quota).
+	billedTokens := estimateTokens(body)
+	blockedOutcome := false
+	defer func() {
+		p.meter.Record(context.Background(), tenantID.String(), billedTokens, blockedOutcome, start)
+	}()
+
 	// Stage 4: ML Analyzer. The inline deadline is dashboard-tunable.
 	analysis := p.mlClient.AnalyzeWithTimeout(r.Context(), reqID, tenantName, string(body),
 		time.Duration(set.AnalyzerTimeoutMs)*time.Millisecond)
@@ -328,6 +363,7 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		metrics.Global.MLBlocked.Add(1)
 		metrics.Global.BlockedRequests.Add(1)
 		metrics.HourlyTraffic.Record(true)
+		blockedOutcome = true // recorded by the deferred meter
 		p.pushEvent(reqID, tenantName, "ML_BLOCKED", float64(analysis.RiskScore), r.URL.Path, analysis.Reason)
 		w.Header().Set("X-Titan-Decision", "BLOCK")
 		p.writeError(w, http.StatusForbidden, "policy_violation", analysis.Reason)

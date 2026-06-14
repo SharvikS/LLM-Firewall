@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/sharvik/llm-firewall/gateway/internal/auth"
+	"github.com/sharvik/llm-firewall/gateway/internal/billing"
 	"github.com/sharvik/llm-firewall/gateway/internal/logger"
 	"github.com/sharvik/llm-firewall/gateway/internal/settings"
 	"github.com/sharvik/llm-firewall/gateway/internal/store"
@@ -28,6 +29,7 @@ type AdminDeps struct {
 	Store           *store.Store
 	MasterToken     string // machine super-user token (maps to admin role)
 	Settings        *settings.Manager
+	Meter           *billing.Meter
 	Issuer          *auth.Issuer
 	OIDC            *auth.OIDCClient
 	OIDCEnabled     bool
@@ -51,6 +53,7 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 	h := &adminHandler{st: d.Store}
 	sh := &settingsHandler{mgr: d.Settings}
 	uh := &userHandler{st: d.Store}
+	bh := &billingHandler{st: d.Store, meter: d.Meter}
 	ah := &authHandler{
 		st:           d.Store,
 		issuer:       d.Issuer,
@@ -79,6 +82,10 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 		r.With(requireRole(auth.RoleViewer)).Get("/audit", h.listAudit)
 		r.With(requireRole(auth.RoleViewer)).Get("/settings", sh.getSettings)
 
+		// billing: usage is viewer-readable; changing a plan is admin-only.
+		r.With(requireRole(auth.RoleViewer)).Get("/billing/usage", bh.listUsage)
+		r.With(requireRole(auth.RoleViewer)).Get("/billing/plans", bh.listPlans)
+
 		// compliance+ : audit exports
 		r.With(requireRole(auth.RoleCompliance)).Get("/compliance/report", h.complianceReport)
 		r.With(requireRole(auth.RoleCompliance)).Get("/compliance/export", h.complianceExport)
@@ -98,6 +105,7 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 		r.With(requireRole(auth.RoleAdmin)).Post("/users", uh.createUser)
 		r.With(requireRole(auth.RoleAdmin)).Put("/users/{id}/role", uh.updateRole)
 		r.With(requireRole(auth.RoleAdmin)).Delete("/users/{id}", uh.deleteUser)
+		r.With(requireRole(auth.RoleAdmin)).Put("/tenants/{id}/plan", bh.updatePlan)
 	})
 
 	return r

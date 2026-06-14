@@ -22,6 +22,7 @@ const AuthCtxKey contextKey = "titan_auth"
 type AuthContext struct {
 	TenantID     uuid.UUID
 	TenantName   string
+	Tier         string // plan tier — drives billing quota enforcement
 	APIKeyID     uuid.UUID
 	RateLimitRPM int
 }
@@ -66,6 +67,7 @@ func APIKeyAuth(st *store.Store) func(http.Handler) http.Handler {
 			ctx := context.WithValue(r.Context(), AuthCtxKey, AuthContext{
 				TenantID:     tenant.ID,
 				TenantName:   tenant.Name,
+				Tier:         tenant.Tier,
 				APIKeyID:     apiKey.ID,
 				RateLimitRPM: tenant.RateLimitRPM,
 			})

@@ -329,7 +329,7 @@ export default function Dashboard() {
       case 'Settings':       return <SettingsTab theme={theme} onThemeChange={setTheme}/>;
       case 'Team':           return <TeamTab myRole={me?.role}/>;
       case 'API Keys':       return <ApiKeysTab/>;
-      case 'Billing':        return <BillingTab/>;
+      case 'Billing':        return <BillingTab myRole={me?.role}/>;
     }
   };
 

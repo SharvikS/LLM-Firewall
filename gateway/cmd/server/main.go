@@ -22,6 +22,7 @@ import (
 	adminapi "github.com/sharvik/llm-firewall/gateway/internal/api"
 	"github.com/sharvik/llm-firewall/gateway/internal/auth"
 	"github.com/sharvik/llm-firewall/gateway/internal/batch"
+	"github.com/sharvik/llm-firewall/gateway/internal/billing"
 	"github.com/sharvik/llm-firewall/gateway/internal/cache"
 	"github.com/sharvik/llm-firewall/gateway/internal/config"
 	"github.com/sharvik/llm-firewall/gateway/internal/events"
@@ -131,6 +132,7 @@ func main() {
 
 	limiter := ratelimit.New(redisClient, cfg.RateLimitRPM, time.Duration(cfg.RateLimitWindowSec)*time.Second, cfg.RateLimitTPM)
 	exactCache := cache.New(redisClient, time.Duration(cfg.CacheTTLSec)*time.Second)
+	meter := billing.NewMeter(redisClient) // per-tenant usage metering + plan quota
 
 	// ── Runtime settings plane (dashboard-tunable; persisted in DB) ───────────
 	// Seeds from config/env, hydrates any persisted overrides, then fans every
@@ -243,7 +245,7 @@ func main() {
 	}
 
 	// ── Proxy ─────────────────────────────────────────────────────────────────
-	llmProxy, err := proxy.NewLLMProxy(cfg, policyEngine, producer, limiter, exactCache, semCache, mlClient, st, pluginRT, settingsMgr)
+	llmProxy, err := proxy.NewLLMProxy(cfg, policyEngine, producer, limiter, exactCache, semCache, mlClient, st, pluginRT, settingsMgr, meter)
 	if err != nil {
 		log.Error("proxy init failed", slog.String("error", err.Error()))
 		os.Exit(1)
@@ -332,6 +334,7 @@ func main() {
 		Store:           st,
 		MasterToken:     cfg.AdminToken,
 		Settings:        settingsMgr,
+		Meter:           meter,
 		Issuer:          sessionIssuer,
 		OIDC:            oidcClient,
 		OIDCEnabled:     oidcCfg.Enabled(),

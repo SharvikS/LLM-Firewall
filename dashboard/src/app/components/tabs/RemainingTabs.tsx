@@ -261,58 +261,137 @@ export function TeamTab({ myRole }: { myRole?: Role }) {
   );
 }
 
-// ─── Billing (preview) ───────────────────────────────────────────────────────
+// ─── Billing (live — per-tenant metering + plan management) ──────────────────
 
-export function BillingTab() {
-  const USAGE = [
-    { label: 'Gateway Requests', used: 1_842_901, limit: 5_000_000, unit: 'req' },
-    { label: 'ML Analyzer Calls', used: 1_842_901, limit: 5_000_000, unit: 'calls' },
-    { label: 'Cache Storage',    used: 128,        limit: 1024,      unit: 'MB' },
-    { label: 'Kafka Events',     used: 9_214_505,  limit: 50_000_000, unit: 'events' },
-  ];
+interface Plan {
+  tier: string;
+  display_name: string;
+  monthly_requests: number;
+  price_usd_per_month: number;
+}
+interface Usage {
+  requests: number;
+  tokens: number;
+  blocked: number;
+  tier: string;
+  monthly_limit: number;
+  percent_used: number;
+}
+interface TenantUsage {
+  tenant_id: string;
+  name: string;
+  tier: string;
+  active: boolean;
+  usage: Usage;
+}
+
+const fmt = (n: number) => n.toLocaleString();
+const limitLabel = (n: number) => (n === 0 ? '∞' : fmt(n));
+
+export function BillingTab({ myRole }: { myRole?: Role }) {
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [rows, setRows] = useState<TenantUsage[]>([]);
+  const [state, setState] = useState<'loading' | 'ready' | 'offline'>('loading');
+  const isAdmin = myRole === 'admin';
+
+  useEffect(() => {
+    Promise.all([
+      fetch('/api/admin/billing/plans', { cache: 'no-store' }).then(r => r.json()),
+      fetch('/api/admin/billing/usage', { cache: 'no-store' }).then(r => r.json()),
+    ])
+      .then(([p, u]) => {
+        if (p?._offline || u?._offline) { setState('offline'); return; }
+        setPlans(p.plans ?? []);
+        setRows(u.tenants ?? []);
+        setState('ready');
+      })
+      .catch(() => setState('offline'));
+  }, []);
+
+  const changePlan = async (tenantId: string, tier: string) => {
+    await fetch(`/api/admin/tenants/${tenantId}/plan`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tier }),
+    });
+    const u = await fetch('/api/admin/billing/usage', { cache: 'no-store' }).then(r => r.json());
+    if (!u?._offline) setRows(u.tenants ?? []);
+  };
+
+  // Account-wide rollup across tenants for the summary cards.
+  const totalReq = rows.reduce((s, r) => s + (r.usage?.requests ?? 0), 0);
+  const totalBlocked = rows.reduce((s, r) => s + (r.usage?.blocked ?? 0), 0);
+
   return (
     <div className="max-w-4xl mx-auto">
-      <PageHeader title="Billing & Usage" sub="Current plan and resource consumption." badge="Preview"/>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-        <Card>
-          <div className="flex justify-between items-start mb-4">
-            <div>
-              <div className="text-xs text-base-muted uppercase tracking-widest mb-1">Current Plan</div>
-              <div className="text-xl font-semibold">Enterprise</div>
+      <PageHeader title="Billing & Usage" sub="Per-tenant metered usage and plan entitlements. Quotas are enforced live at the gateway." badge="Live" badgeColor="green"/>
+
+      {state === 'offline' && (
+        <Card><div className="flex items-center gap-2 text-sm text-yellow-500"><AlertTriangle size={14}/> Gateway offline — cannot load usage.</div></Card>
+      )}
+
+      {state !== 'offline' && (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+            <Card>
+              <div className="text-xs text-base-muted uppercase tracking-widest mb-1">Tenants</div>
+              <div className="text-3xl font-semibold">{rows.length}</div>
+              <div className="mt-2 text-xs text-base-muted">{rows.filter(r => r.active).length} active</div>
+            </Card>
+            <Card>
+              <div className="text-xs text-base-muted uppercase tracking-widest mb-1">Requests this month</div>
+              <div className="text-3xl font-semibold">{fmt(totalReq)}</div>
+              <div className="mt-2 text-xs text-base-muted">metered across all tenants</div>
+            </Card>
+            <Card>
+              <div className="text-xs text-base-muted uppercase tracking-widest mb-1">Blocked this month</div>
+              <div className="text-3xl font-semibold">{fmt(totalBlocked)}</div>
+              <div className="mt-2 text-xs text-base-muted">security blocks billed as usage</div>
+            </Card>
+          </div>
+
+          <Card className="mb-6">
+            <h3 className="text-sm font-semibold mb-4">Plan Catalog</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {plans.map(p => (
+                <div key={p.tier} className="px-4 py-3 border border-base-border rounded-lg">
+                  <div className="text-sm font-semibold">{p.display_name}</div>
+                  <div className="text-xs text-base-muted mt-0.5">{limitLabel(p.monthly_requests)} req/mo</div>
+                  <div className="text-lg font-semibold mt-2">${p.price_usd_per_month}<span className="text-xs text-base-muted font-normal">/mo</span></div>
+                </div>
+              ))}
             </div>
-            <Tag label="Active" color="bg-green-400/10 text-green-400"/>
-          </div>
-          <div className="text-3xl font-semibold text-base-text">$499<span className="text-base-muted text-base font-normal">/mo</span></div>
-          <div className="mt-4 text-xs text-base-muted">Next billing: 2026-07-01</div>
-        </Card>
-        <Card>
-          <div className="text-xs text-base-muted uppercase tracking-widest mb-4">Current Month Spend</div>
-          <div className="text-3xl font-semibold">$311.20</div>
-          <div className="mt-2 text-xs text-base-muted">62.4% of monthly budget used</div>
-          <div className="mt-3 h-1.5 bg-base-sec rounded-full overflow-hidden">
-            <div className="h-full bg-base-accent rounded-full" style={{ width: '62.4%' }}/>
-          </div>
-        </Card>
-      </div>
-      <Card>
-        <h3 className="text-sm font-semibold mb-5">Resource Usage</h3>
-        <div className="space-y-5">
-          {USAGE.map(({ label, used, limit, unit }) => {
-            const pct = (used / limit) * 100;
-            return (
-              <div key={label}>
-                <div className="flex justify-between text-xs mb-1.5">
-                  <span className="text-base-muted">{label}</span>
-                  <span className="text-base-text font-medium">{used.toLocaleString()} / {limit.toLocaleString()} {unit}</span>
-                </div>
-                <div className="h-1.5 bg-base-sec rounded-full overflow-hidden">
-                  <div className={`h-full rounded-full transition-all ${pct > 80 ? 'bg-red-400' : pct > 60 ? 'bg-yellow-400' : 'bg-base-accent'}`} style={{ width: `${pct}%` }}/>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </Card>
+          </Card>
+
+          <Card>
+            <h3 className="text-sm font-semibold mb-5">Tenant Usage (current month)</h3>
+            <div className="space-y-4">
+              {rows.map(r => {
+                const u = r.usage;
+                const pct = u.monthly_limit === 0 ? 0 : Math.min(u.percent_used, 100);
+                return (
+                  <div key={r.tenant_id} className="px-4 py-3 border border-base-border/60 rounded-lg">
+                    <div className="flex items-center justify-between gap-4 mb-2">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-base-text truncate">{r.name}</div>
+                        <div className="text-xs text-base-muted">{fmt(u.requests)} / {limitLabel(u.monthly_limit)} req · {fmt(u.tokens)} tokens · {fmt(u.blocked)} blocked</div>
+                      </div>
+                      <select value={r.tier} disabled={!isAdmin}
+                        onChange={e => changePlan(r.tenant_id, e.target.value)}
+                        className="px-2 py-1 bg-base-sec border border-base-border rounded-md text-xs outline-none disabled:opacity-50">
+                        {plans.map(p => <option key={p.tier} value={p.tier}>{p.display_name}</option>)}
+                      </select>
+                    </div>
+                    <div className="h-1.5 bg-base-sec rounded-full overflow-hidden">
+                      <div className={`h-full rounded-full transition-all ${pct > 90 ? 'bg-red-400' : pct > 70 ? 'bg-yellow-400' : 'bg-base-accent'}`}
+                        style={{ width: `${u.monthly_limit === 0 ? 4 : pct}%` }}/>
+                    </div>
+                  </div>
+                );
+              })}
+              {state === 'loading' && <div className="py-6 text-center text-xs text-base-muted flex items-center justify-center gap-2"><Loader2 size={12} className="animate-spin"/> Loading usage…</div>}
+            </div>
+          </Card>
+        </>
+      )}
     </div>
   );
 }
