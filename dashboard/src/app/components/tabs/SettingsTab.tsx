@@ -71,6 +71,11 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
   const [scope, setScope] = useState('');
   const [tenants, setTenants] = useState<{ id: string; name: string }[]>([]);
 
+  // The upstream API key is write-only: only sent when the user actually edits
+  // it, so an unrelated settings save never clears it — and switching to a
+  // keyless local model explicitly clears it (never leaks the old key upstream).
+  const [keyTouched, setKeyTouched] = useState(false);
+
   // Notification prefs are client-side preferences (persisted in localStorage).
   const [notif, setNotif] = useState({ critical: true, rateLimit: true, pii: false, health: true });
 
@@ -114,10 +119,14 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
   const save = useCallback(async () => {
     if (!settings) return;
     setSaveState('saving');
-    const updated = await saveSettings(settings, scope || undefined);
-    if (updated) { setSettings(updated); setSaveState('saved'); setTimeout(() => setSaveState('idle'), 2000); }
+    // Omit the write-only key unless the user edited it, so saving other fields
+    // never clears the stored upstream key.
+    const payload: Partial<GatewaySettings> = { ...settings };
+    if (!keyTouched) delete payload.upstream_api_key;
+    const updated = await saveSettings(payload, scope || undefined);
+    if (updated) { setSettings(updated); setKeyTouched(false); setSaveState('saved'); setTimeout(() => setSaveState('idle'), 2000); }
     else setSaveState('error');
-  }, [settings, scope]);
+  }, [settings, scope, keyTouched]);
 
   const toggleCompact = () => setCompact(v => { const nv = !v; localStorage.setItem('titan-compact', nv ? '1' : '0'); return nv; });
   const setNotifKey = (k: keyof typeof notif) => setNotif(n => { const nn = { ...n, [k]: !n[k] }; localStorage.setItem('titan-notif', JSON.stringify(nn)); return nn; });
@@ -223,8 +232,49 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
             <motion.div key="gen" initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.18 }}>
               <div className="mb-8">
                 <h3 className="text-xl font-semibold">General</h3>
-                <p className="text-sm text-base-muted mt-1">Rate limiting, caching and analyzer performance. Applied live across all gateway replicas.</p>
+                <p className="text-sm text-base-muted mt-1">Upstream LLM, rate limiting, caching and analyzer performance. Applied live across all gateway replicas.</p>
               </div>
+
+              {/* Upstream LLM — switch between API providers and local models live */}
+              <div className="mb-8 p-4 border border-base-border rounded-lg">
+                <div className="text-sm font-semibold mb-1">Upstream LLM</div>
+                <p className="text-xs text-base-muted mb-3">Point the gateway at a hosted API or a local model (OpenAI-compatible). Switches live — no restart.</p>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {([
+                    { name: 'Groq',       url: 'https://api.groq.com/openai',          local: false },
+                    { name: 'OpenAI',     url: 'https://api.openai.com',               local: false },
+                    { name: 'Ollama',     url: 'http://host.docker.internal:11434',    local: true },
+                    { name: 'LM Studio',  url: 'http://host.docker.internal:1234',     local: true },
+                    { name: 'vLLM',       url: 'http://host.docker.internal:8000',     local: true },
+                  ]).map(p => (
+                    <button key={p.name} type="button" disabled={!settings}
+                      onClick={() => {
+                        // Local models are keyless — clear the key so it's never
+                        // sent upstream. API presets leave the key for you to enter.
+                        if (p.local) { patch({ upstream_url: p.url, upstream_api_key: '' }); setKeyTouched(true); }
+                        else patch({ upstream_url: p.url });
+                      }}
+                      className="px-2.5 py-1 text-xs rounded-md border border-base-border hover:bg-base-sec transition-colors disabled:opacity-50">
+                      {p.name}{p.local ? ' (local)' : ''}
+                    </button>
+                  ))}
+                </div>
+                <label className="text-xs font-semibold text-base-muted uppercase tracking-widest block mb-1.5">Upstream URL</label>
+                <input type="text" value={settings ? (settings.upstream_url ?? '') : ''} disabled={!settings}
+                  onChange={e => patch({ upstream_url: e.target.value })}
+                  placeholder="https://api.groq.com/openai  or  http://host.docker.internal:11434"
+                  className="w-full max-w-xl px-3 py-2.5 bg-base-sec border border-base-border rounded-lg text-sm outline-none focus:border-base-muted/60 transition-colors font-mono disabled:opacity-50"/>
+                <p className="text-xs text-base-muted mt-1.5">OpenAI-compatible base URL. For local models from Docker use <code className="bg-base-sec px-1 rounded">host.docker.internal</code>.</p>
+
+                <label className="text-xs font-semibold text-base-muted uppercase tracking-widest block mb-1.5 mt-4">Upstream API Key</label>
+                <input type="password" value={settings ? (settings.upstream_api_key ?? '') : ''} disabled={!settings}
+                  onChange={e => { patch({ upstream_api_key: e.target.value }); setKeyTouched(true); }}
+                  placeholder="leave blank to keep current · not needed for local models"
+                  className="w-full max-w-xl px-3 py-2.5 bg-base-sec border border-base-border rounded-lg text-sm outline-none focus:border-base-muted/60 transition-colors font-mono disabled:opacity-50"/>
+                <p className="text-xs text-base-muted mt-1.5">Write-only — never displayed. Required for hosted APIs; leave blank for keyless local servers.</p>
+                <div className="mt-4"><SaveButton state={saveState} onClick={save}/></div>
+              </div>
+
               <div className="space-y-5">
                 {([
                   { label: 'Rate Limit (RPM)',       key: 'rate_limit_rpm',      hint: 'Maximum requests per minute per tenant. 0 disables the limit.' },

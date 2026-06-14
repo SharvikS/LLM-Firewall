@@ -40,11 +40,24 @@ func (h *settingsHandler) getSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tenant == "" {
-		writeJSON(w, http.StatusOK, h.mgr.Get())
+		writeJSON(w, http.StatusOK, redactSecrets(h.mgr.Get()))
 		return
 	}
-	writeJSON(w, http.StatusOK, h.mgr.GetForTenant(tenant))
+	writeJSON(w, http.StatusOK, redactSecrets(h.mgr.GetForTenant(tenant)))
 }
+
+// redactSecrets blanks write-only secret fields before a settings document is
+// returned to a client. The upstream API key is never exposed via the API;
+// callers send it only when changing it.
+func redactSecrets(s settings.Settings) settings.Settings {
+	s.UpstreamAPIKey = ""
+	return s
+}
+
+// The upstream API key is authoritative when PRESENT in a patch: a value sets
+// it, an empty string clears it (switching to a keyless local model). Callers
+// that don't intend to change the key must OMIT the field — the JSON merge then
+// preserves the stored value. (The dashboard omits it unless the user edits it.)
 
 func (h *settingsHandler) updateSettings(w http.ResponseWriter, r *http.Request) {
 	if h.mgr == nil {
@@ -75,7 +88,7 @@ func (h *settingsHandler) updateSettings(w http.ResponseWriter, r *http.Request)
 		internalError(w, "update settings", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, updated)
+	writeJSON(w, http.StatusOK, redactSecrets(updated))
 }
 
 // deleteSettings clears a tenant's override, reverting it to the global doc.

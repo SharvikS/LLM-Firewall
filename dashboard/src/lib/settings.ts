@@ -3,6 +3,8 @@
 // no secret is ever exposed to the browser.
 
 export interface GatewaySettings {
+  upstream_url: string;
+  upstream_api_key: string; // write-only; always returned blank
   rate_limit_rpm: number;
   rate_limit_tpm: number;
   cache_ttl_sec: number;

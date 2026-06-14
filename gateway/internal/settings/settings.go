@@ -28,6 +28,14 @@ type Settings struct {
 	FailoverEnabled   bool  `json:"failover_enabled"`
 	AuditAllRequests  bool  `json:"audit_all_requests"`
 
+	// ── Upstream LLM (live-switchable: API provider OR local LLM) ──────────────
+	// UpstreamURL is the OpenAI-compatible base (e.g. https://api.groq.com/openai
+	// for Groq, or http://host.docker.internal:11434 for a local Ollama).
+	// UpstreamAPIKey is a write-only secret — redacted in API responses, empty for
+	// keyless local servers.
+	UpstreamURL    string `json:"upstream_url"`
+	UpstreamAPIKey string `json:"upstream_api_key"`
+
 	// ── ML plane (pushed to the Python engine over HTTP) ──────────────────────
 	PIIRedactionEnabled    bool            `json:"pii_redaction_enabled"`
 	ToxicityEnabled        bool            `json:"toxicity_enabled"`
@@ -88,6 +96,9 @@ func DefaultsFromConfig(cfg *config.Config) Settings {
 		OutputScanEnabled: cfg.OutputScanEnabled,
 		FailoverEnabled:   cfg.FallbackTargetURL != "",
 		AuditAllRequests:  true,
+
+		UpstreamURL:    cfg.TargetURL,
+		UpstreamAPIKey: cfg.APIKey,
 
 		PIIRedactionEnabled:    true,
 		ToxicityEnabled:        cfg.ToxicityEnabled,

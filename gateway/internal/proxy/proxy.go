@@ -184,10 +184,40 @@ func NewLLMProxy(
 	rp.FlushInterval = -1
 
 	base := rp.Director
+	defaultTarget := target
 	rp.Director = func(req *http.Request) {
-		base(req)
-		req.Host = target.Host
-		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+		// Capture the incoming path before base() joins it to the default target.
+		incomingPath := req.URL.Path
+		base(req) // sets default User-Agent etc.
+
+		// Resolve the live upstream: an API provider (Groq/OpenAI) or a local LLM
+		// (Ollama/LM Studio/vLLM), switchable from the dashboard with no restart.
+		up := defaultTarget
+		key := cfg.APIKey
+		if p.settings != nil {
+			s := p.settings.Get()
+			if s.UpstreamURL != "" {
+				if u, err := url.Parse(s.UpstreamURL); err == nil && u.Host != "" {
+					up = u
+					key = s.UpstreamAPIKey
+				}
+			}
+		}
+		req.URL.Scheme = up.Scheme
+		req.URL.Host = up.Host
+		// Re-join the upstream's base path (e.g. "/openai" for Groq, "" for Ollama)
+		// with the original request path so both provider shapes route correctly.
+		req.URL.Path = singleJoiningSlash(up.Path, incomingPath)
+		req.URL.RawPath = ""
+		req.Host = up.Host
+
+		// Keyless local servers (e.g. Ollama) need no auth — and we must not leak
+		// the caller's gateway API key upstream, so drop it when no key is set.
+		if key != "" {
+			req.Header.Set("Authorization", "Bearer "+key)
+		} else {
+			req.Header.Del("Authorization")
+		}
 		// W3C traceparent travels to the LLM upstream so one Jaeger trace
 		// covers the full gateway → provider round trip. The propagator is
 		// a no-op when tracing is disabled.
@@ -226,6 +256,21 @@ func NewLLMProxy(
 	}
 	p.rp = rp
 	return p, nil
+}
+
+// singleJoiningSlash joins two URL path segments with exactly one slash. Copied
+// from net/http/httputil (unexported there) so the dynamic Director can re-join
+// the active upstream's base path with the incoming request path.
+func singleJoiningSlash(a, b string) string {
+	aslash := strings.HasSuffix(a, "/")
+	bslash := strings.HasPrefix(b, "/")
+	switch {
+	case aslash && bslash:
+		return a + b[1:]
+	case !aslash && !bslash:
+		return a + "/" + b
+	}
+	return a + b
 }
 
 func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
