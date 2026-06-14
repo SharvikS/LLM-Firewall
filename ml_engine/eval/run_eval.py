@@ -208,8 +208,9 @@ def main():
     r = evaluate(detector, eval_rows)
     r["config"] = {"layer2": layer2_kind, "train_n": len(train), "eval_n": len(eval_rows)}
 
-    out_json = os.path.join(HERE, "results.json")
-    out_md = os.path.join(HERE, "REPORT.md")
+    suffix = "hf" if args.use_hf else "tfidf"
+    out_json = os.path.join(HERE, f"results_{suffix}.json")
+    out_md = os.path.join(HERE, f"REPORT_{suffix}.md")
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(r, f, indent=2)
     write_report(r, layer2_kind, out_md)

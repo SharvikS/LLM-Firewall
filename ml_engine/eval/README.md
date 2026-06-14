@@ -13,8 +13,8 @@ ml_engine/venv/Scripts/python.exe ml_engine/eval/run_eval.py            # offlin
 ml_engine/venv/Scripts/python.exe ml_engine/eval/run_eval.py --use-hf   # production transformer Layer 2 (needs torch)
 ```
 
-Outputs `results.json` (machine-readable) and `REPORT.md` (human-readable) in
-this directory.
+Each config writes `results_<tfidf|hf>.json` and `REPORT_<tfidf|hf>.md`.
+[`REPORT.md`](REPORT.md) is the hand-maintained side-by-side summary of both.
 
 ## Corpus
 
