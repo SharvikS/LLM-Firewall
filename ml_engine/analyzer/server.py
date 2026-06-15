@@ -26,6 +26,7 @@ from analyzer.toxicity_detector import ToxicityDetector
 from analyzer.secret_scanner import SecretScanner
 from analyzer import embed
 from analyzer import runtime_config
+from analyzer import schema
 from analyzer import telemetry
 
 logging.basicConfig(
@@ -43,17 +44,17 @@ _ACTION_MASK  = analyzer_pb2.Action.Value("MASK")
 def _extract_prompt(raw_prompt: str) -> str:
     """
     The Go gateway sends the full serialized JSON request body as the prompt
-    field.  Extract the human-readable text from the 'messages' array so our
-    classifiers operate on plain text, not JSON.
-    Falls back to the raw string if parsing fails.
+    field. Extract the human-readable text so our classifiers operate on plain
+    text, not JSON — across the OpenAI, Anthropic, and Gemini schemas (see
+    analyzer.schema). Falls back to the raw string if parsing fails or the shape
+    is unrecognised, so a novel body is never treated as empty.
     """
     try:
         body = json.loads(raw_prompt)
-        messages = body.get("messages", [])
-        parts = [m.get("content", "") for m in messages if isinstance(m.get("content"), str)]
-        return "\n".join(parts) if parts else raw_prompt
     except (json.JSONDecodeError, TypeError):
         return raw_prompt
+    text = schema.extract_text(body)
+    return text if text else raw_prompt
 
 
 class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
@@ -273,24 +274,25 @@ def _scan_and_mask_body(
     pii_entities=None,
 ) -> BodyScan:
     """
-    Scan every message in the JSON body individually for PII *and* secrets and
-    replace each message's content in-place, then run the source-code-leak
-    heuristic over the concatenated text.
+    Scan every human-text node in the JSON body individually for PII *and*
+    secrets and replace it in-place, then run the source-code-leak heuristic over
+    the concatenated text. Text nodes are located per provider schema (OpenAI,
+    Anthropic, Gemini) by analyzer.schema, so masking works for all three.
 
-    Scanning per-message rather than on the concatenated text preserves
-    conversation structure: masking only touches the messages that actually
-    contain sensitive data and never corrupts earlier turns.
+    Scanning per-node rather than on the concatenated text preserves conversation
+    structure: masking only touches the segments that actually contain sensitive
+    data and never corrupts earlier turns.
     """
     code_leak, code_conf = False, 0.0
 
     try:
         body = json.loads(raw_body)
-        messages = body.get("messages", []) if isinstance(body, dict) else []
+        nodes = schema.collect_text_nodes(body)
     except (json.JSONDecodeError, TypeError):
-        body, messages = None, []
+        body, nodes = None, []
 
-    if not messages:
-        # Non-JSON or message-less body — scan the whole string.
+    if not nodes:
+        # Non-JSON or unrecognised body — scan the whole string.
         masked, pii_ents, sec_ents = _scan_one(raw_body, pii_scanner, secret_scanner, pii_entities)
         leak = secret_scanner.scan(raw_body)
         return BodyScan(
@@ -305,14 +307,12 @@ def _scan_and_mask_body(
     all_secrets: list[str] = []
     text_parts: list[str] = []
 
-    for msg in messages:
-        content = msg.get("content")
-        if not isinstance(content, str):
-            continue
+    for container, key in nodes:
+        content = container[key]
         text_parts.append(content)
         masked, pii_ents, sec_ents = _scan_one(content, pii_scanner, secret_scanner, pii_entities)
         if pii_ents or sec_ents:
-            msg["content"] = masked
+            container[key] = masked
             all_pii.extend(pii_ents)
             all_secrets.extend(sec_ents)
 
