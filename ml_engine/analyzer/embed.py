@@ -7,11 +7,18 @@ Runs as a daemon thread alongside the gRPC AnalyzerService on port 8001
     POST /embed     — {"text": "..."} → {"embedding": [...], "dimensions": int}
     GET  /config    — current runtime governance config (toxicity/PII/code-leak)
     POST /config    — merge a config patch pushed by the gateway control plane
+    POST /scan      — {"text": "..."} → DLP verdict {decision, risk, reason,
+                      categories, pii, secrets, masked_text}. Used by the browser
+                      DLP extension to scan prompts typed into chat web UIs.
 
 The server always starts (the /config plane must be reachable even when
 sentence-transformers is unavailable). If the embedding model can't be loaded,
 /embed answers 503 and the Go semantic cache simply treats every lookup as a
 miss — the rest of the engine is unaffected.
+
+CORS is permissive (Access-Control-Allow-Origin: *) so the browser extension
+content/background scripts can reach /scan. The endpoint returns only verdicts
+and masked text — never the configured secrets or upstream keys.
 """
 
 import http.server
@@ -28,15 +35,24 @@ EMBED_PORT = int(os.getenv("EMBED_PORT", "8001"))
 MODEL_NAME = os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2")
 
 _model = None
+_scan_fn = None  # set by start(); maps raw text → DLP verdict dict
 
 
 class _Handler(http.server.BaseHTTPRequestHandler):
+    def do_OPTIONS(self):
+        # CORS preflight for the browser extension.
+        self.send_response(204)
+        self._cors_headers()
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_GET(self):
         if self.path == "/config":
             self._respond(200, runtime_config.get())
             return
         if self.path in ("/health", "/healthz"):
-            self._respond(200, {"status": "ok", "model_loaded": _model is not None})
+            self._respond(200, {"status": "ok", "model_loaded": _model is not None,
+                                "scan_enabled": _scan_fn is not None})
             return
         self._respond(404, {"error": "not found"})
 
@@ -47,7 +63,29 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if self.path == "/embed":
             self._handle_embed()
             return
+        if self.path == "/scan":
+            self._handle_scan()
+            return
         self._respond(404, {"error": "not found"})
+
+    def _handle_scan(self):
+        if _scan_fn is None:
+            self._respond(503, {"error": "scanner not available"})
+            return
+        try:
+            body = self._read_json()
+            text = body.get("text", "")
+            if not isinstance(text, str):
+                self._respond(400, {"error": "text field must be a string"})
+                return
+            if not text.strip():
+                self._respond(200, {"decision": "allow", "risk": 0.0, "reason": "empty",
+                                    "categories": [], "pii": [], "secrets": [], "masked_text": text})
+                return
+            self._respond(200, _scan_fn(text))
+        except Exception as exc:
+            logger.error("scan error: %s", exc)
+            self._respond(500, {"error": str(exc)})
 
     def _handle_config(self):
         try:
@@ -80,11 +118,17 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return {}
         return json.loads(self.rfile.read(length))
 
+    def _cors_headers(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
     def _respond(self, status: int, data: dict) -> None:
         payload = json.dumps(data).encode()
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
+        self._cors_headers()
         self.end_headers()
         self.wfile.write(payload)
 
@@ -108,14 +152,20 @@ def _load_model() -> None:
         )
 
 
-def start() -> None:
+def start(scan_fn=None) -> None:
     """Start the HTTP side-channel and load the embedding model.
 
     The HTTP server always starts so the /config control plane is reachable;
     the model load is independent and may fail without affecting /config.
+
+    scan_fn, when supplied, is a callable text -> verdict dict that backs the
+    /scan endpoint (the browser DLP extension). When None, /scan answers 503.
     """
+    global _scan_fn
+    _scan_fn = scan_fn
     _load_model()
     server = http.server.ThreadingHTTPServer(("0.0.0.0", EMBED_PORT), _Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    logger.info("ML HTTP side-channel listening on port %d (/embed, /config)", EMBED_PORT)
+    routes = "/embed, /config" + (", /scan" if scan_fn is not None else "")
+    logger.info("ML HTTP side-channel listening on port %d (%s)", EMBED_PORT, routes)

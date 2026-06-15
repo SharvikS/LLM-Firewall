@@ -237,6 +237,79 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
             reason="Request is clean",
         )
 
+    def scan_text(self, text: str) -> dict:
+        """Scan a raw prompt string (e.g. text typed straight into a chat web UI
+        and captured by the browser DLP extension) with the *same* detectors and
+        live governance config as AnalyzePrompt. Returns a plain JSON-serialisable
+        verdict:
+
+            decision : "block"  — injection/jailbreak, toxicity over threshold, or
+                                  a source-code leak when code_leak_block is on.
+                       "redact" — PII and/or secrets found; masked_text is safe to send.
+                       "allow"  — clean.
+            risk     : 0-100
+            reason   : human-readable summary
+            categories: machine tags (injection|toxicity|pii|secret|code_leak)
+            pii / secrets : entity-type lists
+            masked_text   : the prompt with PII/secrets replaced by mask tokens
+        """
+        text = text or ""
+        rc = runtime_config.get()
+
+        # --- Injection / jailbreak (hard block) ---
+        inj = self._injection.detect(text)
+        if inj.is_injection:
+            return {
+                "decision": "block", "risk": inj.risk_score, "reason": inj.description,
+                "categories": ["injection"], "pii": [], "secrets": [], "masked_text": text,
+            }
+
+        # --- Toxicity (hard block over the dashboard-tuned threshold) ---
+        if rc["toxicity_enabled"]:
+            tox = self._toxicity.detect(text)
+            if tox.is_toxic and tox.score >= rc["toxicity_block_threshold"]:
+                return {
+                    "decision": "block", "risk": tox.score * 100.0,
+                    "reason": f"Toxic content: {tox.description}",
+                    "categories": ["toxicity"], "pii": [], "secrets": [], "masked_text": text,
+                }
+
+        # --- PII + secrets + source-code-leak over the plain text ---
+        pii_allow = runtime_config.enabled_pii_entities() if rc["pii_redaction_enabled"] else []
+        masked, pii_ents, sec_ents = _scan_one(text, self._pii, self._secrets, pii_allow)
+        leak = self._secrets.scan(text)
+
+        risk, categories, findings = 0.0, [], []
+        if leak.code_leak:
+            risk = max(risk, leak.code_confidence * 100.0)
+            categories.append("code_leak")
+            findings.append(f"Source-code paste detected ({leak.code_confidence:.0%})")
+            if rc["code_leak_block"]:
+                return {
+                    "decision": "block", "risk": risk, "reason": "Source-code leak",
+                    "categories": ["code_leak"], "pii": [], "secrets": [], "masked_text": text,
+                }
+        if pii_ents:
+            risk = max(risk, 35.0)
+            categories.append("pii")
+            findings.append("PII: " + ", ".join(pii_ents))
+        if sec_ents:
+            risk = max(risk, 60.0)
+            categories.append("secret")
+            findings.append("Secrets: " + ", ".join(sec_ents))
+
+        if pii_ents or sec_ents:
+            return {
+                "decision": "redact", "risk": risk, "reason": "; ".join(findings),
+                "categories": categories, "pii": pii_ents, "secrets": sec_ents,
+                "masked_text": masked,
+            }
+
+        return {
+            "decision": "allow", "risk": risk, "reason": "clean",
+            "categories": categories, "pii": [], "secrets": [], "masked_text": text,
+        }
+
 
 @dataclass
 class BodyScan:
@@ -331,8 +404,12 @@ def _scan_and_mask_body(
 
 
 def serve() -> None:
-    # Start the HTTP side-channel (/embed + /config control plane) alongside gRPC.
-    embed.start()
+    # Build the servicer first so its detectors back both gRPC and the HTTP /scan
+    # endpoint used by the browser DLP extension.
+    servicer = AnalyzerServicer()
+
+    # Start the HTTP side-channel (/embed + /config + /scan) alongside gRPC.
+    embed.start(scan_fn=servicer.scan_text)
 
     # Tracing is opt-in: no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set.
     telemetry.init()
@@ -346,7 +423,7 @@ def serve() -> None:
         interceptors=telemetry.server_interceptors(),
     )
     analyzer_pb2_grpc.add_AnalyzerServiceServicer_to_server(
-        AnalyzerServicer(), server
+        servicer, server
     )
 
     if tls_enabled:
