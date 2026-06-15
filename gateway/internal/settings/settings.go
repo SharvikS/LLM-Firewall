@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/sharvik/llm-firewall/gateway/internal/config"
+	"github.com/sharvik/llm-firewall/gateway/internal/provider"
 )
 
 // Settings holds every dashboard-tunable knob. Field names are stable JSON keys
@@ -28,13 +29,20 @@ type Settings struct {
 	FailoverEnabled   bool  `json:"failover_enabled"`
 	AuditAllRequests  bool  `json:"audit_all_requests"`
 
-	// ── Upstream LLM (live-switchable: API provider OR local LLM) ──────────────
-	// UpstreamURL is the OpenAI-compatible base (e.g. https://api.groq.com/openai
-	// for Groq, or http://host.docker.internal:11434 for a local Ollama).
-	// UpstreamAPIKey is a write-only secret — redacted in API responses, empty for
-	// keyless local servers.
-	UpstreamURL    string `json:"upstream_url"`
-	UpstreamAPIKey string `json:"upstream_api_key"`
+	// ── Upstream LLM (live-switchable: cloud provider OR local LLM) ────────────
+	// UpstreamProvider selects the wire dialect ("openai" | "anthropic" |
+	// "google"). It drives which auth header the proxy injects and which JSON
+	// schema the firewall inspects, letting the same gateway front ChatGPT,
+	// Claude, or Gemini. "openai" (the default) also covers every
+	// OpenAI-compatible upstream: Groq, vLLM, Ollama, LM Studio, …
+	//
+	// UpstreamURL is the provider API base (e.g. https://api.anthropic.com,
+	// https://generativelanguage.googleapis.com, or http://host.docker.internal:11434
+	// for a local Ollama). UpstreamAPIKey is a write-only secret — redacted in API
+	// responses, empty for keyless local servers.
+	UpstreamProvider string `json:"upstream_provider"`
+	UpstreamURL      string `json:"upstream_url"`
+	UpstreamAPIKey   string `json:"upstream_api_key"`
 
 	// ── Real-time alerting / SIEM integration ─────────────────────────────────
 	// Security events at or above AlertMinRisk (plus quota breaches) are POSTed to
@@ -119,8 +127,9 @@ func DefaultsFromConfig(cfg *config.Config) Settings {
 		FailoverEnabled:   cfg.FallbackTargetURL != "",
 		AuditAllRequests:  true,
 
-		UpstreamURL:    cfg.TargetURL,
-		UpstreamAPIKey: cfg.APIKey,
+		UpstreamProvider: string(provider.FromHost(cfg.TargetURL)),
+		UpstreamURL:      cfg.TargetURL,
+		UpstreamAPIKey:   cfg.APIKey,
 
 		AlertsEnabled: false,
 		AlertMinRisk:  90,
@@ -325,6 +334,9 @@ func (s *Settings) clamp() {
 	if s.PIIEntities == nil {
 		s.PIIEntities = DefaultPIIEntities()
 	}
+	// Normalise the provider selector so the proxy and ML engine always receive
+	// a canonical value ("openai" | "anthropic" | "google").
+	s.UpstreamProvider = string(provider.Parse(s.UpstreamProvider))
 	if s.AlertMinRisk < 0 {
 		s.AlertMinRisk = 0
 	}

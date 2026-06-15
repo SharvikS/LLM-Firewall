@@ -32,6 +32,7 @@ import (
 	mw "github.com/sharvik/llm-firewall/gateway/internal/middleware"
 	"github.com/sharvik/llm-firewall/gateway/internal/plugins"
 	"github.com/sharvik/llm-firewall/gateway/internal/policy"
+	"github.com/sharvik/llm-firewall/gateway/internal/provider"
 	"github.com/sharvik/llm-firewall/gateway/internal/ratelimit"
 	"github.com/sharvik/llm-firewall/gateway/internal/settings"
 	"github.com/sharvik/llm-firewall/gateway/internal/store"
@@ -101,22 +102,6 @@ func providerFromHost(host string) string {
 	default:
 		return host
 	}
-}
-
-// parseModel extracts the "model" field from an OpenAI-format request body for
-// audit attribution. Returns "unknown" when absent or unparseable so analytics
-// never attribute traffic to a hardcoded model.
-func parseModel(body []byte) string {
-	if len(body) == 0 {
-		return "unknown"
-	}
-	var req struct {
-		Model string `json:"model"`
-	}
-	if err := json.Unmarshal(body, &req); err != nil || req.Model == "" {
-		return "unknown"
-	}
-	return req.Model
 }
 
 func NewLLMProxy(
@@ -197,12 +182,15 @@ func NewLLMProxy(
 		incomingPath := req.URL.Path
 		base(req) // sets default User-Agent etc.
 
-		// Resolve the live upstream: an API provider (Groq/OpenAI) or a local LLM
-		// (Ollama/LM Studio/vLLM), switchable from the dashboard with no restart.
+		// Resolve the live upstream: a cloud provider (OpenAI/Anthropic/Google or
+		// any OpenAI-compatible host like Groq) or a local LLM (Ollama/LM Studio/
+		// vLLM), switchable from the dashboard with no restart.
 		up := defaultTarget
 		key := cfg.APIKey
+		prov := provider.FromHost(cfg.TargetURL)
 		if p.settings != nil {
 			s := p.settings.Get()
+			prov = provider.Parse(s.UpstreamProvider)
 			if s.UpstreamURL != "" {
 				if u, err := url.Parse(s.UpstreamURL); err == nil && u.Host != "" {
 					up = u
@@ -218,13 +206,11 @@ func NewLLMProxy(
 		req.URL.RawPath = ""
 		req.Host = up.Host
 
-		// Keyless local servers (e.g. Ollama) need no auth — and we must not leak
-		// the caller's gateway API key upstream, so drop it when no key is set.
-		if key != "" {
-			req.Header.Set("Authorization", "Bearer "+key)
-		} else {
-			req.Header.Del("Authorization")
-		}
+		// Inject provider-correct credentials (Bearer for OpenAI-compatible,
+		// x-api-key + anthropic-version for Claude, x-goog-api-key for Gemini) and
+		// strip any stale credential headers. Keyless local servers (e.g. Ollama)
+		// get no auth — we must never leak the gateway API key upstream.
+		provider.ApplyAuth(req, prov, key)
 		// W3C traceparent travels to the LLM upstream so one Jaeger trace
 		// covers the full gateway → provider round trip. The propagator is
 		// a no-op when tracing is disabled.
@@ -338,9 +324,14 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// can't produce inconsistent decisions.
 	set := p.settings.GetForTenant(tenantID.String())
 
+	// Active upstream provider (OpenAI/Anthropic/Google) — drives provider-aware
+	// model extraction and token estimation so audit and TPM accounting are
+	// correct regardless of which cloud LLM the firewall is fronting.
+	prov := provider.Parse(set.UpstreamProvider)
+
 	isStream := cache.IsStreaming(body)
 	cacheKey := p.cache.Key(tenantID.String(), r.URL.Path, body)
-	model := parseModel(body) // real requested model for audit attribution
+	model := provider.ExtractModel(prov, r.URL.Path, body) // real requested model for audit attribution
 	originalBody := body      // pre-mask copy: plugins inspect what the user actually sent
 
 	// Resolve request region from Cloudflare or a custom header early so every
@@ -382,7 +373,7 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// TPM check (skipped when the tenant's effective TPM limit is 0).
 	if set.RateLimitTPM > 0 {
-		tokenCount := estimateTokens(body)
+		tokenCount := estimateTokens(prov, body)
 		tpm, tpmErr := p.limiter.AllowTokensWithLimit(r.Context(), tenantID.String(), tokenCount, set.RateLimitTPM)
 		if tpmErr == nil && !tpm.Allowed {
 			log.Warn("token rate limit exceeded (TPM)",
@@ -434,7 +425,7 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// and the final block outcome. Background context so a client disconnect
 	// can't drop the meter write. Rejected requests above are intentionally not
 	// metered (they never consumed quota).
-	billedTokens := estimateTokens(body)
+	billedTokens := estimateTokens(prov, body)
 	blockedOutcome := false
 	defer func() {
 		p.meter.Record(context.Background(), tenantID.String(), billedTokens, blockedOutcome, start)
@@ -771,44 +762,59 @@ func (p *LLMProxy) serveCachedEntry(
 		entry.StatusCode, latencyMs, xCacheVal, region, model)
 }
 
-// estimateTokens approximates the number of tokens in an OpenAI-format request
-// body and adds max_tokens (output budget) when specified.
+// estimateTokens approximates the number of input tokens in a request body and
+// adds the requested output budget when specified. The prompt text is extracted
+// per provider (OpenAI messages, Anthropic system+messages, Gemini contents) so
+// TPM accounting is correct for whichever cloud LLM the firewall is fronting —
+// extracting the wrong shape would under-count and let an attacker slip under the
+// limit.
 //
 // Token counting uses two heuristics applied per rune:
 //   - ASCII (< 128): ~4 chars per token (standard GPT heuristic).
 //   - Non-ASCII (CJK, emoji, etc.): ~1 char per token — BPE tokenizers assign
-//     far fewer bytes per token for high-density Unicode, so using the ASCII
-//     heuristic would under-count and let an attacker slip under TPM limits.
-func estimateTokens(body []byte) int64 {
+//     far fewer bytes per token for high-density Unicode.
+func estimateTokens(prov provider.Type, body []byte) int64 {
 	if len(body) == 0 {
 		return 1
 	}
-	var req struct {
-		Messages []struct {
-			Content string `json:"content"`
-		} `json:"messages"`
-		MaxTokens int `json:"max_tokens"`
-	}
-	if err := json.Unmarshal(body, &req); err != nil {
-		return int64(len(body)/4) + 1
-	}
-	var estimate int64
-	for _, m := range req.Messages {
-		var ascii, nonASCII int64
-		for _, r := range m.Content {
-			if r < 128 {
-				ascii++
-			} else {
-				nonASCII++
-			}
+	text := provider.PromptText(prov, body)
+	var ascii, nonASCII int64
+	for _, r := range text {
+		if r < 128 {
+			ascii++
+		} else {
+			nonASCII++
 		}
-		estimate += ascii/4 + nonASCII
 	}
-	estimate++ // floor at 1
-	if req.MaxTokens > 0 {
-		estimate += int64(req.MaxTokens)
+	estimate := ascii/4 + nonASCII + 1 // floor at 1
+	if out := parseOutputBudget(prov, body); out > 0 {
+		estimate += out
 	}
 	return estimate
+}
+
+// parseOutputBudget reads the requested maximum output tokens from the body using
+// the provider's field name: OpenAI/Anthropic use "max_tokens"; Gemini nests
+// "maxOutputTokens" under "generationConfig".
+func parseOutputBudget(prov provider.Type, body []byte) int64 {
+	if prov == provider.Google {
+		var req struct {
+			GenerationConfig struct {
+				MaxOutputTokens int `json:"maxOutputTokens"`
+			} `json:"generationConfig"`
+		}
+		if json.Unmarshal(body, &req) == nil {
+			return int64(req.GenerationConfig.MaxOutputTokens)
+		}
+		return 0
+	}
+	var req struct {
+		MaxTokens int `json:"max_tokens"`
+	}
+	if json.Unmarshal(body, &req) == nil {
+		return int64(req.MaxTokens)
+	}
+	return 0
 }
 
 // maxCacheBodyBytes is the maximum response size we will buffer for caching.
