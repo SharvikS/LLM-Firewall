@@ -10,6 +10,7 @@ export interface Guardrail {
 
 export interface GatewaySettings {
   guardrails: Guardrail[];
+  upstream_provider: string; // "openai" | "anthropic" | "google" — drives auth + inspection
   upstream_url: string;
   upstream_api_key: string; // write-only; always returned blank
   alerts_enabled: boolean;

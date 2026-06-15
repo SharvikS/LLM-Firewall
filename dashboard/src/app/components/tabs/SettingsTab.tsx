@@ -148,7 +148,7 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
       const res = await fetch('/api/admin/upstream/test', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         // Only include the key if the user just typed one (else the gateway has it).
-        body: JSON.stringify({ url: settings.upstream_url, key: keyTouched ? settings.upstream_api_key : '' }),
+        body: JSON.stringify({ url: settings.upstream_url, provider: settings.upstream_provider, key: keyTouched ? settings.upstream_api_key : '' }),
       });
       const d = await res.json();
       setConn({ state: 'done', reachable: d.reachable, detail: d.detail, models: d.models });
@@ -292,36 +292,49 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
                 <p className="text-sm text-base-muted mt-1">Upstream LLM, rate limiting, caching and analyzer performance. Applied live across all gateway replicas.</p>
               </div>
 
-              {/* Upstream LLM — switch between API providers and local models live */}
+              {/* Upstream LLM — switch between cloud providers and local models live */}
               <div className="mb-8 p-4 border border-base-border rounded-lg">
                 <div className="text-sm font-semibold mb-1">Upstream LLM</div>
-                <p className="text-xs text-base-muted mb-3">Point the gateway at a hosted API or a local model (OpenAI-compatible). Switches live — no restart.</p>
+                <p className="text-xs text-base-muted mb-3">Point the gateway at a hosted cloud provider (ChatGPT, Claude, Gemini) or a local model. The provider sets the auth scheme and which request schema the firewall inspects. Switches live — no restart.</p>
                 <div className="flex flex-wrap gap-2 mb-4">
                   {([
-                    { name: 'Groq',       url: 'https://api.groq.com/openai',          local: false },
-                    { name: 'OpenAI',     url: 'https://api.openai.com',               local: false },
-                    { name: 'Ollama',     url: 'http://host.docker.internal:11434',    local: true },
-                    { name: 'LM Studio',  url: 'http://host.docker.internal:1234',     local: true },
-                    { name: 'vLLM',       url: 'http://host.docker.internal:8000',     local: true },
+                    { name: 'OpenAI',     provider: 'openai',    url: 'https://api.openai.com/v1',                       local: false },
+                    { name: 'Anthropic',  provider: 'anthropic', url: 'https://api.anthropic.com',                       local: false },
+                    { name: 'Gemini',     provider: 'google',    url: 'https://generativelanguage.googleapis.com',       local: false },
+                    { name: 'Groq',       provider: 'openai',    url: 'https://api.groq.com/openai',                     local: false },
+                    { name: 'Ollama',     provider: 'openai',    url: 'http://host.docker.internal:11434',               local: true },
+                    { name: 'LM Studio',  provider: 'openai',    url: 'http://host.docker.internal:1234',                local: true },
+                    { name: 'vLLM',       provider: 'openai',    url: 'http://host.docker.internal:8000',                local: true },
                   ]).map(p => (
                     <button key={p.name} type="button" disabled={!settings}
                       onClick={() => {
                         // Local models are keyless — clear the key so it's never
-                        // sent upstream. API presets leave the key for you to enter.
-                        if (p.local) { patch({ upstream_url: p.url, upstream_api_key: '' }); setKeyTouched(true); }
-                        else patch({ upstream_url: p.url });
+                        // sent upstream. Cloud presets leave the key for you to enter.
+                        if (p.local) { patch({ upstream_provider: p.provider, upstream_url: p.url, upstream_api_key: '' }); setKeyTouched(true); }
+                        else patch({ upstream_provider: p.provider, upstream_url: p.url });
                       }}
                       className="px-2.5 py-1 text-xs rounded-md border border-base-border hover:bg-base-sec transition-colors disabled:opacity-50">
                       {p.name}{p.local ? ' (local)' : ''}
                     </button>
                   ))}
                 </div>
-                <label className="text-xs font-semibold text-base-muted uppercase tracking-widest block mb-1.5">Upstream URL</label>
+
+                <label className="text-xs font-semibold text-base-muted uppercase tracking-widest block mb-1.5">Provider</label>
+                <select value={settings ? (settings.upstream_provider || 'openai') : 'openai'} disabled={!settings}
+                  onChange={e => patch({ upstream_provider: e.target.value })}
+                  className="w-full max-w-xl px-3 py-2.5 bg-base-sec border border-base-border rounded-lg text-sm outline-none focus:border-base-muted/60 transition-colors disabled:opacity-50">
+                  <option value="openai">OpenAI / ChatGPT (and OpenAI-compatible: Groq, Ollama, vLLM…)</option>
+                  <option value="anthropic">Anthropic Claude</option>
+                  <option value="google">Google Gemini</option>
+                </select>
+                <p className="text-xs text-base-muted mt-1.5">Auth: OpenAI → <code className="bg-base-sec px-1 rounded">Bearer</code>, Claude → <code className="bg-base-sec px-1 rounded">x-api-key</code>, Gemini → <code className="bg-base-sec px-1 rounded">x-goog-api-key</code>. Point your app&apos;s SDK <code className="bg-base-sec px-1 rounded">base_url</code> at this gateway.</p>
+
+                <label className="text-xs font-semibold text-base-muted uppercase tracking-widest block mb-1.5 mt-4">Upstream URL</label>
                 <input type="text" value={settings ? (settings.upstream_url ?? '') : ''} disabled={!settings}
                   onChange={e => patch({ upstream_url: e.target.value })}
-                  placeholder="https://api.groq.com/openai  or  http://host.docker.internal:11434"
+                  placeholder="https://api.anthropic.com  or  http://host.docker.internal:11434"
                   className="w-full max-w-xl px-3 py-2.5 bg-base-sec border border-base-border rounded-lg text-sm outline-none focus:border-base-muted/60 transition-colors font-mono disabled:opacity-50"/>
-                <p className="text-xs text-base-muted mt-1.5">OpenAI-compatible base URL. For local models from Docker use <code className="bg-base-sec px-1 rounded">host.docker.internal</code>.</p>
+                <p className="text-xs text-base-muted mt-1.5">Provider API base URL. For local models from Docker use <code className="bg-base-sec px-1 rounded">host.docker.internal</code>.</p>
 
                 <label className="text-xs font-semibold text-base-muted uppercase tracking-widest block mb-1.5 mt-4">Upstream API Key</label>
                 <input type="password" value={settings ? (settings.upstream_api_key ?? '') : ''} disabled={!settings}
