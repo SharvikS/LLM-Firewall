@@ -7,7 +7,7 @@
 
 **The enterprise AI firewall. Intercept, inspect, and govern every LLM request before it reaches the model.**
 
-A drop-in reverse proxy for OpenAI, Anthropic, Groq, and local LLMs — with sub-millisecond ML-powered threat detection, PII masking, rate limiting, semantic caching, and a full enterprise control plane.
+A drop-in reverse proxy for OpenAI, Anthropic, Groq, and local LLMs (Ollama, LM Studio, vLLM) — with sub-millisecond ML-powered threat detection, bidirectional PII masking, no-code guardrails, per-tenant quotas, real-time SOC alerting, RBAC/SSO, and a full enterprise control plane.
 
 <br/>
 
@@ -52,7 +52,7 @@ A drop-in reverse proxy for OpenAI, Anthropic, Groq, and local LLMs — with sub
 
 Enterprise teams deploying LLMs face an invisible threat surface: **prompt injections** that hijack model behavior, **PII and credential leaks** sent to third-party APIs, **runaway costs** from unbounded token usage, and **zero visibility** into what your applications are actually sending to the model.
 
-**TITAN Gateway** is a zero-trust security layer that sits between your application and any LLM provider. It operates as a fully transparent reverse proxy — no SDK changes, no application rewrites. Every request passes through a seven-stage inspection pipeline:
+**TITAN Gateway** is a zero-trust security layer that sits between your application and any LLM provider. It operates as a fully transparent reverse proxy — no SDK changes, no application rewrites. Every request passes through a multi-stage inspection pipeline before it ever reaches the model, and every response is scanned on the way back:
 
 ```
 Client Request
@@ -61,28 +61,40 @@ Client Request
 [1] API Key Authentication    ─ Tenant-scoped keys, revocable at runtime
     │
     ▼
-[2] Exact + Semantic Cache     ─ Redis SHA-256 + Qdrant vector similarity
+[2] Rate Limiting              ─ Redis sliding-window RPM + tumbling-window TPM
     │
     ▼
-[3] Rate Limiting              ─ Redis sliding-window RPM + tumbling-window TPM
+[2b] Monthly Quota Enforcement ─ Per-tenant plan entitlement (429 before upstream)
     │
     ▼
-[4] ML Analysis (gRPC)         ─ Injection detector + PII scanner (150ms timeout)
+[2c] Custom Guardrails         ─ Operator-defined no-code regex deny rules (403)
     │
     ▼
-[5] Policy Engine              ─ Cedar-style ABAC: ALLOW / DENY / LOG (default-deny)
+[3] Exact + Semantic Cache     ─ Redis SHA-256 + Qdrant vector similarity
+    │
+    ▼
+[4] ML Analysis (gRPC)         ─ Injection + toxicity + PII scanner (150ms timeout)
+    │
+    ▼
+[4b] WASM Plugins              ─ Sandboxed operator-supplied custom detectors (wazero)
+    │
+    ▼
+[5] Policy Engine              ─ Cedar ABAC: ALLOW / DENY / LOG (default-deny)
     │
     ▼
 [6] LLM Proxy + Failover       ─ Primary → fallback with transparent retry
     │
     ▼
-[7] Async Audit Log            ─ Full event streamed to Kafka, zero latency impact
+[7] Output Scanning            ─ Mask PII/secrets in the model's reply (incl. SSE streams)
+    │
+    ▼
+[8] Async Audit Log            ─ Full event streamed to Kafka, zero latency impact
     │
     ▼
   Response to Client
 ```
 
-All of this runs in **a single Go binary** with **<1ms overhead** on the hot path, backed by a Python ML engine running **HuggingFace transformer models** and **Microsoft Presidio** for PII detection.
+All of this runs in **a single Go binary** with **<1ms overhead** on the hot path, backed by a Python ML engine running **HuggingFace transformer models** and **Microsoft Presidio** for PII detection. The control plane is secured with **session + OIDC SSO authentication and four-tier RBAC**.
 
 ---
 
@@ -163,6 +175,12 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
 
 **Source-Code & Secret Leak Prevention** — Hardcoded credentials (cloud keys, provider API keys, private keys, tokens, DB connection strings) are masked in-place with `<SECRET:LABEL>` tags inside the same per-message pass as PII. A density heuristic flags large source-code pastes; set `CODE_LEAK_BLOCK=true` to reject them outright.
 
+**Response-Side Output Scanning** — The gateway scans what the *model* sends back, not just what the client sends in. PII and secrets the LLM emits (email, SSN, credit card, AWS keys, `sk-` style tokens) are masked before they reach the client (`OUTPUT_SCAN_ENABLED`, default on). Streaming (SSE) responses are masked **inline without buffering** via a cross-chunk carry buffer, so no partial match ever leaks and low-latency streaming UX is preserved. Non-streamed responses set the `X-Titan-Output-Masked` header when a redaction occurred; streamed redactions are recorded in the audit log.
+
+**No-Code Custom Guardrails** — Operators define case-insensitive regex deny rules directly in the dashboard (Settings → Security Defaults) — no redeploy. A match short-circuits the request with a 403 `GUARDRAIL_BLOCKED` event and never leaks the matched pattern back to the caller. Rules are compiled once and cached (`sync.Map`); bad patterns degrade to no-ops rather than failing the gateway. Up to 100 rules, applied per-tenant or globally.
+
+**WASM Custom-Rule Plugins** — Drop-in `.wasm` detectors run as a sandboxed pipeline stage (wazero, no host syscalls) so teams can ship proprietary detection logic without forking the gateway (`PLUGIN_DIR`, `PLUGIN_TIMEOUT_MS`).
+
 **Sandbox Tool Execution Safety** — The analyzer's tool execution dispatcher uses an explicit two-tier allowlist. Shell execution tools (`bash`, `python`, `exec`, `subprocess`, etc.) are routed to an isolated sandbox. Unknown tool names are denied by default — the system never fails open to uncontrolled execution.
 
 **OOM Defense** — `http.MaxBytesReader` caps request body ingestion at a configurable limit (default 4 MB) before `io.ReadAll` — preventing memory exhaustion on malformed or oversized payloads.
@@ -174,6 +192,14 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
 **Dynamic Policy Engine** — Rule-based policies evaluated at request time: `ALLOW`, `DENY`, or `LOG` based on `principal` (tenant/user), `action`, and a free-form `condition` expression. Create, enable/disable, and delete policies live via the dashboard or Admin API.
 
 **Multi-Tenant Architecture** — True tenant isolation with scoped API keys. Each key is bound to a tenant, tracked for last-use, and revocable without downtime.
+
+**Authentication, RBAC & SSO** — The control plane is protected by session-based login (signed tokens, configurable TTL) and optional **OIDC single sign-on** (`OIDC_*`). Every Admin API route is gated by a four-tier role model — **Viewer** (read-only surfaces), **Compliance** (audit exports), **Security** (edit config, policies, guardrails, upstream), and **Admin** (credentials, user management, plan changes). A default admin is bootstrapped from `DEFAULT_ADMIN_EMAIL` / `DEFAULT_ADMIN_PASSWORD`; the legacy `X-Admin-Token` still works for machine-to-machine automation.
+
+**Per-Tenant Configuration Layering** — Any gateway-plane setting (rate limits, cache TTL, analyzer timeout, output scanning, audit toggles, upstream) can be overridden per tenant as a sparse JSON patch layered over the global defaults at read time. Tenants inherit global values for everything they don't override; reverting an override (`DELETE /admin/v1/settings?tenant=…`) drops them back to the baseline. Switch scope live from the Settings tab.
+
+**Per-Tenant Usage Metering & Plan Quotas** — Redis-backed usage counters meter requests, tokens, and blocked calls per tenant per month. Four plans — **Free** (10k req/mo), **Starter** (100k, $49), **Pro** (1M, $499), and **Enterprise** (unlimited) — are enforced at admission: a tenant over quota gets a `429` *before* the upstream LLM is ever called. Usage and plan management live on the Billing tab.
+
+**Real-Time SOC Alerting** — High-risk events (`ML_BLOCKED` above a configurable risk threshold, `QUOTA_EXCEEDED`) are dispatched to a webhook in a non-blocking worker. The payload is dual-format — human-readable text that renders in **Slack / Microsoft Teams** plus structured JSON for **SIEM / PagerDuty / Splunk HEC**. Per-`(tenant, action)` coalescing (60s window) prevents alert storms. Configure and fire a live test from Settings → Notifications.
 
 **API Key Lifecycle** — Generate cryptographically random keys (`titan_` prefix + 64 hex chars), list with metadata, copy-to-clipboard, and instant revocation. Prefixes use 14 characters (`titan_` + 8 random hex = ~4.3 billion unique display values). Last-used timestamps update via a deduplicated background writer that survives transient DB errors.
 
@@ -191,9 +217,17 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
 
 **Concurrent Embedding Service** — The Python embedding server runs as a `ThreadingHTTPServer`, handling parallel embedding requests for semantic cache lookups without serialization.
 
-**Streaming Support** — Full SSE/chunked transfer encoding passthrough for streaming completions.
+**Streaming Support** — Full SSE/chunked transfer encoding passthrough for streaming completions (with inline output masking — see above).
 
-**mTLS for gRPC** — The gateway-to-ML-engine channel supports mutual TLS with configurable certificate paths. When TLS is enabled, a configuration failure causes the server to exit rather than fall back to plaintext.
+**Live-Switchable Upstream (API & Local LLMs)** — Point the gateway at any OpenAI-compatible upstream — Groq, OpenAI, **Ollama, LM Studio, vLLM** — and switch it live from the dashboard with one click, no restart. Provider presets pre-fill the URL; the API key is write-only (omit to preserve, clear for keyless local models). The Director resolves the upstream per request and re-joins provider-specific base paths (Groq's `/openai`, Ollama's bare `/v1`). `docker-compose` wires `host.docker.internal` so a model running on your laptop is reachable from the containerized gateway on Linux engines too.
+
+**Upstream Connection Test** — A one-click probe (Settings → General) checks whether the **gateway itself** — not the browser — can reach the configured upstream. It hits `/v1/models`/`/models` from inside the gateway's network namespace and returns reachability, the model list, and round-trip latency — answering "is my local model actually running?" without guesswork.
+
+**mTLS for gRPC** — The gateway-to-ML-engine channel supports **mutual TLS** (`ANALYZER_TLS_ENABLED` + client cert/key) so the ML engine only accepts calls from the gateway. One-way TLS is also supported (omit the client cert). TLS 1.2 is the floor, and a certificate-load failure causes the server to exit rather than fall back to plaintext (fail-closed). `scripts/gen-certs.sh` issues the full CA + server + client chain.
+
+**Backup, Restore & Disaster Recovery** — `scripts/backup.sh` takes a full CockroachDB backup (local nodelocal for dev, or S3/GCS/Azure via `BACKUP_URI`); `scripts/restore.sh` restores the latest backup non-destructively into a staging database. `docs/MD_FILES/DR_RUNBOOK.md` documents what holds state, RPO/RTO targets (≤24h / ≤30min), and a monthly restore-drill cadence.
+
+**Dependency CVE Scanning** — `scripts/security-scan.sh` runs `govulncheck` (Go), `pip-audit` (Python), and `npm audit` (Node), consolidates the findings into a single JSON report, and exits non-zero on any finding — gating CI (`.github/workflows/security.yml`, on push/PR/weekly). The dashboard **Vulnerabilities** tab renders the committed report live, per component.
 
 ### Developer Experience
 
@@ -210,6 +244,18 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
 **Enterprise Dashboard** — A polished Next.js 16 / React 19 / Tailwind CSS 4 control plane with animated count-up metric cards, gradient-bordered KPI panels, staggered threat feed animations, dark/light/midnight/cobalt themes, command palette (`⌘K`), and collapsible sidebar.
 
 **One-command Stack** — `docker-compose up -d` boots the complete 8-service cluster.
+
+### Detection Efficacy
+
+The ML governance controls are measured against held-out evaluation corpora (`ml_engine/eval/`, `ml_engine/data/*_eval.jsonl`). Latest numbers:
+
+| Control | Model | Precision | Recall | F1 | False-Positive Rate |
+|---------|-------|-----------|--------|----|--------------------|
+| **Prompt Injection** | `deberta-v3-base-injection` | 93.9% | 86.1% | 89.9% | 5.6% |
+| **Toxicity** | `unitary/toxic-bert` | 100% | 70.6% | 82.8% | 0% |
+| **PII** | Microsoft Presidio | 100% | 80.0% | 88.9% | 0% |
+
+The injection corpus includes indirect/embedded attacks (payloads hidden inside retrieved content, emails, and documents), and the classifier still catches **78.9%** of regex-evading attempts. Reproduce with `python ml_engine/eval/run_eval_safety.py`.
 
 ---
 
@@ -257,18 +303,18 @@ The control plane is a production-grade Next.js 16 single-page application with 
 |-----|---------|
 | **Overview** | Live KPIs with animated count-up counters, traffic & interception area chart, real-time threat feed with staggered animations |
 | **Analytics** | Hourly request volume, threat category breakdown (pie + animated bars), latency percentiles (P50/P95/P99), model usage and cost |
-| **Edge Routing** | Upstream provider configuration and routing rules |
+| **Edge Routing** | Live-switchable upstream (Groq / OpenAI / Ollama / LM Studio / vLLM), provider presets, connection test, route table |
 | **Events & Logs** | Real-time filterable threat event stream with risk scores and action chips |
-| **Policy Engine** | Create, toggle, and delete Cedar-style ABAC policies with live API |
+| **Policy Engine** | Create, toggle, and delete Cedar ABAC policies with live API |
 | **Sandboxes** | Active execution sandbox status |
-| **Vulnerabilities** | Flagged vulnerability tracker |
+| **Vulnerabilities** | Live dependency CVE report (Go / Python / Node) from `security-scan.sh` |
 | **Audit Logs** | Paginated audit trail with tenant filter, search, and CSV export |
-| **Access Control** | Role and permission management |
+| **Access Control** | Role and permission management (Viewer / Compliance / Security / Admin) |
 | **Data Privacy** | Per-entity PII masking toggles |
-| **Settings** | Theme picker (dark / light / midnight / cobalt), security toggles, notification config |
-| **Team** | Member management |
+| **Settings** | 4 sections — **Appearance** (theme + density), **Security Defaults** (PII/toxicity/output-scan toggles + custom guardrails), **General** (upstream config + rate limits + per-tenant scope), **Notifications** (real-time alerting + test) |
+| **Team** | User management with role assignment |
 | **API Keys** | Generate (`titan_` prefix), list, copy, and revoke tenant keys |
-| **Billing** | Usage and billing summary |
+| **Billing** | Per-tenant usage metering, plan catalog, quota bars, plan selector |
 
 **UI highlights:**
 - Animated metric cards — numbers count up from 0 on load, smoothly transition on refresh
@@ -314,6 +360,16 @@ The control plane is a production-grade Next.js 16 single-page application with 
       <br/><sub><b>Audit Logs</b> — Paginated audit trail with filter and CSV export</sub>
     </td>
   </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/assets/screenshot_edge_routing.png" width="420" alt="Edge Routing"/>
+      <br/><sub><b>Edge Routing</b> — Live-switchable upstream providers and route table</sub>
+    </td>
+    <td align="center">
+      <img src="docs/assets/screenshot_settings.png" width="420" alt="Settings"/>
+      <br/><sub><b>Settings</b> — Theme picker, security defaults, guardrails, alerting</sub>
+    </td>
+  </tr>
 </table>
 
 <div align="center">
@@ -344,8 +400,10 @@ docker-compose up -d
 # 4. Verify all services are healthy
 docker-compose ps
 
-# 5. Open the dashboard
+# 5. Open the dashboard and log in
 open http://localhost:3000
+# Default admin login (override via DEFAULT_ADMIN_EMAIL / DEFAULT_ADMIN_PASSWORD):
+#   admin@titan.local  /  titan-admin
 
 # 6. Send a test request through the gateway
 curl -X POST http://localhost:8080/v1/chat/completions \
@@ -353,6 +411,8 @@ curl -X POST http://localhost:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{"model":"llama-3.1-8b-instant","messages":[{"role":"user","content":"Hello!"}]}'
 ```
+
+> **Using a local LLM?** Point the gateway at Ollama / LM Studio / vLLM live from **Settings → General** (provider presets included) — no restart, no API key required. The dashboard's **Test connection** button confirms the gateway can actually reach it.
 
 ### Service Endpoints
 
@@ -494,8 +554,10 @@ All configuration is passed via environment variables. The `.env.example` contai
 | `SEMANTIC_CACHE_THRESHOLD` | `0.95` | No | Cosine similarity threshold for cache hits |
 | `ANALYZER_ADDR` | `localhost:50051` | No | ML engine gRPC address |
 | `ANALYZER_TIMEOUT_MS` | `150` | No | ML analysis timeout in milliseconds |
-| `ANALYZER_TLS_ENABLED` | `false` | No | Enable mTLS for gateway → ML engine channel (fail-closed: server exits if cert load fails) |
-| `ANALYZER_TLS_CERT_FILE` | `/etc/certs/tls.crt` | No | CA or server cert for TLS verification |
+| `ANALYZER_TLS_ENABLED` | `false` | No | Enable TLS for gateway → ML engine channel (fail-closed: server exits if cert load fails) |
+| `ANALYZER_TLS_CERT_FILE` | `/etc/certs/ca.crt` | No | CA cert for ML-engine server verification |
+| `ANALYZER_TLS_CLIENT_CERT` | — | No | Client cert for **mutual** TLS (set with the key to enable mTLS) |
+| `ANALYZER_TLS_CLIENT_KEY` | — | No | Client key for mutual TLS |
 | `FALLBACK_TARGET_URL` | — | No | Secondary upstream URL (failover on 5xx) |
 | `FALLBACK_API_KEY` | — | No | API key for the fallback provider |
 | `KAFKA_BROKERS` | `localhost:9092` | No | Comma-separated Kafka broker addresses |
@@ -503,6 +565,50 @@ All configuration is passed via environment variables. The `.env.example` contai
 | `READ_TIMEOUT_SEC` | `30` | No | HTTP read timeout |
 | `WRITE_TIMEOUT_SEC` | `90` | No | HTTP write timeout (generous for streaming) |
 | `IDLE_TIMEOUT_SEC` | `120` | No | HTTP idle connection timeout |
+
+> **Live-tunable:** the upstream URL/key, rate limits, cache TTL, analyzer timeout, output-scan and audit toggles, custom guardrails, and alerting can all be changed at runtime from the dashboard (Settings) — globally or per tenant — without a restart. The variables above seed the initial values.
+
+### Detection, Output Scanning & Plugins (`gateway/` + `ml_engine/`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TOXICITY_ENABLED` | `true` | Enable the toxicity/sentiment gate |
+| `TOXICITY_BLOCK_THRESHOLD` | `0.85` | Toxicity score (0–1) above which a prompt is blocked |
+| `PII_REDACTION_ENABLED` | `true` | Master switch for PII redaction (per-entity toggles in the UI) |
+| `CODE_LEAK_BLOCK` | `false` | Reject large source-code pastes instead of just flagging |
+| `CODE_LEAK_MIN_LINES` | `8` | Min lines before the code-leak heuristic runs |
+| `OUTPUT_SCAN_ENABLED` | `true` | Scan/mask PII & secrets in the model's response (incl. SSE) |
+| `OUTPUT_SCAN_TIMEOUT_MS` | `2000` | ML deadline for output scans |
+| `PLUGIN_DIR` | — | Directory of `.wasm` custom detectors; empty = disabled |
+| `PLUGIN_TIMEOUT_MS` | `500` | Per-plugin execution deadline |
+
+### Authentication & SSO (`gateway/`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AUTH_SIGNING_SECRET` | `titan-dev-signing-secret-change-me` | Session token signing key — **change in production** |
+| `AUTH_SESSION_TTL_HOURS` | `12` | Dashboard session lifetime |
+| `DEFAULT_ADMIN_EMAIL` | `admin@titan.local` | Bootstrap admin login |
+| `DEFAULT_ADMIN_PASSWORD` | `titan-admin` | Bootstrap admin password — **change in production** |
+| `APP_ENV` | `development` | `development` or `production` (hardens cookie/SSO behavior) |
+| `OIDC_ISSUER` | — | OIDC issuer URL; empty = SSO disabled |
+| `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | — | OIDC client credentials |
+| `OIDC_REDIRECT_URL` | — | OIDC callback URL |
+| `OIDC_DEFAULT_ROLE` | `viewer` | Role assigned to new SSO users |
+| `DASHBOARD_URL` | `http://localhost:3000` | Dashboard URL for the SSO bounce-back |
+
+### Analytics, Tracing & Operations (`gateway/`)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CLICKHOUSE_URL` | — | ClickHouse OLAP read path for `/api/analytics/*`; empty = 503 |
+| `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` / `CLICKHOUSE_DATABASE` | `default` / — / `titan` | ClickHouse credentials |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OTLP endpoint; empty = tracing is a no-op |
+| `OTEL_SERVICE_NAME` | `titan-gateway` | Service name in traces |
+| `SCAN_REPORT_PATH` | `docs/security/scan-report.json` | Committed CVE scan report served on the Vulnerabilities tab |
+| `BACKUP_URI` | — | S3/GCS/Azure target for `scripts/backup.sh` (production) |
+
+> Any secret variable also supports the `<NAME>_FILE` convention (Kubernetes/Docker Secrets, Vault Agent) — point it at a mounted file instead of an inline value.
 
 ### ML Engine (`ml_engine/`)
 
@@ -523,30 +629,75 @@ All configuration is passed via environment variables. The `.env.example` contai
 
 ## Admin API
 
-All admin endpoints require the `X-Admin-Token` header.
+Admin endpoints are protected by **session/OIDC auth + RBAC**, or the master `X-Admin-Token` header for automation. Each route requires a minimum role: **Viewer** < **Compliance** < **Security** < **Admin**.
 
-### Tenants
+### Authentication
+
+```http
+POST   /admin/v1/auth/login          # Session login  {"email": "...", "password": "..."}   (public)
+GET    /admin/v1/auth/status         # Auth/SSO availability                                  (public)
+GET    /admin/v1/auth/oidc/login     # Begin OIDC SSO flow                                    (public)
+GET    /admin/v1/auth/oidc/callback  # OIDC callback                                          (public)
+GET    /admin/v1/auth/me             # Current user + role                                    (authenticated)
+```
+
+### Tenants  ·  *Viewer to read, Security to create*
 
 ```http
 GET    /admin/v1/tenants             # List all tenants
-POST   /admin/v1/tenants             # Create tenant  {"id": "acme", "name": "Acme Corp"}
+POST   /admin/v1/tenants             # Create tenant  {"name": "Acme Corp", "tier": "pro"}
 ```
 
-### API Keys
+### API Keys  ·  *Admin only to mutate*
 
 ```http
-GET    /admin/v1/keys                # List all keys
-POST   /admin/v1/keys                # Create key     {"tenant_id": "acme", "name": "prod"}
-DELETE /admin/v1/keys/:id            # Revoke key
+GET    /admin/v1/keys                # List all keys                          (Viewer)
+POST   /admin/v1/keys                # Create key  {"tenant_id": "...", "name": "prod"}  (Admin)
+DELETE /admin/v1/keys/:id            # Revoke key                             (Admin)
 ```
 
-### Policies
+### Policies  ·  *Viewer to read, Security to mutate*
 
 ```http
 GET    /admin/v1/policies            # List all policies
 POST   /admin/v1/policies            # Create policy
 PUT    /admin/v1/policies/:id        # Update / toggle policy
 DELETE /admin/v1/policies/:id        # Delete policy
+```
+
+### Settings  ·  *Viewer to read, Security to mutate*
+
+```http
+GET    /admin/v1/settings                  # Global settings (?tenant=<id> for effective/layered)
+PUT    /admin/v1/settings                  # Update global (or ?tenant=<id> for an override) — JSON patch
+DELETE /admin/v1/settings?tenant=<id>      # Revert a tenant to the global baseline
+POST   /admin/v1/upstream/test             # Probe the configured upstream from the gateway
+POST   /admin/v1/alerts/test               # Fire a test SOC alert to the configured webhook
+```
+
+### Billing  ·  *Viewer to read, Admin to change plans*
+
+```http
+GET    /admin/v1/billing/usage             # Current-month usage per tenant (?tenant=<id> for one)
+GET    /admin/v1/billing/plans             # Plan catalog (free / starter / pro / enterprise)
+PUT    /admin/v1/tenants/:id/plan          # Change a tenant's plan  {"tier": "pro"}   (Admin)
+```
+
+### Users  ·  *Admin only*
+
+```http
+GET    /admin/v1/users               # List dashboard users
+POST   /admin/v1/users               # Create user
+PUT    /admin/v1/users/:id/role      # Change user role
+DELETE /admin/v1/users/:id           # Delete user
+```
+
+### Compliance & Security  ·  *Compliance / Viewer*
+
+```http
+GET    /admin/v1/compliance/report          # Audit-trail summary report          (Compliance)
+GET    /admin/v1/compliance/export          # CSV / JSONL audit export            (Compliance)
+GET    /admin/v1/security/vulnerabilities   # Latest dependency CVE scan report   (Viewer)
 ```
 
 **Policy schema:**
@@ -607,6 +758,10 @@ GET    /health          # Liveness probe — returns 200 OK
 | DB Driver | pgx | v5 | CockroachDB / PostgreSQL driver |
 | Cache Client | go-redis | v9 | Redis operations + Lua scripting |
 | Kafka Producer | franz-go | latest | Async audit log delivery |
+| Plugin Runtime | wazero | latest | Sandboxed WASM custom-rule detectors |
+| Auth / SSO | OIDC + signed sessions | — | Dashboard login, SSO, four-tier RBAC |
+| OLAP Analytics | ClickHouse | 24+ | Audit OLAP read path (`/api/analytics/*`) |
+| Tracing | OpenTelemetry + Jaeger | — | Distributed gateway → ML → provider traces |
 | Intelligence Plane | Python | 3.10+ | ML analysis via gRPC |
 | gRPC Framework | gRPC | 1.62+ | Gateway ↔ ML engine transport |
 | Injection Detection | `protectai/deberta-v3-base-injection` | — | Transformer-based prompt injection classifier |
@@ -679,6 +834,16 @@ kubectl apply -f k8s/istio-gateway.yaml         # Istio ingress + mTLS policy
 - [x] **Phase 15** — WASM custom-rule plugins (wazero): drop-in `.wasm` detectors as a sandboxed pipeline stage (`PLUGIN_DIR`)
 - [x] **Phase 16** — Grafana dashboards over ClickHouse (pre-provisioned datasource + TITAN Overview), load/stress harness (`loadtest/`), AWS EKS Terraform modules (`terraform/`)
 - [x] **ML** — Real injection transformer (deberta-v2) + trained TF-IDF fallback; dynamic per-request provider/model audit attribution
+- [x] **Phase 17** — AuthN/AuthZ: session login + OIDC SSO + four-tier RBAC (Viewer/Compliance/Security/Admin) on every Admin route
+- [x] **Phase 18** — Per-tenant configuration layering (sparse overrides over global defaults, live)
+- [x] **Phase 19** — Billing: per-tenant usage metering + plan quota enforcement (Free/Starter/Pro/Enterprise, 429 at admission)
+- [x] **Phase 20** — Live-switchable upstream (Groq/OpenAI/Ollama/LM Studio/vLLM) + gateway-side connection test + local-LLM routing
+- [x] **Phase 21** — No-code custom guardrails (dashboard-managed regex deny rules) + streaming (SSE) output masking
+- [x] **Phase 22** — Real-time SOC alerting (Slack/Teams/SIEM/PagerDuty webhooks) with coalescing + live test
+- [x] **Phase 23** — mTLS for the analyzer gRPC channel (client certs, fail-closed, TLS 1.2 floor)
+- [x] **Ops** — Backup/restore scripts + disaster-recovery runbook (RPO/RTO targets, monthly drill)
+- [x] **Security** — Dependency CVE scanning (govulncheck/pip-audit/npm audit) in CI + live Vulnerabilities tab
+- [x] **ML** — Held-out detection-efficacy benchmarks for injection, toxicity, and PII
 
 ### Planned
 
@@ -730,7 +895,10 @@ Report vulnerabilities privately via GitHub's [Security Advisory](https://github
 **Security design principles:**
 - Zero-trust by default — every request is authenticated, inspected, and policy-checked before proxying
 - The policy engine is default-deny — no matching ALLOW rule means the request is blocked
+- The control plane enforces RBAC — every Admin route requires a minimum role (Viewer/Compliance/Security/Admin)
+- The gateway → ML-engine gRPC channel supports mutual TLS — the ML engine accepts calls only from the gateway
 - TLS failures are fatal (fail-closed) — the ML engine never silently downgrades to plaintext
+- Both directions are scanned — PII/secrets are masked in requests *and* in the model's responses (including SSE streams)
 - Admin tokens are never exposed to client-side JavaScript (`NEXT_PUBLIC_` prefix is explicitly forbidden)
 - All secrets are loaded from environment variables — never hardcoded
 - Request body size is capped (default 4 MB) to prevent memory exhaustion
