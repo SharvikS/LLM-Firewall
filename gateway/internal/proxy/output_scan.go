@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/sharvik/llm-firewall/gateway/internal/analyzer"
+	"github.com/sharvik/llm-firewall/gateway/internal/provider"
 )
 
 // bufferingResponse captures the upstream response (status, headers, body)
@@ -89,8 +90,8 @@ func (b *bufferingResponse) finalize(body []byte) {
 // masking the engine applies. Returns the (possibly) rewritten body and whether
 // anything was masked. Fail-open: on any parse/RPC error the original body is
 // returned unchanged.
-func (p *LLMProxy) scanResponseBody(ctx context.Context, reqID, tenant string, body []byte) ([]byte, bool) {
-	return rewriteAssistantContent(body, func(text string) (string, bool) {
+func (p *LLMProxy) scanResponseBody(ctx context.Context, reqID, tenant string, prov provider.Type, body []byte) ([]byte, bool) {
+	return rewriteAssistantContent(prov, body, func(text string) (string, bool) {
 		return p.maskText(ctx, reqID, tenant, text)
 	})
 }
@@ -99,34 +100,20 @@ func (p *LLMProxy) scanResponseBody(ctx context.Context, reqID, tenant string, b
 // an OpenAI-format response and returns the rewritten body. Unknown provider
 // fields are preserved (it rewrites a generic map, not a typed struct).
 // Fail-open: any parse/marshal error returns the original body unchanged.
-func rewriteAssistantContent(body []byte, mask func(string) (string, bool)) ([]byte, bool) {
+func rewriteAssistantContent(prov provider.Type, body []byte, mask func(string) (string, bool)) ([]byte, bool) {
 	var generic map[string]any
 	if err := json.Unmarshal(body, &generic); err != nil {
 		return body, false
 	}
-	choices, ok := generic["choices"].([]any)
-	if !ok || len(choices) == 0 {
-		return body, false
-	}
 
-	masked := false
-	for _, c := range choices {
-		cm, ok := c.(map[string]any)
-		if !ok {
-			continue
-		}
-		msg, ok := cm["message"].(map[string]any)
-		if !ok {
-			continue
-		}
-		text, ok := msg["content"].(string)
-		if !ok || text == "" {
-			continue
-		}
-		if maskedText, did := mask(text); did {
-			msg["content"] = maskedText
-			masked = true
-		}
+	var masked bool
+	switch prov {
+	case provider.Anthropic:
+		masked = maskAnthropicResponse(generic, mask)
+	case provider.Google:
+		masked = maskGeminiResponse(generic, mask)
+	default:
+		masked = maskOpenAIResponse(generic, mask)
 	}
 
 	if !masked {
@@ -141,6 +128,83 @@ func rewriteAssistantContent(body []byte, mask func(string) (string, bool)) ([]b
 		return body, false // fail-open: never corrupt the response
 	}
 	return bytes.TrimRight(buf.Bytes(), "\n"), true
+}
+
+// maskField masks a string field on a map in place, returning whether it changed.
+func maskField(m map[string]any, key string, mask func(string) (string, bool)) bool {
+	text, ok := m[key].(string)
+	if !ok || text == "" {
+		return false
+	}
+	if out, did := mask(text); did {
+		m[key] = out
+		return true
+	}
+	return false
+}
+
+// maskOpenAIResponse rewrites choices[].message.content (OpenAI chat completion).
+func maskOpenAIResponse(g map[string]any, mask func(string) (string, bool)) bool {
+	choices, _ := g["choices"].([]any)
+	masked := false
+	for _, c := range choices {
+		cm, _ := c.(map[string]any)
+		if cm == nil {
+			continue
+		}
+		if msg, _ := cm["message"].(map[string]any); msg != nil {
+			if maskField(msg, "content", mask) {
+				masked = true
+			}
+		}
+	}
+	return masked
+}
+
+// maskAnthropicResponse rewrites top-level content[] text blocks (Claude Messages).
+func maskAnthropicResponse(g map[string]any, mask func(string) (string, bool)) bool {
+	blocks, _ := g["content"].([]any)
+	masked := false
+	for _, b := range blocks {
+		bm, _ := b.(map[string]any)
+		if bm == nil {
+			continue
+		}
+		if t, _ := bm["type"].(string); t != "text" {
+			continue
+		}
+		if maskField(bm, "text", mask) {
+			masked = true
+		}
+	}
+	return masked
+}
+
+// maskGeminiResponse rewrites candidates[].content.parts[].text (Gemini).
+func maskGeminiResponse(g map[string]any, mask func(string) (string, bool)) bool {
+	cands, _ := g["candidates"].([]any)
+	masked := false
+	for _, c := range cands {
+		cm, _ := c.(map[string]any)
+		if cm == nil {
+			continue
+		}
+		content, _ := cm["content"].(map[string]any)
+		if content == nil {
+			continue
+		}
+		parts, _ := content["parts"].([]any)
+		for _, pt := range parts {
+			pm, _ := pt.(map[string]any)
+			if pm == nil {
+				continue
+			}
+			if maskField(pm, "text", mask) {
+				masked = true
+			}
+		}
+	}
+	return masked
 }
 
 // maskText sends a single piece of text through the ML engine (wrapped as a

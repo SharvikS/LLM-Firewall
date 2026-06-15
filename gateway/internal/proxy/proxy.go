@@ -585,7 +585,7 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			bw.body.Len() > 0 && r.Context().Err() == nil
 
 		if scannable {
-			if rewritten, did := p.scanResponseBody(r.Context(), reqID, tenantName, finalBody); did {
+			if rewritten, did := p.scanResponseBody(r.Context(), reqID, tenantName, prov, finalBody); did {
 				finalBody = rewritten
 				outputMasked = true
 				w.Header().Set("X-Titan-Output-Masked", "true")

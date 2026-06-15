@@ -4,6 +4,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/sharvik/llm-firewall/gateway/internal/provider"
 )
 
 func TestBufferingResponseFinalizeRewrite(t *testing.T) {
@@ -56,7 +58,7 @@ func TestScanResponseRewriteShape(t *testing.T) {
 		}
 		return text, false
 	}
-	out, did := rewriteAssistantContent(body, stub)
+	out, did := rewriteAssistantContent(provider.OpenAI, body, stub)
 	if !did {
 		t.Fatal("expected a mask to be applied")
 	}
@@ -72,8 +74,42 @@ func TestScanResponseRewriteShape(t *testing.T) {
 
 func TestScanResponseNoChoicesIsNoop(t *testing.T) {
 	body := []byte(`{"error":{"message":"bad"}}`)
-	out, did := rewriteAssistantContent(body, func(s string) (string, bool) { return "X", true })
+	out, did := rewriteAssistantContent(provider.OpenAI, body, func(s string) (string, bool) { return "X", true })
 	if did || string(out) != string(body) {
 		t.Fatalf("non-chat body must pass through unchanged, got did=%v body=%s", did, out)
+	}
+}
+
+// maskAll is a stub masker that wraps every input so any rewrite is observable.
+func maskAll(s string) (string, bool) { return "MASKED:" + s, true }
+
+func TestScanResponseAnthropicShape(t *testing.T) {
+	body := []byte(`{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"my ssn is 123"},{"type":"tool_use","name":"x"}],"usage":{"output_tokens":7}}`)
+	out, did := rewriteAssistantContent(provider.Anthropic, body, maskAll)
+	if !did {
+		t.Fatal("expected Anthropic text block to be masked")
+	}
+	s := string(out)
+	if !strings.Contains(s, "MASKED:my ssn is 123") {
+		t.Fatalf("Anthropic text not masked: %s", s)
+	}
+	// The non-text tool_use block and usage must survive.
+	if !strings.Contains(s, `"tool_use"`) || !strings.Contains(s, `"output_tokens"`) {
+		t.Fatalf("Anthropic rewrite dropped fields: %s", s)
+	}
+}
+
+func TestScanResponseGeminiShape(t *testing.T) {
+	body := []byte(`{"candidates":[{"content":{"parts":[{"text":"call me at 555-1234"}],"role":"model"},"finishReason":"STOP"}],"usageMetadata":{"totalTokenCount":9}}`)
+	out, did := rewriteAssistantContent(provider.Google, body, maskAll)
+	if !did {
+		t.Fatal("expected Gemini part text to be masked")
+	}
+	s := string(out)
+	if !strings.Contains(s, "MASKED:call me at 555-1234") {
+		t.Fatalf("Gemini text not masked: %s", s)
+	}
+	if !strings.Contains(s, `"finishReason"`) || !strings.Contains(s, `"usageMetadata"`) {
+		t.Fatalf("Gemini rewrite dropped fields: %s", s)
 	}
 }
