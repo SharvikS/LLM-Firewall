@@ -334,6 +334,13 @@ func main() {
 		r.Get("/analytics/threats", ah.Threats)
 	})
 
+	// Browser DLP ingest — the TITAN extension reports blocks/redactions here
+	// (relayed by the ML engine /report) so endpoint-side events land in the
+	// same live feed, audit log, counters, and SOC alerts as gateway traffic.
+	// Unauthenticated (no tenant key); optionally guarded by BROWSER_EVENT_TOKEN.
+	browserDLP := adminapi.NewBrowserDLPHandler(producer, alertDispatcher, st, cfg.DLPFlagThreshold, cfg.BrowserEventToken)
+	r.HandleFunc("/internal/dlp-event", browserDLP.Report)
+
 	// API reference (public — the contract exposes no secrets)
 	r.Get("/openapi.json", adminapi.OpenAPISpecHandler)
 	r.Get("/docs", adminapi.SwaggerUIHandler)

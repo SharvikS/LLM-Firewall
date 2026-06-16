@@ -297,7 +297,7 @@ The following security and reliability fixes have been applied since the initial
 
 ## Dashboard
 
-The control plane is a production-grade Next.js 16 single-page application with 14 tabs:
+The control plane is a production-grade Next.js 16 single-page application with 16 tabs:
 
 | Tab | Purpose |
 |-----|---------|
@@ -305,6 +305,8 @@ The control plane is a production-grade Next.js 16 single-page application with 
 | **Analytics** | Hourly request volume, threat category breakdown (pie + animated bars), latency percentiles (P50/P95/P99), model usage and cost |
 | **Edge Routing** | Live-switchable upstream (Groq / OpenAI / Ollama / LM Studio / vLLM), provider presets, connection test, route table |
 | **Events & Logs** | Real-time filterable threat event stream with risk scores and action chips |
+| **Browser DLP** | Endpoint-side monitoring of the browser extension across ChatGPT/Claude/Gemini — totals, by-site & by-category breakdowns, 24h activity, active installs, live event feed, top offenders |
+| **DLP Flags** | Repeat-offender flags raised once a user crosses the violation threshold; drill into per-user violation history and acknowledge. Live count badge in the sidebar |
 | **Policy Engine** | Create, toggle, and delete Cedar ABAC policies with live API |
 | **Sandboxes** | Active execution sandbox status |
 | **Vulnerabilities** | Live dependency CVE report (Go / Python / Node) from `security-scan.sh` |

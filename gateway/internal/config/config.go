@@ -73,6 +73,14 @@ type Config struct {
 	// Admin API
 	AdminToken string // master (machine) secret for /admin/* — never NEXT_PUBLIC_
 
+	// Browser DLP ingest — optional shared secret guarding /internal/dlp-event.
+	// Empty (default) leaves the endpoint open for localhost dev.
+	BrowserEventToken string
+
+	// DLPFlagThreshold — a subject is flagged as a repeat offender once their
+	// violation count EXCEEDS this (default 3 → flagged on the 4th violation).
+	DLPFlagThreshold int
+
 	// Auth / RBAC (dashboard control plane)
 	AuthSigningSecret    string // HMAC secret for session JWTs
 	AuthSessionTTLHours  int
@@ -150,10 +158,13 @@ func Load() (*Config, error) {
 
 		AdminToken: getEnvWithFile("ADMIN_TOKEN", "titan-admin-dev-secret"),
 
+		BrowserEventToken: getEnvWithFile("BROWSER_EVENT_TOKEN", ""),
+		DLPFlagThreshold:  getEnvInt("DLP_FLAG_THRESHOLD", 3),
+
 		AuthSigningSecret:    getEnvWithFile("AUTH_SIGNING_SECRET", "titan-dev-signing-secret-change-me"),
 		AuthSessionTTLHours:  getEnvInt("AUTH_SESSION_TTL_HOURS", 12),
 		DefaultAdminEmail:    getEnv("DEFAULT_ADMIN_EMAIL", "admin@titan.local"),
-		DefaultAdminPassword: getEnvWithFile("DEFAULT_ADMIN_PASSWORD", "titan-admin"),
+		DefaultAdminPassword: getEnvWithFile("DEFAULT_ADMIN_PASSWORD", "admin@123"),
 		AppEnv:               getEnv("APP_ENV", "development"),
 
 		OIDCIssuer:       os.Getenv("OIDC_ISSUER"),
@@ -213,7 +224,7 @@ func (c *Config) InsecureDefaults() []string {
 	if c.AuthSigningSecret == "titan-dev-signing-secret-change-me" {
 		issues = append(issues, "AUTH_SIGNING_SECRET is the default — set a strong secret to protect sessions")
 	}
-	if c.DefaultAdminPassword == "titan-admin" {
+	if c.DefaultAdminPassword == "admin@123" {
 		issues = append(issues, "DEFAULT_ADMIN_PASSWORD is the default — set a strong admin password")
 	}
 	return issues

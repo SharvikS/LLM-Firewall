@@ -13,7 +13,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # ── Python deps (cached layer) ───────────────────────────────────────────────
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install CPU-only torch FIRST from the PyTorch CPU index. The default PyPI
+# torch drags in the entire multi-GB NVIDIA CUDA wheel stack — useless on
+# machines without an NVIDIA GPU and a huge image-size hit. Installing the CPU
+# build first satisfies `torch>=2.2.0`, so the requirements pass below skips it.
+# --timeout/--retries keep large-wheel downloads resilient on slow links.
+RUN pip install --no-cache-dir --timeout 300 --retries 10 \
+        --index-url https://download.pytorch.org/whl/cpu torch
+RUN pip install --no-cache-dir --timeout 300 --retries 10 -r requirements.txt
 
 # Bake the spaCy model into the image at build time.
 # If we defer this to runtime, the container dies offline or on first start.

@@ -167,6 +167,10 @@ services:
       GRPC_WORKERS: "4"
       EMBED_PORT: "8001"
       EMBED_MODEL: "all-MiniLM-L6-v2"
+      # Where browser-DLP events from the extension are relayed (engine /report
+      # → gateway). Inside compose the gateway is reachable by service name, NOT
+      # localhost (which would be the ml_engine container itself).
+      GATEWAY_EVENT_URL: "http://gateway:8080/internal/dlp-event"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
       OTEL_SERVICE_NAME: "titan-ml-engine"
     volumes:

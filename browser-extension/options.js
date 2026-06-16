@@ -6,6 +6,8 @@ async function load() {
   const cfg = await globalThis.dlpGetConfig();
   $('enabled').checked = cfg.enabled;
   $('mode').value = cfg.mode;
+  $('strict').checked = !!cfg.strict;
+  $('scanOnPaste').checked = cfg.scanOnPaste !== false;
   $('engineUrl').value = cfg.engineUrl;
   document.querySelectorAll('[data-site]').forEach((el) => {
     el.checked = !!cfg.sites[el.getAttribute('data-site')];
@@ -20,6 +22,8 @@ async function save() {
   await api.storage.local.set({
     enabled: $('enabled').checked,
     mode: $('mode').value,
+    strict: $('strict').checked,
+    scanOnPaste: $('scanOnPaste').checked,
     engineUrl: $('engineUrl').value.trim() || globalThis.DLP_DEFAULTS.engineUrl,
     sites,
   });

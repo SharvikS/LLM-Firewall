@@ -2,15 +2,17 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Shield, Activity, Settings, Users, FileText, Search, Bell,
+  Activity, Settings, Users, FileText, Search, Bell, Globe,
   ChevronRight, Network, Cpu, ShieldAlert, ClipboardList,
   Fingerprint, Eye, Plus, Command,
   PanelLeft, Key, CreditCard,
-  AlertCircle, BarChart2, CornerDownLeft,
+  AlertCircle, BarChart2, CornerDownLeft, Flag,
 } from 'lucide-react';
 
 import OverviewTab    from './components/tabs/OverviewTab';
 import EventsTab      from './components/tabs/EventsTab';
+import FlagsTab       from './components/tabs/FlagsTab';
+import BrowserDLPTab  from './components/tabs/BrowserDLPTab';
 import AnalyticsTab   from './components/tabs/AnalyticsTab';
 import PoliciesTab    from './components/tabs/PoliciesTab';
 import AuditLogsTab   from './components/tabs/AuditLogsTab';
@@ -20,6 +22,7 @@ import {
   EdgeRoutingTab, TeamTab, BillingTab, AccessControlTab,
   DataPrivacyTab, SandboxesTab, VulnerabilitiesTab,
 } from './components/tabs/RemainingTabs';
+import { TitanLogo } from './components/TitanLogo';
 import { fetchMe, logout, ROLE_LABEL, type Me } from '@/lib/me';
 import { LogOut } from 'lucide-react';
 
@@ -27,11 +30,11 @@ import { LogOut } from 'lucide-react';
 
 type TabKey =
   | 'Overview' | 'Analytics' | 'Edge Routing'
-  | 'Events' | 'Policies' | 'Sandboxes' | 'Vulnerabilities'
+  | 'Events' | 'Browser DLP' | 'Flags' | 'Policies' | 'Sandboxes' | 'Vulnerabilities'
   | 'Audit Logs' | 'Access Control' | 'Data Privacy'
   | 'Settings' | 'Team' | 'API Keys' | 'Billing';
 
-interface NavEntry { key: TabKey; label: string; icon: React.ReactNode; keywords?: string }
+interface NavEntry { key: TabKey; label: string; icon: React.ReactNode; keywords?: string; badge?: number }
 interface NavGroup { section: string; items: NavEntry[] }
 
 // ─── Navigation model (single source for sidebar + command palette) ──────────
@@ -49,6 +52,8 @@ const NAV: NavGroup[] = [
     section: 'Security',
     items: [
       { key: 'Events',          label: 'Events & Logs',   icon: <AlertCircle size={15}/>, keywords: 'live feed requests' },
+      { key: 'Browser DLP',     label: 'Browser DLP',     icon: <Globe size={15}/>,       keywords: 'extension chatgpt claude gemini endpoint monitoring installs paste' },
+      { key: 'Flags',           label: 'DLP Flags',       icon: <Flag size={15}/>,        keywords: 'browser dlp repeat offender violations sensitive data leak' },
       { key: 'Policies',        label: 'Policy Engine',   icon: <FileText size={15}/>,    keywords: 'cedar abac rules allow deny' },
       { key: 'Sandboxes',       label: 'Sandboxes',       icon: <Cpu size={15}/>,         keywords: 'firecracker microvm isolation' },
       { key: 'Vulnerabilities', label: 'Vulnerabilities', icon: <ShieldAlert size={15}/>, keywords: 'cve threats injection' },
@@ -114,6 +119,11 @@ function NavItem({ entry, active, rail, onClick }: {
         {entry.icon}
       </span>
       {!rail && <span className="text-[13px] relative z-10 flex-1 text-left leading-none truncate">{entry.label}</span>}
+      {entry.badge ? (
+        <span className={`relative z-10 inline-flex items-center justify-center text-[10px] font-bold text-white bg-red-500 rounded-full ${
+          rail ? 'absolute top-0.5 right-0.5 min-w-[15px] h-[15px] px-1' : 'min-w-[18px] h-[18px] px-1.5'
+        }`}>{entry.badge > 99 ? '99+' : entry.badge}</span>
+      ) : null}
     </button>
   );
 }
@@ -255,6 +265,7 @@ export default function Dashboard() {
   const [isCmdkOpen, setCmdk]       = useState(false);
   const [gatewayOnline, setGateway] = useState<boolean | null>(null);
   const [me, setMe]                 = useState<Me | null>(null);
+  const [openFlags, setOpenFlags]   = useState(0);
 
   // Restore persisted UI state (theme class itself is applied pre-paint by
   // the boot script in layout.tsx — here we only sync React state).
@@ -289,6 +300,24 @@ export default function Dashboard() {
     return () => clearInterval(id);
   }, []);
 
+  // Open DLP-flag count → live nav badge so the admin sees repeat offenders
+  // the moment they cross the threshold, without opening the Flags tab.
+  useEffect(() => {
+    const poll = () =>
+      fetch('/api/admin/dlp/summary')
+        .then(r => r.json()).then(d => setOpenFlags(d?.open_flags ?? 0)).catch(() => {});
+    poll();
+    const id = setInterval(poll, 10_000);
+    return () => clearInterval(id);
+  }, []);
+
+  // NAV with the live open-flag badge injected onto the Flags entry.
+  const navWithBadges = useMemo<NavGroup[]>(() =>
+    NAV.map(g => ({
+      ...g,
+      items: g.items.map(it => it.key === 'Flags' ? { ...it, badge: openFlags } : it),
+    })), [openFlags]);
+
   // Current session identity (the proxy guarantees we're authenticated here).
   useEffect(() => { fetchMe().then(setMe); }, []);
 
@@ -320,6 +349,8 @@ export default function Dashboard() {
       case 'Analytics':      return <AnalyticsTab/>;
       case 'Edge Routing':   return <EdgeRoutingTab/>;
       case 'Events':         return <EventsTab/>;
+      case 'Browser DLP':    return <BrowserDLPTab/>;
+      case 'Flags':          return <FlagsTab/>;
       case 'Policies':       return <PoliciesTab/>;
       case 'Sandboxes':      return <SandboxesTab/>;
       case 'Vulnerabilities':return <VulnerabilitiesTab/>;
@@ -359,7 +390,7 @@ export default function Dashboard() {
         <div className={`h-12 flex items-center shrink-0 ${rail ? 'justify-center' : 'px-3.5 gap-2.5'}`}>
           <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 relative overflow-hidden"
             style={{ background: 'linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 55%, transparent) 100%)', boxShadow: '0 0 12px color-mix(in srgb, var(--accent) 25%, transparent)' }}>
-            <Shield className="w-4 h-4 relative z-10" style={{ color: 'var(--bg-main)' }}/>
+            <TitanLogo className="w-4 h-4 relative z-10" style={{ color: 'var(--bg-main)' }}/>
           </div>
           {!rail && (
             <div className="flex items-center gap-2 min-w-0">
@@ -379,7 +410,7 @@ export default function Dashboard() {
 
         {/* Nav */}
         <div className={`flex-1 py-3 flex flex-col overflow-y-auto overflow-x-hidden scrollbar-hide ${rail ? 'px-2 gap-4' : 'px-2 gap-4'}`}>
-          {NAV.map(group => (
+          {navWithBadges.map(group => (
             <div key={group.section}>
               {!rail ? (
                 <div className="px-3 mb-1">

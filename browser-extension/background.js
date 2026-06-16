@@ -45,7 +45,50 @@ async function scan(text) {
   }
 }
 
+// Relay a browser-DLP event to the firewall and tally it locally. The relay
+// hits the engine /report (same host as /scan), which forwards it to the
+// gateway's unified live feed / audit log / SOC alerting. Local stats power the
+// popup's activity view and survive even when the engine is offline.
+async function report(event) {
+  await bumpStats(event);
+  const cfg = await globalThis.dlpGetConfig();
+  const reportUrl = cfg.engineUrl.replace(/\/scan$/, '/report');
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), cfg.timeoutMs);
+    await fetch(reportUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(event),
+      signal: ctrl.signal,
+    });
+    clearTimeout(timer);
+  } catch (_) {
+    // Engine offline — the local tally already captured it; nothing else to do.
+  }
+}
+
+// Maintain a small rolling activity summary in storage for the popup.
+async function bumpStats(event) {
+  const { dlpStats } = await api.storage.local.get('dlpStats');
+  const stats = dlpStats || { blocked: 0, redacted: 0, overridden: 0, recent: [] };
+  const a = event.action;
+  if (a === 'blocked' || a === 'cancelled') stats.blocked += 1;
+  else if (a === 'redacted' || a === 'auto_redacted') stats.redacted += 1;
+  else if (a === 'sent_anyway') stats.overridden += 1;
+  stats.recent.unshift({
+    site: event.site, action: a, decision: event.decision,
+    reason: event.reason, at: Date.now(),
+  });
+  stats.recent = stats.recent.slice(0, 20);
+  await api.storage.local.set({ dlpStats: stats });
+}
+
 api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg && msg.type === 'DLP_REPORT' && msg.event) {
+    report(msg.event).then(() => sendResponse({ ok: true })).catch(() => sendResponse({ ok: false }));
+    return true; // async response
+  }
   if (msg && msg.type === 'DLP_SCAN') {
     scan(msg.text).then(sendResponse).catch((err) =>
       sendResponse({ decision: 'allow', risk: 0, reason: 'scan failed: ' + err,

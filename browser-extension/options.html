@@ -43,6 +43,17 @@
     </div>
 
     <div class="row">
+      <label class="toggle"><input type="checkbox" id="strict" /> Strict mode (fail-closed)</label>
+      <div class="hint">When the firewall engine is unreachable, <strong>block</strong> the send instead of
+        falling back to lighter local rules. Nothing unverified ever leaves the browser.</div>
+    </div>
+
+    <div class="row">
+      <label class="toggle"><input type="checkbox" id="scanOnPaste" /> Scan pasted text immediately</label>
+      <div class="hint">Catch secrets the moment they are pasted into the composer, before you even hit send.</div>
+    </div>
+
+    <div class="row">
       <label for="engineUrl">Firewall ML engine /scan endpoint</label>
       <input type="text" id="engineUrl" placeholder="http://localhost:8001/scan" />
       <div class="hint">Real PII/secret/injection detection. If unreachable, the extension falls back to built-in local rules.

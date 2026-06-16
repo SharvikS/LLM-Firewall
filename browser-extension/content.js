@@ -18,18 +18,21 @@
       hosts: ['chatgpt.com', 'chat.openai.com'],
       composer: ['#prompt-textarea', 'div.ProseMirror[contenteditable="true"]', 'textarea'],
       send: ['button[data-testid="send-button"]', 'button[aria-label*="Send" i]', 'button[type="submit"]'],
+      account: ['[data-testid="profile-button"]', 'nav img[alt]'],
     },
     claude: {
       key: 'claude',
       hosts: ['claude.ai'],
       composer: ['div[contenteditable="true"].ProseMirror', 'div[contenteditable="true"]'],
       send: ['button[aria-label*="Send" i]', 'button[type="submit"]'],
+      account: ['button[data-testid="user-menu-button"]', 'button[aria-label*="account" i]'],
     },
     gemini: {
       key: 'gemini',
       hosts: ['gemini.google.com'],
       composer: ['div.ql-editor[contenteditable="true"]', 'rich-textarea div[contenteditable="true"]', 'div[contenteditable="true"]'],
       send: ['button[aria-label*="Send" i]', 'button.send-button', 'button[mattooltip*="Send" i]'],
+      account: ['a[aria-label*="Google Account" i]', 'a[aria-label*="@"]'],
     },
   };
 
@@ -47,6 +50,78 @@
   let config = globalThis.DLP_DEFAULTS;
   globalThis.dlpGetConfig().then((c) => { config = c; });
   api.storage.onChanged.addListener(() => { globalThis.dlpGetConfig().then((c) => { config = c; }); });
+
+  // Stable identity for repeat-offender flagging. installId is always present;
+  // account is a best-effort human label scraped from the page chrome.
+  let installId = '';
+  globalThis.dlpGetInstallId().then((id) => { installId = id; });
+
+  // Enterprise-provisioned device identity (MDM / managed extension policy).
+  // Admins set `deviceName` / `deviceId` via the managed storage area; absent on
+  // unmanaged installs, in which case we fall back to the derived fingerprint.
+  let managed = {};
+  try {
+    if (api.storage.managed && api.storage.managed.get) {
+      const p = api.storage.managed.get(['deviceName', 'deviceId']);
+      if (p && p.then) p.then((m) => { managed = m || {}; }).catch(() => {});
+    }
+  } catch (_) { /* no managed policy */ }
+
+  function deriveOS(ua, uaData) {
+    if (uaData && uaData.platform) return uaData.platform; // macOS / Windows / Linux / Android
+    if (/Windows/i.test(ua)) return 'Windows';
+    if (/Mac OS X|Macintosh/i.test(ua)) return 'macOS';
+    if (/Android/i.test(ua)) return 'Android';
+    if (/iPhone|iPad|iPod/i.test(ua)) return 'iOS';
+    if (/Linux/i.test(ua)) return 'Linux';
+    return '';
+  }
+  function deriveBrowser(ua) {
+    if (/Edg\//.test(ua)) return 'Edge';
+    if (/OPR\/|Opera/.test(ua)) return 'Opera';
+    if (/Firefox\//.test(ua)) return 'Firefox';
+    if (/Chrome\//.test(ua)) return 'Chrome';
+    if (/Safari\//.test(ua)) return 'Safari';
+    return '';
+  }
+
+  // Full browser/device fingerprint. Browsers deliberately don't expose the OS
+  // hostname or local IP; the real device name comes from MDM (managed) when set.
+  function deviceInfo() {
+    const ua = navigator.userAgent || '';
+    const uaData = navigator.userAgentData;
+    let scr = '';
+    try { scr = `${screen.width}x${screen.height}@${window.devicePixelRatio || 1}`; } catch (_) {}
+    let tz = '';
+    try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (_) {}
+    return {
+      name: managed.deviceName || '',
+      id: managed.deviceId || '',
+      user_agent: ua,
+      platform: navigator.platform || (uaData && uaData.platform) || '',
+      os: deriveOS(ua, uaData),
+      browser: deriveBrowser(ua),
+      mobile: !!(uaData && uaData.mobile),
+      timezone: tz,
+      languages: (navigator.languages || [navigator.language]).filter(Boolean).join(','),
+      screen: scr,
+      cores: navigator.hardwareConcurrency || 0,
+      memory: navigator.deviceMemory || 0,
+    };
+  }
+
+  function detectAccount() {
+    const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
+    for (const sel of (adapter.account || [])) {
+      const el = document.querySelector(sel);
+      if (!el) continue;
+      const hay = [el.getAttribute('aria-label'), el.getAttribute('alt'),
+        el.getAttribute('title'), el.textContent].filter(Boolean).join(' ');
+      const m = hay.match(EMAIL_RE);
+      if (m) return m[0];
+    }
+    return '';
+  }
 
   // ── Composer helpers ──────────────────────────────────────────────────────
   function firstMatch(selectors) {
@@ -146,21 +221,28 @@
       const verdict = await scan(text);
       if (verdict.decision === 'allow') {
         await doSend(null);
-        return;
+        return;                               // clean — not reported (avoids noise)
       }
       if (config.mode === 'warn') {
         const ok = await showModal(verdict, 'warn');
-        if (ok === 'send') await doSend(null);
+        if (ok === 'send') { report(verdict, 'sent_anyway'); await doSend(null); }
+        else report(verdict, 'cancelled');
         return;
       }
       if (config.mode === 'auto_redact' && verdict.decision === 'redact') {
+        report(verdict, 'auto_redacted');
         await doSend(verdict.masked_text);
         return;
       }
       // block_redact (default), or any 'block' decision.
-      const action = await showModal(verdict, config.mode);
-      if (action === 'redact' && verdict.decision === 'redact') {
+      const choice = await showModal(verdict, config.mode);
+      if (choice === 'redact' && verdict.decision === 'redact') {
+        report(verdict, 'redacted');
         await doSend(verdict.masked_text);
+      } else {
+        // The user backed out. A hard 'block' verdict is a block; a redactable
+        // one the user chose not to send is a cancel.
+        report(verdict, verdict.decision === 'block' ? 'blocked' : 'cancelled');
       }
       // 'cancel' / 'block' → do nothing; the user's text stays in the box to edit.
     } finally {
@@ -168,15 +250,58 @@
     }
   }
 
+  // Fire-and-forget a DLP event to the background, which records it locally and
+  // relays it to the firewall so endpoint-side blocks show up centrally. Carries
+  // verdict metadata only — never the prompt text or the sensitive values.
+  function report(verdict, action) {
+    try {
+      api.runtime.sendMessage({
+        type: 'DLP_REPORT',
+        event: {
+          site: adapter.key,
+          host: location.hostname,
+          decision: verdict.decision,
+          action,
+          risk: verdict.risk || 0,
+          reason: verdict.reason || '',
+          categories: verdict.categories || [],
+          pii: verdict.pii || [],
+          secrets: verdict.secrets || [],
+          source: verdict.source || 'engine',
+          subject: installId,
+          account: detectAccount(),
+          device: deviceInfo(),
+        },
+      });
+    } catch (_) { /* best-effort; reporting must never break the send flow */ }
+  }
+
   function scan(text) {
     return new Promise((resolve) => {
       api.runtime.sendMessage({ type: 'DLP_SCAN', text }, (resp) => {
         if (api.runtime.lastError || !resp) {
-          resolve({ decision: 'allow', risk: 0, reason: 'scanner unavailable',
-            categories: [], pii: [], secrets: [], masked_text: text, source: 'error' });
-        } else {
-          resolve(resp);
+          // Scanner channel itself is unreachable. Fail OPEN by default, but in
+          // strict mode fail CLOSED — never let unverified text through.
+          if (config.strict) {
+            resolve({ decision: 'block', risk: 50,
+              reason: 'Scanner unavailable — blocked by strict policy',
+              categories: ['unverified'], pii: [], secrets: [], masked_text: text, source: 'error' });
+          } else {
+            resolve({ decision: 'allow', risk: 0, reason: 'scanner unavailable',
+              categories: [], pii: [], secrets: [], masked_text: text, source: 'error' });
+          }
+          return;
         }
+        // Strict mode: a verdict produced by the local fallback (engine down)
+        // that came back "allow" is unverified — escalate to a block so the
+        // engine being offline can never become a silent bypass.
+        if (config.strict && resp.degraded && resp.decision === 'allow') {
+          resolve({ decision: 'block', risk: 40,
+            reason: 'Engine offline — strict policy blocks unverified sends',
+            categories: ['unverified'], pii: [], secrets: [], masked_text: text, source: 'local' });
+          return;
+        }
+        resolve(resp);
       });
     });
   }
@@ -194,6 +319,52 @@
     const sendBtn = getSendButton();
     if (!sendBtn || (btn !== sendBtn && !sendBtn.contains(btn) && !btn.contains(sendBtn))) return;
     handleSendAttempt(e);
+  }, true);
+
+  // ── Paste interception — catch pasted secrets before they even land ────────
+  // The send check is the backstop; this is the front line. We hold the paste,
+  // scan the clipboard text, and only let it land (or land masked) if it's safe.
+  function insertAtCursor(el, text) {
+    el.focus();
+    document.execCommand('insertText', false, text); // inserts at caret, fires input events
+  }
+
+  document.addEventListener('paste', (e) => {
+    if (!config.enabled || !config.sites[adapter.key] || !config.scanOnPaste) return;
+    if (busy) return;
+    const composer = getComposer();
+    if (!composer || !isComposerEvent(e.target)) return;
+    const dt = e.clipboardData || globalThis.clipboardData;
+    const pasted = dt ? dt.getData('text') : '';
+    if (!pasted || !pasted.trim()) return;          // non-text paste (image/file) — not our path
+
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    busy = true;
+    scan(pasted).then(async (verdict) => {
+      try {
+        if (verdict.decision === 'allow') { insertAtCursor(composer, pasted); return; }
+        if (config.mode === 'warn') {
+          const ok = await showModal(verdict, 'warn');
+          if (ok === 'send') { report(verdict, 'sent_anyway'); insertAtCursor(composer, pasted); }
+          else report(verdict, 'cancelled');
+          return;
+        }
+        if (config.mode === 'auto_redact' && verdict.decision === 'redact') {
+          report(verdict, 'auto_redacted');
+          insertAtCursor(composer, verdict.masked_text);
+          return;
+        }
+        const choice = await showModal(verdict, config.mode);
+        if (choice === 'redact' && verdict.decision === 'redact') {
+          report(verdict, 'redacted');
+          insertAtCursor(composer, verdict.masked_text);   // paste the safe version
+        } else {
+          // Block / cancel → the sensitive text never enters the page.
+          report(verdict, verdict.decision === 'block' ? 'blocked' : 'cancelled');
+        }
+      } finally { busy = false; }
+    }).catch(() => { busy = false; });
   }, true);
 
   // ── Blocking UI (shadow DOM) ──────────────────────────────────────────────

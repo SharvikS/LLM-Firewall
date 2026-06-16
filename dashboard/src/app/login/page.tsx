@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { Shield, Loader2, AlertTriangle, LogIn } from 'lucide-react';
+import { Loader2, AlertTriangle, LogIn } from 'lucide-react';
+import { TitanLogo } from '../components/TitanLogo';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -55,7 +56,7 @@ export default function LoginPage() {
         <div className="flex items-center gap-2.5 mb-7">
           <div className="w-8 h-8 rounded-lg flex items-center justify-center relative overflow-hidden"
             style={{ background: 'linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 55%, transparent) 100%)' }}>
-            <Shield className="w-4 h-4" style={{ color: 'var(--bg-main)' }}/>
+            <TitanLogo className="w-4 h-4" style={{ color: 'var(--bg-main)' }}/>
           </div>
           <div>
             <div className="text-sm font-bold tracking-tight leading-none">TITAN</div>

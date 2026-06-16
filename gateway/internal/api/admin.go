@@ -60,6 +60,7 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 	sech := &securityHandler{reportPath: d.ScanReportPath}
 	uph := &upstreamHandler{}
 	alh := &alertsHandler{dispatcher: d.Alerts, mgr: d.Settings}
+	dfh := &dlpFlagsHandler{st: d.Store}
 	ah := &authHandler{
 		st:           d.Store,
 		issuer:       d.Issuer,
@@ -93,6 +94,12 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 		r.With(requireRole(auth.RoleViewer)).Get("/billing/plans", bh.listPlans)
 		r.With(requireRole(auth.RoleViewer)).Get("/security/vulnerabilities", sech.scanReport)
 
+		// DLP repeat-offender flags (endpoint-side) — viewer reads, security acks.
+		r.With(requireRole(auth.RoleViewer)).Get("/dlp/flags", dfh.listFlags)
+		r.With(requireRole(auth.RoleViewer)).Get("/dlp/summary", dfh.summary)
+		r.With(requireRole(auth.RoleViewer)).Get("/dlp/overview", dfh.overview)
+		r.With(requireRole(auth.RoleViewer)).Get("/dlp/violations", dfh.listViolations)
+
 		// compliance+ : audit exports
 		r.With(requireRole(auth.RoleCompliance)).Get("/compliance/report", h.complianceReport)
 		r.With(requireRole(auth.RoleCompliance)).Get("/compliance/export", h.complianceExport)
@@ -102,6 +109,7 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 		r.With(requireRole(auth.RoleSecurity)).Delete("/settings", sh.deleteSettings)
 		r.With(requireRole(auth.RoleSecurity)).Post("/upstream/test", uph.test)
 		r.With(requireRole(auth.RoleSecurity)).Post("/alerts/test", alh.sendTest)
+		r.With(requireRole(auth.RoleSecurity)).Post("/dlp/flags/{id}/ack", dfh.ackFlag)
 		r.With(requireRole(auth.RoleSecurity)).Post("/tenants", h.createTenant)
 		r.With(requireRole(auth.RoleSecurity)).Post("/policies", h.createPolicy)
 		r.With(requireRole(auth.RoleSecurity)).Put("/policies/{id}", h.updatePolicy)
