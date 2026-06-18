@@ -35,6 +35,7 @@ A drop-in reverse proxy for OpenAI, Anthropic, Groq, and local LLMs (Ollama, LM 
 - [Features](#features)
 - [Security Hardening](#security-hardening)
 - [Dashboard](#dashboard)
+- [Browser DLP Extension](#browser-dlp-extension)
 - [Quick Start](#quick-start)
 - [Drop-in Integration](#drop-in-integration)
 - [Configuration Reference](#configuration-reference)
@@ -177,6 +178,8 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
 
 **Response-Side Output Scanning** — The gateway scans what the *model* sends back, not just what the client sends in. PII and secrets the LLM emits (email, SSN, credit card, AWS keys, `sk-` style tokens) are masked before they reach the client (`OUTPUT_SCAN_ENABLED`, default on). Streaming (SSE) responses are masked **inline without buffering** via a cross-chunk carry buffer, so no partial match ever leaks and low-latency streaming UX is preserved. Non-streamed responses set the `X-Titan-Output-Masked` header when a redaction occurred; streamed redactions are recorded in the audit log.
 
+**Endpoint DLP — Browser Extension (text, files & images)** — A reverse proxy can't see a person typing or *uploading* secrets straight into the ChatGPT / Claude / Gemini / Perplexity **web UIs** — that traffic goes browser→provider over TLS and never touches the gateway. The cross-browser Manifest V3 extension closes that gap: it intercepts the composer on **send/paste** *and* **file/image attachments** (file picker, drag-drop, paste), scans them with the **same** ML engine detectors via `POST /scan-file`, and blocks before anything leaves the browser. Files are text-extracted (PDF, DOCX, XLSX, CSV, code) and **images are OCR'd** (easyocr); a finding strips the attachment (binaries can't be redacted in place), while a typed prompt offers one-click **Redact & send**. Images **fail open** — blocked only on a positive finding from a completed scan, never merely for being unscannable. Every block/redaction/override reports back to the gateway's unified observability plane (verdict metadata only — never the prompt, PII, or file contents), so an endpoint block sits in the same live feed as an API-side one and feeds repeat-offender flagging. See [Browser DLP Extension](#browser-dlp-extension).
+
 **No-Code Custom Guardrails** — Operators define case-insensitive regex deny rules directly in the dashboard (Settings → Security Defaults) — no redeploy. A match short-circuits the request with a 403 `GUARDRAIL_BLOCKED` event and never leaks the matched pattern back to the caller. Rules are compiled once and cached (`sync.Map`); bad patterns degrade to no-ops rather than failing the gateway. Up to 100 rules, applied per-tenant or globally.
 
 **WASM Custom-Rule Plugins** — Drop-in `.wasm` detectors run as a sandboxed pipeline stage (wazero, no host syscalls) so teams can ship proprietary detection logic without forking the gateway (`PLUGIN_DIR`, `PLUGIN_TIMEOUT_MS`).
@@ -305,7 +308,7 @@ The control plane is a production-grade Next.js 16 single-page application with 
 | **Analytics** | Hourly request volume, threat category breakdown (pie + animated bars), latency percentiles (P50/P95/P99), model usage and cost |
 | **Edge Routing** | Live-switchable upstream (Groq / OpenAI / Ollama / LM Studio / vLLM), provider presets, connection test, route table |
 | **Events & Logs** | Real-time filterable threat event stream with risk scores and action chips |
-| **Browser DLP** | Endpoint-side monitoring of the browser extension across ChatGPT/Claude/Gemini — totals, by-site & by-category breakdowns, 24h activity, active installs, live event feed, top offenders |
+| **Browser DLP** | Endpoint-side monitoring of the browser extension across ChatGPT/Claude/Gemini/Perplexity — totals, by-site, by-category & **by-type** (prompt / file / image) breakdowns, 24h activity, active installs, live event feed (with attachment filename), top offenders. Refreshes every 4s |
 | **DLP Flags** | Repeat-offender flags raised once a user crosses the violation threshold; drill into per-user violation history and acknowledge. Live count badge in the sidebar |
 | **Policy Engine** | Create, toggle, and delete Cedar ABAC policies with live API |
 | **Sandboxes** | Active execution sandbox status |
@@ -378,6 +381,75 @@ The control plane is a production-grade Next.js 16 single-page application with 
   <img src="docs/assets/screenshot_analytics_light.png" width="860" alt="Analytics Tab — Light Theme"/>
   <br/><sub><b>Analytics</b> — Light theme · Hourly request volume, threat breakdown, latency percentiles, model cost tracking</sub>
 </div>
+
+---
+
+## Browser DLP Extension
+
+The gateway secures the **API path** (your apps → LLM providers). But an employee can still paste a customer list, or **upload a credentials file or a screenshot of a secret**, straight into the ChatGPT / Claude / Gemini / Perplexity **web UI** — traffic that goes browser→provider over TLS and never reaches the gateway. The **TITAN Browser DLP extension** (`browser-extension/`) closes that endpoint gap and reports every action back into the same observability plane, so a block in the browser sits right next to a block at the gateway.
+
+### What it does
+
+- **Scans typed & pasted prompts** on send — PII, secrets, prompt-injection, toxicity — and offers one-click **Redact & send**.
+- **Scans file & image attachments** before they upload (the leak path the composer scan never sees):
+  - **Documents** are text-extracted — PDF (PyMuPDF), DOCX (python-docx), XLSX (openpyxl), and CSV / JSON / code / Markdown decoded directly.
+  - **Images are OCR'd** (easyocr) so a screenshot of an API key or an SSN is caught.
+  - A finding **blocks the attachment** (a binary can't be redacted in place); a clean file uploads untouched.
+  - **Images fail open** — blocked *only* on a positive finding from a completed scan, never merely because OCR was unavailable.
+- **Three enforcement modes** — *Block & redact* (default), *Auto-redact & send*, or *Warn only* — plus **Strict mode** (fail-closed for non-image content when the engine is unreachable) and a configurable attachment size cap.
+- **Central visibility** — every block / redaction / override is reported via the engine (`POST /report` → gateway `POST /internal/dlp-event`) into the **Events** feed, **audit log / ClickHouse**, and **SOC alerting**, and drives **repeat-offender flagging** with device + IP forensics. Reporting carries **verdict metadata only — never the prompt text, PII values, or file contents**.
+
+### How detection is wired
+
+```
+                    ┌─ send / paste ─┐         ┌──────────────────────────┐
+ chat web UI  ──────┤                ├───────► │  ML engine  POST /scan     │  text verdict
+ (content     ──────┤ file / image   ├───────► │  ML engine  POST /scan-file│  extract → OCR → detectors
+  script)           └─ attach/drop ──┘         └────────────┬─────────────┘
+                                                            │ POST /report
+                                                            ▼
+                                          gateway  /internal/dlp-event
+                                   (live feed · audit · SOC alert · DLP flags)
+```
+
+The extension talks to **one** backend (the ML engine on `:8001`); the engine relays events server-to-server to the gateway, so there's no cross-origin from the chat page. If the engine is unreachable the extension falls back to **bundled local regex detectors** (fail-open, or fail-closed under strict mode for non-image content).
+
+### Screenshots
+
+The browser extension surfaces in two places — the in-page blocking UI and the dashboard's **Browser DLP** tab. Endpoint events also flow into the unified **Events** feed shown below:
+
+<div align="center">
+  <img src="docs/assets/screenshot_events.png" width="720" alt="Events feed including browser DLP events"/>
+  <br/><sub><b>Unified Events feed</b> — browser <code>Browser Block</code> / <code>Browser Redact</code> events appear alongside gateway traffic</sub>
+</div>
+
+<!--
+  📸 To complete the gallery, capture these into docs/assets/ and they will render here:
+    • screenshot_browser_dlp.png — dashboard Browser DLP tab (stat cards, by-type breakdown, live feed)
+    • ext_modal_block.png        — in-page blocking modal ("Attachment blocked" on a file/image)
+    • ext_options.png            — extension options page (modes, strict, scan-files toggle)
+  Load the unpacked build (browser-extension/dist) in Chrome, attach a file containing a secret
+  to chatgpt.com, and screenshot the modal; open the dashboard Browser DLP tab for the others.
+-->
+
+### Install (developer / unpacked)
+
+```bash
+cd browser-extension
+npm install && npm run build          # → dist/  (Chrome MV3)
+# npm run build:firefox               # → dist-firefox/  (Firefox MV3)
+```
+
+- **Chrome / Edge** — `chrome://extensions` → enable **Developer mode** → **Load unpacked** → select `browser-extension/dist/`.
+- **Firefox** — `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on…** → `dist-firefox/manifest.json`.
+
+Then open the extension's **Settings**, confirm the engine URL (`http://localhost:8001/scan` by default), and click **Test connection**. Start the engine so `/scan` and `/scan-file` are available:
+
+```bash
+cd ml_engine && venv/Scripts/python.exe -m analyzer.server   # gRPC + HTTP side-channel on :8001
+```
+
+> Full details, caveats, and the file map live in [`browser-extension/README.md`](browser-extension/README.md).
 
 ---
 
@@ -846,6 +918,8 @@ kubectl apply -f k8s/istio-gateway.yaml         # Istio ingress + mTLS policy
 - [x] **Ops** — Backup/restore scripts + disaster-recovery runbook (RPO/RTO targets, monthly drill)
 - [x] **Security** — Dependency CVE scanning (govulncheck/pip-audit/npm audit) in CI + live Vulnerabilities tab
 - [x] **ML** — Held-out detection-efficacy benchmarks for injection, toxicity, and PII
+- [x] **Phase 24** — Multi-provider cloud LLM support: front OpenAI, Anthropic Claude, and Google Gemini (provider-aware auth, model extraction, and response masking)
+- [x] **Phase 25** — Browser DLP extension (cross-browser MV3): endpoint-side scanning of prompts, pasted text, **and file/image uploads** (PDF/DOCX/XLSX/CSV/code extraction + OCR), reported into the unified Events feed / audit / SOC alerts with repeat-offender flagging
 
 ### Planned
 

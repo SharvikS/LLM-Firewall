@@ -134,8 +134,12 @@ cd ml_engine
 venv/Scripts/python.exe -m analyzer.server   # gRPC + HTTP side-channel on :8001
 ```
 
-`/scan` returns only a verdict and masked text — never your configured secrets
-or upstream keys. CORS is open so the extension can reach it.
+`/scan` (typed/pasted text) and `/scan-file` (file & image attachments, base64
+body) both return only a verdict and masked text — never your configured secrets
+or upstream keys. CORS is open so the extension can reach them. Document/OCR
+backends (PyMuPDF, python-docx, openpyxl, easyocr) are optional: a missing one
+degrades only that file type. The first image scan downloads the easyocr models
+(~110 MB), so that one call is slow; subsequent scans are fast.
 
 ## Caveats
 
@@ -168,8 +172,8 @@ or upstream keys. CORS is open so the extension can reach it.
 | `src/lib/detectors.js` | Local-fallback regex detectors (`localScan`). |
 | `src/lib/hooks.js` | React hooks: config, stats, engine status, active-site. |
 | `src/lib/api.js` | Normalized `browser`/`chrome` API handle. |
-| `src/background.js` | Calls the engine `/scan` (local fallback); relays `/report`, caches `/selectors`, badge + activity tally. |
-| `src/content/index.jsx` | Site adapters, send/paste interception, mounts the React modal. |
+| `src/background.js` | Calls the engine `/scan` + `/scan-file` (local fallback); relays `/report`, caches `/selectors`, badge + activity tally. |
+| `src/content/index.jsx` | Site adapters, send/paste **and file/image attachment** interception (file input, drag-drop, paste), mounts the React modal. |
 | `src/content/Modal.jsx` | React blocking modal (shadow DOM, Framer Motion). |
 | `src/popup/` | Popup React app — quick on/off, stats, recent activity, engine status. |
 | `src/options/` | Options React app — mode, strict, paste-scan, engine URL, per-site. |
