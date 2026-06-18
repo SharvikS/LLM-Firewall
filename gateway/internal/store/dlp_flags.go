@@ -22,6 +22,8 @@ type DLPViolation struct {
 	Categories string    `json:"categories"`
 	Reason     string    `json:"reason"`
 	Source     string    `json:"source"`
+	Kind       string    `json:"kind"`     // text | file | image
+	Filename   string    `json:"filename"` // attachment name, when kind != text
 	CreatedAt  time.Time `json:"created_at"`
 
 	// Device + network forensics captured at the moment of the violation.
@@ -58,7 +60,8 @@ type DLPFlag struct {
 // dlpViolationCols is the canonical column list for SELECTing a DLPViolation, so
 // every read path stays in sync with scanViolation.
 const dlpViolationCols = `id, subject, account, site, action, risk, categories, reason, source, created_at,
-	client_ip, user_agent, device_label, device_name, device_id, timezone, languages, screen, device_json`
+	client_ip, user_agent, device_label, device_name, device_id, timezone, languages, screen, device_json,
+	kind, filename`
 
 // rowScanner is satisfied by both pgx.Row and pgx.Rows.
 type rowScanner interface{ Scan(dest ...any) error }
@@ -68,7 +71,8 @@ func scanViolation(r rowScanner) (DLPViolation, error) {
 	err := r.Scan(&v.ID, &v.Subject, &v.Account, &v.Site, &v.Action, &v.Risk,
 		&v.Categories, &v.Reason, &v.Source, &v.CreatedAt,
 		&v.ClientIP, &v.UserAgent, &v.DeviceLabel, &v.DeviceName, &v.DeviceID,
-		&v.Timezone, &v.Languages, &v.Screen, &v.DeviceJSON)
+		&v.Timezone, &v.Languages, &v.Screen, &v.DeviceJSON,
+		&v.Kind, &v.Filename)
 	return v, err
 }
 
@@ -106,11 +110,11 @@ func (s *Store) RecordDLPViolation(ctx context.Context, v DLPViolation, threshol
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO dlp_violations(subject, account, site, action, risk, categories, reason, source,
 		                           client_ip, user_agent, device_label, device_name, device_id,
-		                           timezone, languages, screen, device_json)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+		                           timezone, languages, screen, device_json, kind, filename)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
 		v.Subject, v.Account, v.Site, v.Action, v.Risk, v.Categories, v.Reason, v.Source,
 		v.ClientIP, v.UserAgent, v.DeviceLabel, v.DeviceName, v.DeviceID,
-		v.Timezone, v.Languages, v.Screen, v.DeviceJSON,
+		v.Timezone, v.Languages, v.Screen, v.DeviceJSON, v.Kind, v.Filename,
 	); err != nil {
 		return nil, err
 	}
@@ -294,6 +298,7 @@ type BrowserDLPOverview struct {
 	OpenFlags      int             `json:"open_flags"`
 	BySite         []CountBucket   `json:"by_site"`
 	ByCategory     []CountBucket   `json:"by_category"`
+	ByKind         []CountBucket   `json:"by_kind"` // text | file | image
 	Series24h      []TimeBucket    `json:"series_24h"`
 	Recent         []DLPViolation  `json:"recent"`
 	TopOffenders   []OffenderCount `json:"top_offenders"`
@@ -319,7 +324,7 @@ type OffenderCount struct {
 // grouped queries is comfortably cheap and always current.
 func (s *Store) BrowserDLPOverview(ctx context.Context) (*BrowserDLPOverview, error) {
 	o := &BrowserDLPOverview{
-		BySite: []CountBucket{}, ByCategory: []CountBucket{},
+		BySite: []CountBucket{}, ByCategory: []CountBucket{}, ByKind: []CountBucket{},
 		Series24h: []TimeBucket{}, Recent: []DLPViolation{}, TopOffenders: []OffenderCount{},
 	}
 
@@ -355,6 +360,12 @@ func (s *Store) BrowserDLPOverview(ctx context.Context) (*BrowserDLPOverview, er
 		   SELECT unnest(string_to_array(categories, ',')) AS cat FROM dlp_violations WHERE categories<>''
 		 ) t WHERE cat<>'' GROUP BY cat ORDER BY 2 DESC`); err == nil {
 		o.ByCategory = buckets
+	}
+
+	// By kind — text prompts vs file / image attachments.
+	if buckets, err := s.countBuckets(ctx,
+		`SELECT COALESCE(NULLIF(kind,''),'text'), count(*) FROM dlp_violations GROUP BY 1 ORDER BY 2 DESC`); err == nil {
+		o.ByKind = buckets
 	}
 
 	// 24h hourly series.

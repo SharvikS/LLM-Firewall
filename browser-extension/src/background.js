@@ -4,7 +4,7 @@
 // call: hit the firewall ML engine /scan, and on any failure fall back to the
 // bundled local detectors so the box is never left unprotected.
 import { api } from './lib/api.js';
-import { dlpGetConfig } from './lib/config.js';
+import { dlpGetConfig, dlpScanFileUrl } from './lib/config.js';
 import { localScan } from './lib/detectors.js';
 
 async function scanViaEngine(text, cfg) {
@@ -37,6 +37,68 @@ async function scan(text) {
     verdict.engineError = String(err && err.message ? err.message : err);
     return verdict;
   }
+}
+
+// Scan a file/image attachment via the engine /scan-file endpoint. The content
+// script can't reach the local engine (page CSP), so it hands us the file as
+// base64 and the privileged background context makes the call. On any engine
+// failure we fall back to a local scan of text-decodable content; binaries and
+// images we can't read locally come back "degraded" so strict mode can decide.
+async function scanFile(file) {
+  const cfg = await dlpGetConfig();
+  const url = dlpScanFileUrl(cfg.engineUrl);
+  const ctrl = new AbortController();
+  // Files can be large/OCR slow — give the engine a longer budget than text.
+  const timer = setTimeout(() => ctrl.abort(), Math.max(cfg.timeoutMs, 8000));
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        filename: file.filename, content_type: file.contentType,
+        data: file.dataB64, strict: !!cfg.strict,
+      }),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) throw new Error('engine HTTP ' + res.status);
+    const verdict = await res.json();
+    verdict.source = 'engine';
+    return verdict;
+  } catch (err) {
+    return localScanFile(file, String(err && err.message ? err.message : err));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Local fallback for file scanning. We can only inspect text we can decode in
+// the worker (no OCR / PDF parsing here), so binary/image attachments report
+// `degraded` and let the content script apply strict policy.
+function localScanFile(file, engineError) {
+  const ct = (file.contentType || '').toLowerCase();
+  const name = (file.filename || '').toLowerCase();
+  const textish = ct.startsWith('text/') || ct.includes('json') || ct.includes('xml') ||
+    /\.(txt|md|csv|tsv|json|ya?ml|log|js|ts|jsx|tsx|py|go|rs|java|c|cpp|h|cs|rb|php|sh|sql|env|ini|conf|html?)$/.test(name);
+  if (textish) {
+    try {
+      const text = atob(file.dataB64);
+      const verdict = localScan(text);
+      // A binary can't be redacted in place — a finding strips the attachment.
+      if (verdict.decision === 'redact') verdict.decision = 'block';
+      verdict.kind = 'file';
+      verdict.filename = file.filename;
+      verdict.degraded = true;
+      verdict.source = 'local';
+      verdict.engineError = engineError;
+      return verdict;
+    } catch (_) { /* fall through to degraded */ }
+  }
+  return {
+    decision: 'allow', risk: 0, reason: 'engine offline — attachment unscanned',
+    categories: [], pii: [], secrets: [],
+    kind: ct.startsWith('image/') ? 'image' : 'file', filename: file.filename,
+    degraded: true, source: 'local', engineError,
+  };
 }
 
 // Relay a browser-DLP event to the firewall and tally it locally. The relay
@@ -147,6 +209,13 @@ api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     scan(msg.text).then(sendResponse).catch((err) =>
       sendResponse({ decision: 'allow', risk: 0, reason: 'scan failed: ' + err,
         categories: [], pii: [], secrets: [], masked_text: msg.text, source: 'error' }));
+    return true; // async response
+  }
+  if (msg && msg.type === 'DLP_SCAN_FILE' && msg.file) {
+    scanFile(msg.file).then(sendResponse).catch((err) =>
+      sendResponse({ decision: 'allow', risk: 0, reason: 'file scan failed: ' + err,
+        categories: [], pii: [], secrets: [], kind: 'file',
+        filename: msg.file.filename, source: 'error' }));
     return true; // async response
   }
   if (msg && msg.type === 'DLP_PING') {

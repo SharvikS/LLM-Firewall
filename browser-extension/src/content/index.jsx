@@ -289,6 +289,8 @@ import css from './content.css?inline';
           categories: verdict.categories || [],
           pii: verdict.pii || [],
           secrets: verdict.secrets || [],
+          kind: verdict.kind || 'text',
+          filename: verdict.filename || '',
           source: verdict.source || 'engine',
           subject: installId,
           account: detectAccount(),
@@ -345,11 +347,25 @@ import css from './content.css?inline';
   }
 
   document.addEventListener('paste', (e) => {
-    if (!config.enabled || !config.sites[adapter.key] || !config.scanOnPaste) return;
+    if (!config.enabled || !config.sites[adapter.key]) return;
     if (busy) return;
     const composer = getComposer();
     if (!composer || !isComposerEvent(e.target)) return;
     const dt = e.clipboardData || globalThis.clipboardData;
+
+    // Pasted file/image (e.g. a screenshot) — scan as an attachment, then
+    // forward into the page's file input if clean.
+    const pastedFiles = Array.from((dt && dt.files) || []);
+    if (config.scanFiles && pastedFiles.length) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      busy = true;
+      handleFiles(pastedFiles).then((clean) => { if (clean) forwardFiles(pastedFiles); })
+        .finally(() => { busy = false; });
+      return;
+    }
+
+    if (!config.scanOnPaste) return;
     const pasted = dt ? dt.getData('text') : '';
     if (!pasted || !pasted.trim()) return;
 
@@ -379,6 +395,148 @@ import css from './content.css?inline';
         }
       } finally { busy = false; }
     }).catch(() => { busy = false; });
+  }, true);
+
+  // ── File & image attachment interception ──────────────────────────────────
+  // The composer-text scan never sees an uploaded file or pasted image — a leak
+  // path of its own. We intercept the attach (file input / drag-drop / paste),
+  // read the bytes, and scan them via the engine /scan-file (OCR for images,
+  // text extraction for docs). A binary can't be redacted in place, so a finding
+  // is a hard block: we drop the attachment rather than let it upload.
+  let fileBypass = false; // when true our file listeners let the attach through
+
+  function readFileB64(file) {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => {
+        const s = String(fr.result || '');
+        resolve(s.includes(',') ? s.slice(s.indexOf(',') + 1) : s);
+      };
+      fr.onerror = () => reject(fr.error);
+      fr.readAsDataURL(file);
+    });
+  }
+
+  // Scan one File. Mirrors the text scan()'s strict-mode contract: a missing or
+  // degraded engine fails CLOSED (block) only when strict mode is on — EXCEPT
+  // for images, which always fail OPEN: an image is blocked only on a positive
+  // finding from a completed scan, never just because it couldn't be scanned.
+  async function scanAttachment(file) {
+    const kind = (file.type || '').startsWith('image/') ? 'image' : 'file';
+    const strictBlock = config.strict && kind !== 'image';
+    if (config.maxFileMB && file.size > config.maxFileMB * 1024 * 1024) {
+      return { decision: 'allow', risk: 0, kind, filename: file.name,
+        reason: `Skipped — over ${config.maxFileMB}MB scan limit`, categories: [],
+        pii: [], secrets: [], source: 'skipped' };
+    }
+    let dataB64;
+    try { dataB64 = await readFileB64(file); }
+    catch (_) { dataB64 = ''; }
+    return new Promise((resolve) => {
+      api.runtime.sendMessage({
+        type: 'DLP_SCAN_FILE',
+        file: { filename: file.name, contentType: file.type, dataB64, size: file.size },
+      }, (resp) => {
+        if (api.runtime.lastError || !resp) {
+          resolve(strictBlock
+            ? { decision: 'block', risk: 50, kind, filename: file.name,
+                reason: 'Scanner unavailable — blocked by strict policy',
+                categories: ['unverified'], pii: [], secrets: [], source: 'error' }
+            : { decision: 'allow', risk: 0, kind, filename: file.name,
+                reason: 'scanner unavailable', categories: [], pii: [], secrets: [], source: 'error' });
+          return;
+        }
+        if (strictBlock && resp.degraded && resp.decision === 'allow') {
+          resolve({ decision: 'block', risk: 40, kind: resp.kind || kind, filename: file.name,
+            reason: 'Engine offline — strict policy blocks unverified uploads',
+            categories: ['unverified'], pii: [], secrets: [], source: 'local' });
+          return;
+        }
+        resolve(resp);
+      });
+    });
+  }
+
+  // Scan a list of files; if any is blocked, show the modal and report. Returns
+  // true when ALL files are clean (caller forwards them on), false otherwise.
+  async function handleFiles(files) {
+    const verdicts = [];
+    for (const f of files) verdicts.push(await scanAttachment(f));
+    const bad = verdicts.find((v) => v.decision === 'block');
+    if (!bad) return true;
+
+    if (config.mode === 'warn') {
+      const ok = await showModal(bad, 'warn');
+      if (ok === 'send') { report(bad, 'sent_anyway'); return true; }
+      report(bad, 'cancelled');
+      return false;
+    }
+    report(bad, 'blocked');
+    await showModal(bad, config.mode); // block-only modal: "Remove file" / "Edit"
+    return false;
+  }
+
+  // Locate a page file input to forward clean drag-drop / pasted files into.
+  // The chat UIs funnel uploads through a hidden <input type=file>; assigning
+  // its .files + dispatching change is the reliable cross-site re-injection.
+  function findFileInput() {
+    const inputs = [...document.querySelectorAll('input[type="file"]')];
+    return inputs.find((i) => !i.disabled) || null;
+  }
+  function forwardFiles(fileList) {
+    const input = findFileInput();
+    if (!input) return false;
+    try {
+      const dt = new DataTransfer();
+      for (const f of fileList) dt.items.add(f);
+      input.files = dt.files;
+      fileBypass = true;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      setTimeout(() => { fileBypass = false; }, 200);
+      return true;
+    } catch (_) { return false; }
+  }
+
+  function fileGuardActive() {
+    return config.enabled && config.sites[adapter.key] && config.scanFiles;
+  }
+
+  // 1) The "attach file" button → OS picker → <input type=file> change. We run
+  //    capture-phase first, block the site's handler, scan, then re-dispatch a
+  //    change (bypassed) if clean or clear the input if blocked.
+  document.addEventListener('change', (e) => {
+    const input = e.target;
+    if (fileBypass || !input || input.tagName !== 'INPUT' || input.type !== 'file') return;
+    if (!fileGuardActive() || busy) return;
+    const files = Array.from(input.files || []);
+    if (!files.length) return;
+
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    busy = true;
+    handleFiles(files).then((clean) => {
+      if (clean) {
+        fileBypass = true;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        setTimeout(() => { fileBypass = false; }, 200);
+      } else {
+        try { input.value = ''; } catch (_) { /* readonly in some browsers */ }
+      }
+    }).finally(() => { busy = false; });
+  }, true);
+
+  // 2) Drag-drop onto the composer.
+  document.addEventListener('drop', (e) => {
+    if (fileBypass || !fileGuardActive() || busy) return;
+    const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+    if (!files.length) return;
+    if (!isComposerEvent(e.target) && !findFileInput()) return;
+
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    busy = true;
+    handleFiles(files).then((clean) => { if (clean) forwardFiles(files); })
+      .finally(() => { busy = false; });
   }, true);
 
   // ── Blocking UI (React in a shadow root) ───────────────────────────────────

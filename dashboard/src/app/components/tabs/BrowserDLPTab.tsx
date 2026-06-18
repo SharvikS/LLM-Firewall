@@ -4,8 +4,14 @@ import { useEffect, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import {
   Globe, ShieldCheck, Ban, Eye, AlertTriangle, MonitorSmartphone,
-  Flag, Wifi, WifiOff, CircleDot,
+  Flag, Wifi, WifiOff, CircleDot, FileText, Image as ImageIcon, MessageSquare,
 } from 'lucide-react';
+
+const KIND_META: Record<string, { label: string; icon: React.ReactNode }> = {
+  text:  { label: 'Prompt', icon: <MessageSquare size={11} /> },
+  file:  { label: 'File',   icon: <FileText size={11} /> },
+  image: { label: 'Image',  icon: <ImageIcon size={11} /> },
+};
 
 interface CountBucket { key: string; count: number }
 interface TimeBucket { hour: string; count: number }
@@ -13,16 +19,17 @@ interface Violation {
   id: string; subject: string; account: string; site: string; action: string;
   risk: number; categories: string; reason: string; source: string; created_at: string;
   client_ip?: string; device_label?: string; device_name?: string; timezone?: string;
+  kind?: string; filename?: string;
 }
 interface Offender { subject: string; account: string; count: number; max_risk: number }
 interface Overview {
   total_events: number; blocked: number; redacted: number; overrides: number;
   events_24h: number; active_installs: number; known_accounts: number; open_flags: number;
-  by_site: CountBucket[]; by_category: CountBucket[]; series_24h: TimeBucket[];
+  by_site: CountBucket[]; by_category: CountBucket[]; by_kind?: CountBucket[]; series_24h: TimeBucket[];
   recent: Violation[]; top_offenders: Offender[]; _offline?: boolean;
 }
 
-const SITE_LABEL: Record<string, string> = { chatgpt: 'ChatGPT', claude: 'Claude', gemini: 'Gemini' };
+const SITE_LABEL: Record<string, string> = { chatgpt: 'ChatGPT', claude: 'Claude', gemini: 'Gemini', perplexity: 'Perplexity' };
 const CAT_LABEL: Record<string, string> = {
   pii: 'PII', secret: 'Secrets', injection: 'Prompt Injection',
   toxicity: 'Toxicity', code_leak: 'Source Code', unverified: 'Unverified',
@@ -128,17 +135,36 @@ export default function BrowserDLPTab() {
         </div>
       </div>
 
-      {/* Categories */}
-      <div className="border border-base-border rounded-xl p-4 bg-base-sec/30">
-        <div className="text-[11px] uppercase tracking-widest text-base-muted mb-3">What was caught</div>
-        {(o?.by_category ?? []).length === 0 ? <div className="text-xs text-base-muted">Nothing caught yet.</div> :
-          <div className="flex flex-wrap gap-2">
-            {(o?.by_category ?? []).map(c => (
-              <span key={c.key} className="text-xs px-3 py-1.5 rounded-lg border border-base-border bg-base-main/40 text-base-text">
-                {CAT_LABEL[c.key] ?? c.key} <span className="text-base-muted ml-1 font-semibold">{c.count}</span>
-              </span>
-            ))}
-          </div>}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Categories */}
+        <div className="lg:col-span-2 border border-base-border rounded-xl p-4 bg-base-sec/30">
+          <div className="text-[11px] uppercase tracking-widest text-base-muted mb-3">What was caught</div>
+          {(o?.by_category ?? []).length === 0 ? <div className="text-xs text-base-muted">Nothing caught yet.</div> :
+            <div className="flex flex-wrap gap-2">
+              {(o?.by_category ?? []).map(c => (
+                <span key={c.key} className="text-xs px-3 py-1.5 rounded-lg border border-base-border bg-base-main/40 text-base-text">
+                  {CAT_LABEL[c.key] ?? c.key} <span className="text-base-muted ml-1 font-semibold">{c.count}</span>
+                </span>
+              ))}
+            </div>}
+        </div>
+
+        {/* By type (prompt / file / image) */}
+        <div className="border border-base-border rounded-xl p-4 bg-base-sec/30">
+          <div className="text-[11px] uppercase tracking-widest text-base-muted mb-3">By type</div>
+          {(o?.by_kind ?? []).length === 0 ? <div className="text-xs text-base-muted">No data yet.</div> :
+            <div className="space-y-2">
+              {(o?.by_kind ?? []).map(k => {
+                const m = KIND_META[k.key] ?? { label: k.key, icon: <FileText size={11} /> };
+                return (
+                  <div key={k.key} className="flex items-center justify-between text-xs">
+                    <span className="flex items-center gap-1.5 text-base-text">{m.icon}{m.label}</span>
+                    <span className="text-base-muted font-semibold">{k.count}</span>
+                  </div>
+                );
+              })}
+            </div>}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -165,8 +191,13 @@ export default function BrowserDLPTab() {
                       <div className="flex items-center gap-3 text-sm">
                         <span className={`text-[11px] font-semibold w-16 ${m.cls}`}>{m.label}</span>
                         <span className="text-base-text capitalize w-16">{SITE_LABEL[v.site] ?? v.site}</span>
+                        {v.kind && v.kind !== 'text' && (
+                          <span className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-base-border bg-base-main/40 text-blue-400 whitespace-nowrap">
+                            {(KIND_META[v.kind] ?? KIND_META.file).icon}{(KIND_META[v.kind] ?? { label: v.kind }).label}
+                          </span>
+                        )}
                         <span className={`text-xs font-semibold w-8 ${riskColor(v.risk)}`}>{v.risk.toFixed(0)}</span>
-                        <span className="text-xs text-base-muted truncate flex-1">{v.account || v.subject.slice(0, 14)} · {v.reason}</span>
+                        <span className="text-xs text-base-muted truncate flex-1">{v.account || v.subject.slice(0, 14)} · {v.filename ? `${v.filename} · ` : ''}{v.reason}</span>
                         <span className="text-[11px] text-base-muted/70 whitespace-nowrap">{rel(v.created_at)}</span>
                       </div>
                       {(v.client_ip || v.device_name || v.device_label) && (

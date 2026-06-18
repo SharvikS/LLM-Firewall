@@ -46,10 +46,16 @@ export default function Modal({ verdict, mode, onChoose }) {
       .filter((c) => c === 'injection' || c === 'toxicity' || c === 'code_leak')
       .map((c) => ['THREAT', c]));
 
-  const title = isBlock ? 'Prompt blocked' : 'Sensitive data detected';
-  const sub = isBlock
-    ? "This prompt was blocked by your organization's LLM firewall policy."
-    : 'Sensitive information was found in your message before it was sent.';
+  const isAttachment = verdict.kind === 'file' || verdict.kind === 'image';
+  const what = verdict.kind === 'image' ? 'image' : 'file';
+  const title = isAttachment
+    ? `Attachment blocked`
+    : (isBlock ? 'Prompt blocked' : 'Sensitive data detected');
+  const sub = isAttachment
+    ? `Sensitive data was found in ${verdict.filename ? `“${verdict.filename}”` : `this ${what}`} — it was not uploaded.`
+    : isBlock
+      ? "This prompt was blocked by your organization's LLM firewall policy."
+      : 'Sensitive information was found in your message before it was sent.';
 
   return (
     <div
@@ -109,7 +115,9 @@ export default function Modal({ verdict, mode, onChoose }) {
 
         <div className="mt-4 flex justify-end gap-2">
           {isBlock ? (
-            <ActionButton tone="ghost" onClick={() => onChoose('cancel')}>Edit prompt</ActionButton>
+            <ActionButton tone="ghost" onClick={() => onChoose('cancel')}>
+              {isAttachment ? 'Remove attachment' : 'Edit prompt'}
+            </ActionButton>
           ) : mode === 'warn' ? (
             <>
               <ActionButton tone="ghost" onClick={() => onChoose('cancel')}>Cancel</ActionButton>

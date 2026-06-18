@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ShieldCheck, ShieldAlert, Eye, Bell, Lock, Clipboard,
-  Server, CheckCircle2, XCircle, Loader2, MessageSquare,
+  Server, CheckCircle2, XCircle, Loader2, MessageSquare, FileScan,
 } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { DLP_DEFAULTS } from '../lib/config.js';
@@ -94,7 +94,7 @@ export default function Options() {
         </motion.header>
 
         <p className="mb-6 text-[13px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-          Scans prompts in ChatGPT, Claude, Gemini, and Perplexity and stops sensitive data before it leaves your browser.
+          Scans prompts, pasted text, and file/image uploads in ChatGPT, Claude, Gemini, and Perplexity — stopping sensitive data before it leaves your browser.
         </p>
 
         {/* Protection master */}
@@ -134,6 +134,27 @@ export default function Options() {
               hint="Catch secrets the moment they are pasted, before you hit send.">
               <Toggle checked={cfg.scanOnPaste !== false} onChange={(v) => set({ scanOnPaste: v })} ariaLabel="Scan on paste" />
             </Row>
+            <Divider />
+            <Row icon={<FileScan size={15} />} title="Scan file & image uploads"
+              hint="Inspect attached files (PDF, DOCX, code, CSV…) and OCR images before they upload. A finding blocks the attachment.">
+              <Toggle checked={cfg.scanFiles !== false} onChange={(v) => set({ scanFiles: v })} ariaLabel="Scan file uploads" />
+            </Row>
+            {cfg.scanFiles !== false && (
+              <>
+                <Divider />
+                <Row icon={<FileScan size={15} />} title="Max attachment size"
+                  hint="Files larger than this are uploaded without scanning (performance guard).">
+                  <div className="flex items-center gap-2">
+                    <input type="number" min={1} max={50}
+                      value={cfg.maxFileMB ?? 10}
+                      onChange={(e) => set({ maxFileMB: Math.max(1, Math.min(50, Number(e.target.value) || 10)) })}
+                      className="w-16 rounded-lg px-2 py-1 text-[12px] outline-none text-right"
+                      style={{ background: 'var(--bg-main)', border: '1px solid var(--border)', color: 'var(--text)' }} />
+                    <span className="text-[11.5px]" style={{ color: 'var(--text-dim)' }}>MB</span>
+                  </div>
+                </Row>
+              </>
+            )}
           </Card>
         </motion.div>
 

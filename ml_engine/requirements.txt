@@ -14,5 +14,14 @@ opentelemetry-api>=1.25.0
 opentelemetry-sdk>=1.25.0
 opentelemetry-exporter-otlp-proto-http>=1.25.0
 opentelemetry-instrumentation-grpc>=0.46b0
+# Browser DLP file/image scanning (/scan-file). All optional & import-guarded in
+# analyzer/extract.py — a missing one degrades just that file type, never the
+# endpoint. Plain-text/code/csv/json files need none of these.
+PyMuPDF>=1.24.0        # PDF text extraction
+python-docx>=1.1.0     # .docx
+openpyxl>=3.1.0        # .xlsx
+Pillow>=10.0.0         # image decode (OCR)
+easyocr>=1.7.0         # OCR backend (torch-based; no system binary needed)
+# pytesseract>=0.3.10  # alt OCR backend — requires the tesseract system binary
 # spaCy model installed separately:
 #   python -m spacy download en_core_web_sm

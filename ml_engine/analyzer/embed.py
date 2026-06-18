@@ -28,6 +28,8 @@ content/background scripts can reach /scan. The endpoint returns only verdicts
 and masked text — never the configured secrets or upstream keys.
 """
 
+import base64
+import binascii
 import http.server
 import json
 import logging
@@ -50,7 +52,12 @@ GATEWAY_EVENT_URL = os.getenv("GATEWAY_EVENT_URL", "http://localhost:8080/intern
 BROWSER_EVENT_TOKEN = os.getenv("BROWSER_EVENT_TOKEN", "")
 
 _model = None
-_scan_fn = None  # set by start(); maps raw text → DLP verdict dict
+_scan_fn = None       # set by start(); maps raw text → DLP verdict dict
+_scan_file_fn = None  # set by start(); maps (filename, content_type, bytes, strict) → verdict
+
+# Largest base64-encoded attachment we'll accept on /scan-file. Keeps a runaway
+# upload from exhausting the worker; the extension enforces its own cap too.
+MAX_SCAN_FILE_BYTES = int(os.getenv("DLP_MAX_SCAN_FILE_BYTES", str(25 * 1024 * 1024)))
 
 # Centrally-managed DOM selectors for the browser DLP extension. The chat web
 # UIs change their markup often, so rather than ship-and-pray hardcoded
@@ -115,7 +122,8 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return
         if self.path in ("/health", "/healthz"):
             self._respond(200, {"status": "ok", "model_loaded": _model is not None,
-                                "scan_enabled": _scan_fn is not None})
+                                "scan_enabled": _scan_fn is not None,
+                                "scan_file_enabled": _scan_file_fn is not None})
             return
         if self.path == "/selectors":
             # Browser DLP extension fetches+caches this and merges it over its
@@ -133,6 +141,9 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             return
         if self.path == "/scan":
             self._handle_scan()
+            return
+        if self.path == "/scan-file":
+            self._handle_scan_file()
             return
         if self.path == "/report":
             self._handle_report()
@@ -156,6 +167,43 @@ class _Handler(http.server.BaseHTTPRequestHandler):
             self._respond(200, _scan_fn(text))
         except Exception as exc:
             logger.error("scan error: %s", exc)
+            self._respond(500, {"error": str(exc)})
+
+    def _handle_scan_file(self):
+        """Scan an uploaded file/image (browser DLP attachment path).
+
+        Body: {"filename": str, "content_type": str, "data": base64 str,
+               "strict": bool}. Returns a DLP verdict (same shape as /scan, plus
+               kind/filename/extracted_chars). The data is base64 so a single
+               JSON contract covers both text files and binary images.
+        """
+        if _scan_file_fn is None:
+            self._respond(503, {"error": "file scanner not available"})
+            return
+        try:
+            body = self._read_json()
+            filename = body.get("filename", "") or ""
+            content_type = body.get("content_type", "") or ""
+            strict = bool(body.get("strict", False))
+            b64 = body.get("data", "")
+            if not isinstance(b64, str) or not b64:
+                self._respond(400, {"error": "data field (base64) required"})
+                return
+            # Tolerate a data: URL prefix the extension may include.
+            if b64.startswith("data:") and "," in b64:
+                b64 = b64.split(",", 1)[1]
+            try:
+                raw = base64.b64decode(b64, validate=False)
+            except (binascii.Error, ValueError) as exc:
+                self._respond(400, {"error": f"invalid base64: {exc}"})
+                return
+            if len(raw) > MAX_SCAN_FILE_BYTES:
+                self._respond(413, {"error": "file too large",
+                                    "max_bytes": MAX_SCAN_FILE_BYTES})
+                return
+            self._respond(200, _scan_file_fn(filename, content_type, raw, strict))
+        except Exception as exc:
+            logger.error("scan-file error: %s", exc)
             self._respond(500, {"error": str(exc)})
 
     def _handle_report(self):
@@ -272,7 +320,7 @@ def _load_model() -> None:
         )
 
 
-def start(scan_fn=None) -> None:
+def start(scan_fn=None, scan_file_fn=None) -> None:
     """Start the HTTP side-channel and load the embedding model.
 
     The HTTP server always starts so the /config control plane is reachable;
@@ -280,12 +328,18 @@ def start(scan_fn=None) -> None:
 
     scan_fn, when supplied, is a callable text -> verdict dict that backs the
     /scan endpoint (the browser DLP extension). When None, /scan answers 503.
+    scan_file_fn similarly backs /scan-file (file/image attachments).
     """
-    global _scan_fn
+    global _scan_fn, _scan_file_fn
     _scan_fn = scan_fn
+    _scan_file_fn = scan_file_fn
     _load_model()
     server = http.server.ThreadingHTTPServer(("0.0.0.0", EMBED_PORT), _Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
-    routes = "/embed, /config" + (", /scan, /report" if scan_fn is not None else "")
+    routes = "/embed, /config"
+    if scan_fn is not None:
+        routes += ", /scan, /report"
+    if scan_file_fn is not None:
+        routes += ", /scan-file"
     logger.info("ML HTTP side-channel listening on port %d (%s)", EMBED_PORT, routes)

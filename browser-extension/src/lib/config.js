@@ -11,8 +11,16 @@ export const DLP_DEFAULTS = {
   strict: false,                                 // fail-CLOSED: block sends we can't verify
                                                  // (engine unreachable / scanner error)
   scanOnPaste: true,                             // scan pasted text the moment it lands
+  scanFiles: true,                               // scan file/image attachments before upload
+  maxFileMB: 10,                                 // skip files larger than this (perf guard)
   sites: { chatgpt: true, claude: true, gemini: true, perplexity: true },
 };
+
+// /scan-file endpoint, derived from the configured /scan URL so a single
+// engineUrl setting drives both. Falls back gracefully if the URL is custom.
+export function dlpScanFileUrl(engineUrl) {
+  return engineUrl.replace(/\/scan$/, '/scan-file');
+}
 
 // Resolve the effective config from storage, merged over defaults.
 export async function dlpGetConfig() {

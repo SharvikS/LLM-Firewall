@@ -7,7 +7,10 @@ browser talks straight to the provider over TLS.
 The extension hooks the chat composer, and the moment you hit **Send** (or press
 Enter) it scans your prompt. If it finds PII, secrets, or a risky prompt it
 **blocks the send and offers one-click "Redact & send"** (replacing the
-sensitive spans with mask tokens). Nothing leaves the browser until it's clean.
+sensitive spans with mask tokens). It also scans **file & image attachments**
+before they upload (PDF/DOCX/XLSX/CSV/code text extraction + OCR for images) and
+blocks any attachment that carries sensitive data. Nothing leaves the browser
+until it's clean.
 
 ## How detection works
 
@@ -143,8 +146,15 @@ or upstream keys. CORS is open so the extension can reach it.
   ones — so ops can fix a drift server-side (or via the `SELECTORS_JSON` env on
   the engine) **without re-publishing the extension**. A stale/absent engine
   just degrades to the shipped selectors.
-- **Coverage is the composer.** It scans what you type/paste into the message
-  box on send. It does not inspect file uploads or images.
+- **Coverage is the composer + attachments.** It scans what you type/paste into
+  the message box on send, **and** files/images you attach. Uploads are
+  intercepted at the file input, on drag-drop, and on image paste; the bytes are
+  sent to the engine `POST /scan-file`, which extracts text (decode for
+  code/CSV/JSON/text, PyMuPDF for PDF, python-docx for DOCX, openpyxl for XLSX)
+  or **OCRs images** (easyocr), then runs the same detectors. A binary can't be
+  redacted in place, so a finding **blocks the attachment** (it never uploads).
+  Document/OCR backends are optional and degrade gracefully — a missing one
+  fails open, or fails closed under strict mode.
 - This is endpoint-side DLP. For full coverage pair it with the gateway
   (API traffic) — together they cover both the SDK path and the browser path.
 

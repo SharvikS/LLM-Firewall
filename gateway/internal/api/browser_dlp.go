@@ -65,6 +65,8 @@ type browserDLPEvent struct {
 	PII        []string `json:"pii"`        // entity TYPES only (e.g. EMAIL_ADDRESS)
 	Secrets    []string `json:"secrets"`    // secret TYPES only (e.g. AWS_ACCESS_KEY)
 	Source     string   `json:"source"`     // engine | local (which scanner produced the verdict)
+	Kind       string   `json:"kind"`       // text | file | image (attachment scanning)
+	Filename   string   `json:"filename"`   // attachment name, when kind != text
 	Subject    string   `json:"subject"`    // stable identity: extension install id (always sent)
 	Account    string   `json:"account"`    // best-effort human identity (detected account email/name)
 	ClientIP   string   `json:"client_ip"`  // browser source IP, stamped by the engine relay
@@ -180,6 +182,10 @@ func (h *BrowserDLPHandler) Report(w http.ResponseWriter, r *http.Request) {
 	if h.store != nil && action != "BROWSER_DLP_CLEAN" {
 		subject := firstNonEmpty(ev.Subject, ev.Account, "anon:"+site)
 		clientIP := clientIPFromRequest(r, ev.ClientIP)
+		kind := strings.ToLower(strings.TrimSpace(ev.Kind))
+		if kind == "" {
+			kind = "text"
+		}
 		viol := store.DLPViolation{
 			Subject:    subject,
 			Account:    ev.Account,
@@ -189,6 +195,8 @@ func (h *BrowserDLPHandler) Report(w http.ResponseWriter, r *http.Request) {
 			Categories: strings.Join(ev.Categories, ","),
 			Reason:     reason,
 			Source:     ev.Source,
+			Kind:       kind,
+			Filename:   ev.Filename,
 			ClientIP:   clientIP,
 		}
 		applyDevice(&viol, ev.Device)

@@ -25,6 +25,7 @@ from analyzer.pii_scanner import PIIScanner, PIIResult
 from analyzer.toxicity_detector import ToxicityDetector
 from analyzer.secret_scanner import SecretScanner
 from analyzer import embed
+from analyzer import extract
 from analyzer import runtime_config
 from analyzer import schema
 from analyzer import telemetry
@@ -310,6 +311,58 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
             "categories": categories, "pii": [], "secrets": [], "masked_text": text,
         }
 
+    def scan_file(self, filename: str, content_type: str, data: bytes,
+                  strict: bool = False) -> dict:
+        """Scan an uploaded file or image (browser DLP /scan-file path).
+
+        Extracts text from the bytes (decode / PDF / DOCX / XLSX / OCR), then
+        runs the SAME detector pipeline as scan_text over it so a secret hidden
+        in an attachment is caught exactly like one typed into the composer.
+
+        Unlike text, a binary can't be "redacted" in place — masking the
+        extracted text wouldn't change the file the user is about to upload — so
+        a finding becomes a hard "block" (strip the attachment) rather than
+        "redact". The masked text is still returned for the modal preview.
+
+        Images are blocked ONLY on a positive finding from a completed OCR scan —
+        never merely because OCR was unavailable (even under strict policy), so a
+        plain screenshot is always allowed through. For other files, an absent
+        extractor blocks under strict policy (fail closed) or allows otherwise
+        (fail open), mirroring the extension's strict-mode contract for /scan.
+        """
+        res = extract.extract_text(filename, content_type, data)
+        base = {"kind": res.kind, "filename": filename,
+                "extractor": res.extractor, "extracted_chars": len(res.text)}
+
+        if not res.supported:
+            # Images fail OPEN regardless of strict mode; only a real finding from
+            # a successful scan ever blocks an image.
+            strict_block = strict and res.kind != "image"
+            reason = (res.error or "no extractor available")
+            return {**base, "decision": "block" if strict_block else "allow",
+                    "risk": 40.0 if strict_block else 0.0,
+                    "reason": (f"Unscannable {res.kind} — {reason}"
+                               + (" (blocked by strict policy)" if strict_block else "")),
+                    "categories": ["unverified"] if strict_block else [],
+                    "pii": [], "secrets": [], "masked_text": ""}
+
+        if not res.text.strip():
+            return {**base, "decision": "allow", "risk": 0.0,
+                    "reason": f"No readable text in {res.kind}",
+                    "categories": [], "pii": [], "secrets": [], "masked_text": ""}
+
+        verdict = self.scan_text(res.text)
+        verdict.update(base)
+        # A clean attachment passes through unchanged; any finding strips it.
+        if verdict["decision"] == "redact":
+            verdict["decision"] = "block"
+            verdict["reason"] = (f"Sensitive data in {res.kind} "
+                                 f"({filename or 'attachment'}): {verdict['reason']}")
+        elif verdict["decision"] == "block":
+            verdict["reason"] = (f"Blocked {res.kind} "
+                                 f"({filename or 'attachment'}): {verdict['reason']}")
+        return verdict
+
 
 @dataclass
 class BodyScan:
@@ -408,8 +461,8 @@ def serve() -> None:
     # endpoint used by the browser DLP extension.
     servicer = AnalyzerServicer()
 
-    # Start the HTTP side-channel (/embed + /config + /scan) alongside gRPC.
-    embed.start(scan_fn=servicer.scan_text)
+    # Start the HTTP side-channel (/embed + /config + /scan + /scan-file) alongside gRPC.
+    embed.start(scan_fn=servicer.scan_text, scan_file_fn=servicer.scan_file)
 
     # Tracing is opt-in: no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set.
     telemetry.init()
