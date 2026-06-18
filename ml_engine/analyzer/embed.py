@@ -13,6 +13,10 @@ Runs as a daemon thread alongside the gRPC AnalyzerService on port 8001
     POST /report    — browser-DLP event {site, decision, action, risk, ...}
                       relayed to the gateway so endpoint-side blocks/redactions
                       land in the unified live feed / audit log / SOC alerts.
+    GET  /selectors — centrally-managed DOM selector map for the browser DLP
+                      extension. The extension fetches + caches it and merges it
+                      over its bundled fallbacks so selector drift in the chat
+                      UIs can be fixed server-side without re-publishing.
 
 The server always starts (the /config plane must be reachable even when
 sentence-transformers is unavailable). If the embedding model can't be loaded,
@@ -48,6 +52,54 @@ BROWSER_EVENT_TOKEN = os.getenv("BROWSER_EVENT_TOKEN", "")
 _model = None
 _scan_fn = None  # set by start(); maps raw text → DLP verdict dict
 
+# Centrally-managed DOM selectors for the browser DLP extension. The chat web
+# UIs change their markup often, so rather than ship-and-pray hardcoded
+# selectors in the extension, the extension fetches this map from GET /selectors
+# and merges it OVER its bundled fallbacks. Updating these here (or via an env
+# override) lets ops fix selector drift without re-publishing the extension.
+# `version` lets the extension cheaply detect a change. Each adapter lists
+# candidates in priority order; the first visible match wins client-side.
+DEFAULT_SELECTORS = {
+    "version": 1,
+    "selectors": {
+        "chatgpt": {
+            "composer": ["#prompt-textarea", 'div.ProseMirror[contenteditable="true"]', "textarea"],
+            "send": ['button[data-testid="send-button"]', 'button[aria-label*="Send" i]', 'button[type="submit"]'],
+            "account": ['[data-testid="profile-button"]', "nav img[alt]"],
+        },
+        "claude": {
+            "composer": ['div[contenteditable="true"].ProseMirror', 'div[contenteditable="true"]'],
+            "send": ['button[aria-label*="Send" i]', 'button[type="submit"]'],
+            "account": ['button[data-testid="user-menu-button"]', 'button[aria-label*="account" i]'],
+        },
+        "gemini": {
+            "composer": ['div.ql-editor[contenteditable="true"]', 'rich-textarea div[contenteditable="true"]', 'div[contenteditable="true"]'],
+            "send": ['button[aria-label*="Send" i]', "button.send-button", 'button[mattooltip*="Send" i]'],
+            "account": ['a[aria-label*="Google Account" i]', 'a[aria-label*="@"]'],
+        },
+        "perplexity": {
+            "composer": ['textarea[placeholder*="Ask" i]', 'div[contenteditable="true"][role="textbox"]', "textarea", 'div[contenteditable="true"]'],
+            "send": ['button[aria-label*="Submit" i]', 'button[aria-label*="Send" i]', 'button[data-testid*="submit" i]', 'button[type="submit"]'],
+            "account": ['button[aria-label*="account" i]', 'img[alt*="@"]'],
+        },
+    },
+}
+
+
+def _selectors() -> dict:
+    """Return the selector map served to the extension. A SELECTORS_JSON env var
+    (a JSON object of the same shape) overrides the defaults so ops can patch
+    selector drift via config/secret without a code change."""
+    override = os.getenv("SELECTORS_JSON", "").strip()
+    if override:
+        try:
+            data = json.loads(override)
+            if isinstance(data, dict) and "selectors" in data:
+                return data
+        except Exception as exc:
+            logger.warning("invalid SELECTORS_JSON (%s) — serving defaults", exc)
+    return DEFAULT_SELECTORS
+
 
 class _Handler(http.server.BaseHTTPRequestHandler):
     def do_OPTIONS(self):
@@ -64,6 +116,11 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if self.path in ("/health", "/healthz"):
             self._respond(200, {"status": "ok", "model_loaded": _model is not None,
                                 "scan_enabled": _scan_fn is not None})
+            return
+        if self.path == "/selectors":
+            # Browser DLP extension fetches+caches this and merges it over its
+            # bundled fallback selectors so DOM drift can be fixed server-side.
+            self._respond(200, _selectors())
             return
         self._respond(404, {"error": "not found"})
 
