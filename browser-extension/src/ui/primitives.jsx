@@ -2,34 +2,37 @@
 // Premium dark aesthetic matching the admin portal: glass surfaces, the brand
 // blue accent, and Framer Motion micro-interactions on hover/tap.
 import { motion } from 'framer-motion';
-import { ShieldCheck } from 'lucide-react';
+import TitanLogo from './TitanLogo.jsx';
 
 const EASE = [0.16, 1, 0.3, 1];
 
 // ── Brand lockup ────────────────────────────────────────────────────────────
+// Mirrors the admin portal's logo treatment exactly: the TitanLogo mark, dark
+// (var(--bg-main)) on an accent-gradient rounded tile with a soft glow, beside
+// the "TITAN" wordmark. Keep in sync with dashboard so the logo is identical
+// across portal and extension.
 export function Logo({ subtitle, size = 'md' }) {
-  const icon = size === 'lg' ? 22 : 16;
+  const tile = size === 'lg' ? 32 : 28;
+  const mark = size === 'lg' ? 18 : 16;
   return (
     <div className="flex items-center gap-2.5">
       <motion.div
         initial={{ scale: 0.8, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ duration: 0.45, ease: EASE }}
-        className="grid place-items-center rounded-xl"
+        className="relative grid shrink-0 place-items-center overflow-hidden rounded-lg"
         style={{
-          width: size === 'lg' ? 40 : 30,
-          height: size === 'lg' ? 40 : 30,
-          background: 'linear-gradient(150deg, var(--accent), var(--accent-hover))',
-          boxShadow: '0 6px 18px var(--accent-soft)',
+          width: tile,
+          height: tile,
+          background: 'linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 55%, transparent) 100%)',
+          boxShadow: '0 0 12px color-mix(in srgb, var(--accent) 25%, transparent)',
         }}
       >
-        <ShieldCheck size={icon} color="#fff" strokeWidth={2.4} />
+        <TitanLogo style={{ width: mark, height: mark, color: 'var(--bg-main)' }} strokeWidth={1.9} />
       </motion.div>
       <div className="leading-tight">
-        <div
-          className={`text-gradient font-bold tracking-tight ${size === 'lg' ? 'text-[17px]' : 'text-[13.5px]'}`}
-        >
-          TITAN Firewall
+        <div className={`font-bold tracking-tight ${size === 'lg' ? 'text-[16px]' : 'text-[14px]'}`} style={{ color: 'var(--text)' }}>
+          TITAN
         </div>
         {subtitle && (
           <div className="text-[10.5px] font-medium" style={{ color: 'var(--text-dim)' }}>

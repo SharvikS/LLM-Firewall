@@ -9,7 +9,7 @@ import Options from '../src/options/Options.jsx';
 describe('popup', () => {
   test('renders the brand, protection toggle, and stat tiles', () => {
     const html = renderToStaticMarkup(<Popup />);
-    expect(html).toContain('TITAN Firewall');
+    expect(html).toContain('TITAN');
     expect(html).toContain('Protection');
     expect(html).toContain('Blocked');
     expect(html).toContain('Redacted');
