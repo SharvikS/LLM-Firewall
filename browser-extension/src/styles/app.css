@@ -1,0 +1,17 @@
+@import "./theme.css";
+
+/* Base styles for the extension pages (popup + options). The content-script
+   modal uses the same tokens via the shadow-root stylesheet instead. */
+html,
+body {
+  margin: 0;
+  background: var(--bg-main);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+#root {
+  background: var(--bg-main);
+}

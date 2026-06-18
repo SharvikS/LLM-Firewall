@@ -1,8 +1,8 @@
 # TITAN LLM Firewall — Browser DLP extension
 
-Stops sensitive data from being typed/pasted into **ChatGPT, Claude, and Gemini
-web UIs** — the leak path that an API gateway can't see, because the browser
-talks straight to the provider over TLS.
+Stops sensitive data from being typed/pasted into **ChatGPT, Claude, Gemini, and
+Perplexity web UIs** — the leak path that an API gateway can't see, because the
+browser talks straight to the provider over TLS.
 
 The extension hooks the chat composer, and the moment you hit **Send** (or press
 Enter) it scans your prompt. If it finds PII, secrets, or a risky prompt it
@@ -90,20 +90,34 @@ fail-open: if the gateway is down the scan/block still works and the event is
 tallied locally. Optionally set `BROWSER_EVENT_TOKEN` on both the engine and the
 gateway to require a shared secret on the ingest endpoint.
 
+## UI / tech stack
+
+The popup, options page, and the in-page blocking modal are built with the same
+stack as the admin portal — **React 19, Tailwind CSS v4, Framer Motion, and
+Lucide React** — bundled for Manifest V3 with **Vite + @crxjs/vite-plugin**. The
+look is a premium dark aesthetic (glassmorphism surfaces on the `#0d1014` base,
+the brand-blue accent, and micro-animations on hover/tap). The blocking modal is
+a React component rendered into a **shadow root** with its Tailwind stylesheet
+injected inline, so the host page's CSS can neither break it nor leak into it.
+
+The core enforcement layer is unchanged: the send/paste **interception logic**,
+the **background service worker**, and the **local fallback regexes** all carry
+over verbatim — only restructured from `globalThis` IIFEs into ES modules.
+
 ## Install (developer / unpacked)
 
-The extension is a single Manifest V3 codebase that loads in all three engines.
+Build first (`npm install && npm run build`), then load the build output:
 
 **Chrome / Edge**
 1. Go to `chrome://extensions` (or `edge://extensions`).
 2. Enable **Developer mode**.
-3. **Load unpacked** → select this `browser-extension/` folder.
+3. **Load unpacked** → select the `browser-extension/dist/` folder.
 
-**Firefox**
+**Firefox** (run `npm run build:firefox` first)
 1. Go to `about:debugging#/runtime/this-firefox`.
-2. **Load Temporary Add-on…** → select `manifest.json` in this folder.
+2. **Load Temporary Add-on…** → select `dist-firefox/manifest.json`.
    (Temporary add-ons are removed on restart; package with `web-ext` for a
-   persistent install.)
+   persistent install. Firefox ≥128 is required for the module background.)
 
 Then open the extension's **Settings** and confirm the engine URL
 (`http://localhost:8001/scan` by default) — click **Test connection**.
@@ -122,9 +136,13 @@ or upstream keys. CORS is open so the extension can reach it.
 
 ## Caveats
 
-- **Selectors drift.** ChatGPT/Claude/Gemini change their DOM often. Each site
-  adapter (in `content.js`) lists several selector candidates with a generic
-  fallback, but a major redesign may need the selectors updated.
+- **Selectors drift.** The chat UIs change their DOM often. Each site adapter
+  (in `src/content/index.jsx`) lists several selector candidates with a generic fallback.
+  On top of that, the extension fetches a **centrally-managed selector map** from
+  the engine's `GET /selectors`, caches it, and merges it *over* the bundled
+  ones — so ops can fix a drift server-side (or via the `SELECTORS_JSON` env on
+  the engine) **without re-publishing the extension**. A stale/absent engine
+  just degrades to the shipped selectors.
 - **Coverage is the composer.** It scans what you type/paste into the message
   box on send. It does not inspect file uploads or images.
 - This is endpoint-side DLP. For full coverage pair it with the gateway
@@ -132,12 +150,39 @@ or upstream keys. CORS is open so the extension can reach it.
 
 ## Files
 
-| File | Role |
+| Path | Role |
 |------|------|
-| `manifest.json` | MV3 manifest (Chrome/Edge `service_worker` + Firefox `scripts`). |
-| `config.js`     | Shared defaults + `dlpGetConfig()`. |
-| `detectors.js`  | Local-fallback regex detectors (`LocalDLP.localScan`). |
-| `background.js` | Calls the engine `/scan` (local fallback); relays events to `/report` + keeps the local activity tally. |
-| `content.js`    | Site adapters, send interception, blocking modal (shadow DOM), reports the final user action. |
-| `options.html/js` | Settings: enable, mode, engine URL, per-site, test. |
-| `popup.html/js` | Quick on/off, engine status, and recent-activity view. |
+| `manifest.config.js` | MV3 manifest authored for crxjs (icons, CSP, content scripts, SW). |
+| `vite.config.js` | Vite build: React + Tailwind v4 + crxjs. |
+| `src/lib/config.js` | Shared defaults + `dlpGetConfig()` / `dlpGetInstallId()`. |
+| `src/lib/detectors.js` | Local-fallback regex detectors (`localScan`). |
+| `src/lib/hooks.js` | React hooks: config, stats, engine status, active-site. |
+| `src/lib/api.js` | Normalized `browser`/`chrome` API handle. |
+| `src/background.js` | Calls the engine `/scan` (local fallback); relays `/report`, caches `/selectors`, badge + activity tally. |
+| `src/content/index.jsx` | Site adapters, send/paste interception, mounts the React modal. |
+| `src/content/Modal.jsx` | React blocking modal (shadow DOM, Framer Motion). |
+| `src/popup/` | Popup React app — quick on/off, stats, recent activity, engine status. |
+| `src/options/` | Options React app — mode, strict, paste-scan, engine URL, per-site. |
+| `src/ui/primitives.jsx` | Shared design-system components (Logo, Card, Toggle, Button, Segmented, Chip). |
+| `src/styles/theme.css` | Tailwind import, design tokens, glassmorphism + animation utilities. |
+| `icons/` | Brand icons (16/32/48/128), generated by `scripts/gen-icons.js`. |
+| `scripts/` | `gen-icons.js`, `make-firefox.js` (FF manifest), `zip.js` (package). |
+| `tests/` | Jest unit tests for the local detectors. |
+
+## Development
+
+```bash
+cd browser-extension
+npm install
+npm run dev        # Vite dev server with HMR (load dist/ as unpacked)
+npm run lint       # eslint (js + jsx)
+npm test           # jest unit tests for src/lib/detectors.js
+npm run icons      # regenerate icons/ from scripts/gen-icons.js
+npm run build      # Vite + crxjs → dist/ (Chrome MV3)
+npm run build:firefox  # derive dist-firefox/ (Firefox MV3 manifest)
+npm run package    # build + firefox + zip → chrome-extension.zip / firefox-extension.zip
+```
+
+CI (`.github/workflows/extension.yml`) runs lint → test → build → firefox →
+package and uploads both zips as artifacts on every push to `main` that touches
+the extension.

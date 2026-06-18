@@ -1,0 +1,65 @@
+name: browser-extension
+
+# Lint, test, build, and package the cross-browser DLP extension. Runs on pushes
+# to main (and PRs that touch the extension) so the Chrome/Firefox bundles always
+# build and the detector unit tests stay green. The packaged zips are uploaded as
+# build artifacts, ready to publish to the Chrome Web Store / AMO.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "browser-extension/**"
+      - ".github/workflows/extension.yml"
+  pull_request:
+    paths:
+      - "browser-extension/**"
+      - ".github/workflows/extension.yml"
+
+defaults:
+  run:
+    working-directory: browser-extension
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: browser-extension/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Regenerate icons
+        run: npm run icons
+
+      - name: Build (Vite + crxjs → Chrome MV3)
+        run: npm run build
+
+      - name: Derive Firefox build
+        run: npm run build:firefox
+
+      - name: Package zips
+        run: node scripts/zip.js
+
+      - name: Verify zips exist
+        run: test -f chrome-extension.zip && test -f firefox-extension.zip
+
+      - name: Upload extension artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: titan-extension-zips
+          path: |
+            browser-extension/chrome-extension.zip
+            browser-extension/firefox-extension.zip
+          if-no-files-found: error

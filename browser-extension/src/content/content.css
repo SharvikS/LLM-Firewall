@@ -1,0 +1,9 @@
+/* Stylesheet for the content-script blocking modal. Imported with `?inline` and
+   injected into the modal's shadow root, so the host page's CSS can't reach in
+   and our utilities can't leak out. Tokens come from theme.css's :host block. */
+@import "../styles/theme.css";
+
+:host {
+  all: initial;
+  font-family: var(--font-sans);
+}

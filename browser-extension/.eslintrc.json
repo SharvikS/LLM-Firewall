@@ -1,0 +1,38 @@
+{
+  "root": true,
+  "env": {
+    "browser": true,
+    "webextensions": true,
+    "serviceworker": true,
+    "node": true,
+    "es2022": true
+  },
+  "parser": "@babel/eslint-parser",
+  "parserOptions": {
+    "ecmaVersion": 2022,
+    "sourceType": "module",
+    "requireConfigFile": false,
+    "babelOptions": {
+      "presets": ["@babel/preset-react"]
+    },
+    "ecmaFeatures": { "jsx": true }
+  },
+  "settings": { "react": { "version": "detect" } },
+  "extends": ["eslint:recommended", "plugin:react/recommended", "plugin:react/jsx-runtime"],
+  "rules": {
+    "no-empty": ["error", { "allowEmptyCatch": true }],
+    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }],
+    "react/prop-types": "off",
+    "react/no-unknown-property": "off"
+  },
+  "overrides": [
+    {
+      "files": ["tests/**/*.{js,jsx}", "**/*.test.{js,jsx}"],
+      "env": { "jest": true, "node": true }
+    },
+    {
+      "files": ["scripts/**/*.js", "*.config.js", "vite.config.js", "manifest.config.js"],
+      "env": { "node": true }
+    }
+  ]
+}

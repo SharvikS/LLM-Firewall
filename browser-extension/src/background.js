@@ -1,17 +1,11 @@
-// Background scanner. Content scripts can't reliably fetch the local engine
-// (the chat sites' CSP blocks cross-origin connect from the page context), so
-// the privileged background context makes the call. Strategy chosen by the
-// operator: call the firewall ML engine /scan, and on any failure fall back to
-// the bundled local detectors so the box is never left unprotected.
-
-// Chrome MV3 runs this as a service worker (single file) — pull in deps via
-// importScripts. Firefox MV3 lists them in background.scripts, so they're
-// already loaded and importScripts is absent.
-if (typeof importScripts === 'function' && typeof globalThis.LocalDLP === 'undefined') {
-  try { importScripts('config.js', 'detectors.js'); } catch (e) { /* already loaded */ }
-}
-
-const api = globalThis.browser ?? globalThis.chrome;
+// Background scanner (MV3 service worker, ES module). Content scripts can't
+// reliably fetch the local engine (the chat sites' CSP blocks cross-origin
+// connect from the page context), so the privileged background context makes the
+// call: hit the firewall ML engine /scan, and on any failure fall back to the
+// bundled local detectors so the box is never left unprotected.
+import { api } from './lib/api.js';
+import { dlpGetConfig } from './lib/config.js';
+import { localScan } from './lib/detectors.js';
 
 async function scanViaEngine(text, cfg) {
   const ctrl = new AbortController();
@@ -33,12 +27,12 @@ async function scanViaEngine(text, cfg) {
 }
 
 async function scan(text) {
-  const cfg = await globalThis.dlpGetConfig();
+  const cfg = await dlpGetConfig();
   try {
     return await scanViaEngine(text, cfg);
   } catch (err) {
     // Engine unreachable / slow / errored — fall back to local detection.
-    const verdict = globalThis.LocalDLP.localScan(text);
+    const verdict = localScan(text);
     verdict.degraded = true;
     verdict.engineError = String(err && err.message ? err.message : err);
     return verdict;
@@ -51,7 +45,7 @@ async function scan(text) {
 // popup's activity view and survive even when the engine is offline.
 async function report(event) {
   await bumpStats(event);
-  const cfg = await globalThis.dlpGetConfig();
+  const cfg = await dlpGetConfig();
   const reportUrl = cfg.engineUrl.replace(/\/scan$/, '/report');
   try {
     const ctrl = new AbortController();
@@ -84,7 +78,67 @@ async function bumpStats(event) {
   await api.storage.local.set({ dlpStats: stats });
 }
 
+// ── Dynamic UI selectors ────────────────────────────────────────────────────
+// The chat web UIs rename/restructure their DOM often, which silently breaks the
+// content script's hardcoded composer/send selectors. To fix drift without
+// re-publishing the extension, we fetch a selector map from the engine's
+// GET /selectors, cache it in storage, and hand it to content scripts on demand.
+// content.js merges it OVER its bundled fallbacks, so a stale/absent engine just
+// degrades to the shipped selectors — never to total failure.
+const SELECTORS_TTL_MS = 6 * 60 * 60 * 1000; // refresh at most every 6h
+const SELECTORS_ALARM = 'dlp-selectors-refresh';
+
+function selectorsUrl(engineUrl) {
+  return engineUrl.replace(/\/scan$/, '/selectors');
+}
+
+// Fetch the latest selector map and cache it. Returns the fetched map, or null
+// on failure (callers keep using whatever is already cached).
+async function refreshSelectors() {
+  const cfg = await dlpGetConfig();
+  const url = selectorsUrl(cfg.engineUrl);
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), cfg.timeoutMs);
+    const res = await fetch(url, { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error('selectors HTTP ' + res.status);
+    const data = await res.json();
+    if (!data || typeof data !== 'object' || !data.selectors) {
+      throw new Error('selectors payload missing "selectors"');
+    }
+    await api.storage.local.set({ dlpSelectors: data, dlpSelectorsAt: Date.now() });
+    return data;
+  } catch (_) {
+    return null; // keep prior cache; content.js falls back to bundled selectors
+  }
+}
+
+// Return the cached selector map, refreshing it first if missing or stale.
+async function getSelectors() {
+  const { dlpSelectors, dlpSelectorsAt } = await api.storage.local.get(['dlpSelectors', 'dlpSelectorsAt']);
+  const fresh = dlpSelectorsAt && (Date.now() - dlpSelectorsAt) < SELECTORS_TTL_MS;
+  if (dlpSelectors && fresh) return dlpSelectors;
+  const fetched = await refreshSelectors();
+  return fetched || dlpSelectors || null; // fall back to stale cache, then null
+}
+
+// Periodic background refresh so content scripts see updated selectors even on
+// long-lived tabs. Alarms survive the MV3 service worker being suspended.
+try {
+  if (api.alarms) {
+    api.alarms.create(SELECTORS_ALARM, { periodInMinutes: 360 });
+    api.alarms.onAlarm.addListener((alarm) => {
+      if (alarm.name === SELECTORS_ALARM) refreshSelectors();
+    });
+  }
+} catch (_) { /* alarms unavailable — on-demand refresh still works */ }
+
 api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg && msg.type === 'DLP_SELECTORS') {
+    getSelectors().then((sel) => sendResponse(sel)).catch(() => sendResponse(null));
+    return true; // async response
+  }
   if (msg && msg.type === 'DLP_REPORT' && msg.event) {
     report(msg.event).then(() => sendResponse({ ok: true })).catch(() => sendResponse({ ok: false }));
     return true; // async response
@@ -96,7 +150,7 @@ api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true; // async response
   }
   if (msg && msg.type === 'DLP_PING') {
-    globalThis.dlpGetConfig().then(async (cfg) => {
+    dlpGetConfig().then(async (cfg) => {
       try {
         const ctrl = new AbortController();
         const t = setTimeout(() => ctrl.abort(), cfg.timeoutMs);
@@ -112,38 +166,38 @@ api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return false;
 });
 
-// AI Site Detection & Classification Logic
+// ── AI site detection & badge classification ────────────────────────────────
 const AI_SITE_WHITELIST = [
   'chatgpt.com', 'chat.openai.com',
   'claude.ai',
   'gemini.google.com',
-  'perplexity.ai'
+  'perplexity.ai',
 ];
 
 const AI_SITE_BLACKLIST = [
-  'fake-ai-site.com'
+  'fake-ai-site.com',
 ];
 
 function getSiteClassification(hostname) {
-  if (AI_SITE_WHITELIST.some(site => hostname.endsWith(site))) {
+  if (AI_SITE_WHITELIST.some((site) => hostname.endsWith(site))) {
     return 'GENUINE';
-  } else if (AI_SITE_BLACKLIST.some(site => hostname.endsWith(site))) {
+  } else if (AI_SITE_BLACKLIST.some((site) => hostname.endsWith(site))) {
     return 'GENERIC_WRAPPER';
   } else if (hostname.includes('ai') || hostname.includes('chat')) {
-     return 'UNKNOWN_AI';
+    return 'UNKNOWN_AI';
   }
   return 'NOT_AI';
 }
 
 function updateBadgeForTab(tabId, url) {
   if (!url || !url.startsWith('http')) {
-     api.action.setBadgeText({ text: '', tabId });
-     return;
+    api.action.setBadgeText({ text: '', tabId });
+    return;
   }
   try {
     const hostname = new URL(url).hostname;
     const classification = getSiteClassification(hostname);
-    
+
     if (classification === 'GENUINE') {
       api.action.setBadgeText({ text: '✓', tabId });
       api.action.setBadgeBackgroundColor({ color: '#4ade80', tabId });
@@ -156,7 +210,7 @@ function updateBadgeForTab(tabId, url) {
     } else {
       api.action.setBadgeText({ text: '', tabId });
     }
-  } catch (e) {
+  } catch (_) {
     api.action.setBadgeText({ text: '', tabId });
   }
 }
@@ -167,8 +221,8 @@ api.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   }
 });
 
-api.tabs.onActivated.addListener(activeInfo => {
-  api.tabs.get(activeInfo.tabId, tab => {
+api.tabs.onActivated.addListener((activeInfo) => {
+  api.tabs.get(activeInfo.tabId, (tab) => {
     if (tab && tab.url) {
       updateBadgeForTab(activeInfo.tabId, tab.url);
     }
