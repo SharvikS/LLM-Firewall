@@ -41,11 +41,56 @@ async function renderStats() {
   }).join('');
 }
 
+function getSiteClassification(hostname) {
+  const AI_SITE_WHITELIST = ['chatgpt.com', 'chat.openai.com', 'claude.ai', 'gemini.google.com', 'perplexity.ai'];
+  const AI_SITE_BLACKLIST = ['fake-ai-site.com'];
+  if (AI_SITE_WHITELIST.some(site => hostname.endsWith(site))) return 'GENUINE';
+  if (AI_SITE_BLACKLIST.some(site => hostname.endsWith(site))) return 'GENERIC_WRAPPER';
+  if (hostname.includes('ai') || hostname.includes('chat')) return 'UNKNOWN_AI';
+  return 'NOT_AI';
+}
+
+async function renderSiteStatus() {
+  const tabs = await api.tabs.query({ active: true, currentWindow: true });
+  if (!tabs || !tabs[0] || !tabs[0].url) return;
+  
+  try {
+    const url = new URL(tabs[0].url);
+    if (!url.hostname) return;
+    const classification = getSiteClassification(url.hostname);
+    
+    const banner = document.getElementById('site-status');
+    banner.style.display = 'block';
+    
+    if (classification === 'GENUINE') {
+      banner.style.backgroundColor = '#166534';
+      banner.style.color = '#4ade80';
+      banner.style.border = '1px solid #14532d';
+      banner.textContent = '✓ Genuine AI Platform';
+    } else if (classification === 'GENERIC_WRAPPER') {
+      banner.style.backgroundColor = '#7f1d1d';
+      banner.style.color = '#f87171';
+      banner.style.border = '1px solid #7f1d1d';
+      banner.textContent = '⚠️ Generic/Wrapper AI Site';
+    } else if (classification === 'UNKNOWN_AI') {
+      banner.style.backgroundColor = '#78350f';
+      banner.style.color = '#fbbf24';
+      banner.style.border = '1px solid #78350f';
+      banner.textContent = '? Unknown AI Site';
+    } else {
+      banner.style.display = 'none';
+    }
+  } catch (e) {
+    // invalid URL or permission denied
+  }
+}
+
 async function init() {
   const cfg = await globalThis.dlpGetConfig();
   document.getElementById('enabled').checked = cfg.enabled;
   renderState(cfg.enabled);
   renderStats();
+  renderSiteStatus();
 
   api.runtime.sendMessage({ type: 'DLP_PING' }, (resp) => {
     const e = document.getElementById('engine');

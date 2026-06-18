@@ -111,3 +111,66 @@ api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   return false;
 });
+
+// AI Site Detection & Classification Logic
+const AI_SITE_WHITELIST = [
+  'chatgpt.com', 'chat.openai.com',
+  'claude.ai',
+  'gemini.google.com',
+  'perplexity.ai'
+];
+
+const AI_SITE_BLACKLIST = [
+  'fake-ai-site.com'
+];
+
+function getSiteClassification(hostname) {
+  if (AI_SITE_WHITELIST.some(site => hostname.endsWith(site))) {
+    return 'GENUINE';
+  } else if (AI_SITE_BLACKLIST.some(site => hostname.endsWith(site))) {
+    return 'GENERIC_WRAPPER';
+  } else if (hostname.includes('ai') || hostname.includes('chat')) {
+     return 'UNKNOWN_AI';
+  }
+  return 'NOT_AI';
+}
+
+function updateBadgeForTab(tabId, url) {
+  if (!url || !url.startsWith('http')) {
+     api.action.setBadgeText({ text: '', tabId });
+     return;
+  }
+  try {
+    const hostname = new URL(url).hostname;
+    const classification = getSiteClassification(hostname);
+    
+    if (classification === 'GENUINE') {
+      api.action.setBadgeText({ text: '✓', tabId });
+      api.action.setBadgeBackgroundColor({ color: '#4ade80', tabId });
+    } else if (classification === 'GENERIC_WRAPPER') {
+      api.action.setBadgeText({ text: '!', tabId });
+      api.action.setBadgeBackgroundColor({ color: '#f87171', tabId });
+    } else if (classification === 'UNKNOWN_AI') {
+      api.action.setBadgeText({ text: '?', tabId });
+      api.action.setBadgeBackgroundColor({ color: '#fbbf24', tabId });
+    } else {
+      api.action.setBadgeText({ text: '', tabId });
+    }
+  } catch (e) {
+    api.action.setBadgeText({ text: '', tabId });
+  }
+}
+
+api.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.url || changeInfo.status === 'complete') {
+    updateBadgeForTab(tabId, tab.url);
+  }
+});
+
+api.tabs.onActivated.addListener(activeInfo => {
+  api.tabs.get(activeInfo.tabId, tab => {
+    if (tab && tab.url) {
+      updateBadgeForTab(activeInfo.tabId, tab.url);
+    }
+  });
+});

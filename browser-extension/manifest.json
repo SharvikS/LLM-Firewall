@@ -3,7 +3,7 @@
   "name": "TITAN LLM Firewall — Browser DLP",
   "version": "0.2.0",
   "description": "Stops sensitive data (PII, secrets) and risky prompts from being sent into ChatGPT, Claude, and Gemini web UIs.",
-  "permissions": ["storage"],
+  "permissions": ["storage", "tabs"],
   "host_permissions": [
     "http://localhost/*",
     "http://127.0.0.1/*"
