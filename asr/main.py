@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from analyzer.api.routes import router
+from asr.api.routes import router
 import logging
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")

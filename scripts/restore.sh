@@ -6,7 +6,7 @@
 #
 # DESTRUCTIVE: RESTORE overwrites existing tables. The gateway should be stopped
 # (or in maintenance) during a restore. This restores into a staging database
-# first so you can verify before swapping — see docs/MD_FILES/DR_RUNBOOK.md.
+# first so you can verify before swapping — see docs/operations/DR_RUNBOOK.md.
 set -euo pipefail
 
 CONTAINER="${COCKROACH_CONTAINER:-titan-llm-firewall-cockroachdb-1}"

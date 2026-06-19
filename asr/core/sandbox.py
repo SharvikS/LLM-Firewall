@@ -114,7 +114,7 @@ class FirecrackerSandboxManager:
     def __init__(self) -> None:
         self.firecracker = None
         try:
-            from analyzer.core.firecracker_backend import FirecrackerBackend
+            from asr.core.firecracker_backend import FirecrackerBackend
             fc = FirecrackerBackend()
             if fc.available():
                 self.firecracker = fc

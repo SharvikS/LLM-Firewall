@@ -2,9 +2,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
 
-from analyzer.core.risk_engine import RuntimeRiskEngine
-from analyzer.core.sandbox import FirecrackerSandboxManager
-from analyzer.core.firewall import PromptFirewall, ResponseFirewall
+from asr.core.risk_engine import RuntimeRiskEngine
+from asr.core.sandbox import FirecrackerSandboxManager
+from asr.core.firewall import PromptFirewall, ResponseFirewall
 
 router = APIRouter()
 risk_engine = RuntimeRiskEngine()

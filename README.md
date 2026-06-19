@@ -228,7 +228,7 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
 
 **mTLS for gRPC** — The gateway-to-ML-engine channel supports **mutual TLS** (`ANALYZER_TLS_ENABLED` + client cert/key) so the ML engine only accepts calls from the gateway. One-way TLS is also supported (omit the client cert). TLS 1.2 is the floor, and a certificate-load failure causes the server to exit rather than fall back to plaintext (fail-closed). `scripts/gen-certs.sh` issues the full CA + server + client chain.
 
-**Backup, Restore & Disaster Recovery** — `scripts/backup.sh` takes a full CockroachDB backup (local nodelocal for dev, or S3/GCS/Azure via `BACKUP_URI`); `scripts/restore.sh` restores the latest backup non-destructively into a staging database. `docs/MD_FILES/DR_RUNBOOK.md` documents what holds state, RPO/RTO targets (≤24h / ≤30min), and a monthly restore-drill cadence.
+**Backup, Restore & Disaster Recovery** — `scripts/backup.sh` takes a full CockroachDB backup (local nodelocal for dev, or S3/GCS/Azure via `BACKUP_URI`); `scripts/restore.sh` restores the latest backup non-destructively into a staging database. `docs/operations/DR_RUNBOOK.md` documents what holds state, RPO/RTO targets (≤24h / ≤30min), and a monthly restore-drill cadence.
 
 **Dependency CVE Scanning** — `scripts/security-scan.sh` runs `govulncheck` (Go), `pip-audit` (Python), and `npm audit` (Node), consolidates the findings into a single JSON report, and exits non-zero on any finding — gating CI (`.github/workflows/security.yml`, on push/PR/weekly). The dashboard **Vulnerabilities** tab renders the committed report live, per component.
 

@@ -147,7 +147,7 @@ suites green; 12/12 smoke; stack verified live.
   non-regex injections now detected.
 - **Dynamic audit attribution** — provider derived from upstream host, model
   parsed from the request body (was hardcoded Groq/llama3-8b).
-- **Real local sandbox isolation** — `analyzer/core/sandbox.py` now reaches
+- **Real local sandbox isolation** — `asr/core/sandbox.py` now reaches
   Docker (Desktop socket discovery) and the seccomp allowlist gained the modern
   runc/glibc syscalls it needed to start; verified net-none + read-only rootfs.
 - **Response-side output scanning** — masks PII/secrets the model emits
@@ -158,7 +158,7 @@ suites green; 12/12 smoke; stack verified live.
   (`PLUGIN_DIR`); sample blocks internal codenames. Verified 403 live.
 - **Grafana** over ClickHouse (provisioned datasource + TITAN Overview, :3001),
   **load/stress harness** (`loadtest/`), **AWS EKS Terraform** (`terraform/`).
-- Docs reorganized under `docs/MD_FILES/`; `.DS_Store` files untracked + ignored.
+- Docs reorganized under `docs/`; `.DS_Store` files untracked + ignored.
 
 ---
 
@@ -240,7 +240,7 @@ several latent faults that would have broken the client demo:
 ### Critical (Blocks Enterprise Readiness)
 
 - [x] **1. Cedar Policy Engine** — DONE. `gateway/internal/policy/engine.go` evaluates real Cedar via `github.com/cedar-policy/cedar-go` (pure-Go AWS implementation): DB policies compile to Cedar text (or use the pre-computed `cedar_text` column), forbid-wins + default-deny semantics, 30s cache refresh. The old `cedar.go` stub was dead code and has been removed.
-- [x] **2. Firecracker MicroVM Sandbox** — DONE. `analyzer/core/firecracker_backend.py` boots a throwaway Firecracker microVM per command via the API socket (KVM hardware isolation, no NIC, read-only rootfs; command via `titan_cmd=<b64>` boot arg, output via serial sentinels). Auto-selected when `/dev/kvm` + binary + kernel + rootfs are present (`FIRECRACKER_BIN`/`FC_KERNEL_IMAGE`/`FC_ROOTFS`); falls back to hardened-Docker, then simulated. Rootfs tooling: `analyzer/core/firecracker/{build_rootfs.sh,titan-init.sh}`. Requires a Linux/KVM host to activate — verified here to probe-and-fallback correctly.
+- [x] **2. Firecracker MicroVM Sandbox** — DONE. `asr/core/firecracker_backend.py` boots a throwaway Firecracker microVM per command via the API socket (KVM hardware isolation, no NIC, read-only rootfs; command via `titan_cmd=<b64>` boot arg, output via serial sentinels). Auto-selected when `/dev/kvm` + binary + kernel + rootfs are present (`FIRECRACKER_BIN`/`FC_KERNEL_IMAGE`/`FC_ROOTFS`); falls back to hardened-Docker, then simulated. Rootfs tooling: `asr/core/firecracker/{build_rootfs.sh,titan-init.sh}`. Requires a Linux/KVM host to activate — verified here to probe-and-fallback correctly.
 - [x] **3. ClickHouse Analytics DB** — DONE. ClickHouse ingests the `audit_logs` topic natively (Kafka engine table + MV → MergeTree, 90-day TTL, monthly partitions — `platform/clickhouse/init.sql`). Gateway read path: `internal/analytics/clickhouse.go` (HTTP interface, parameterized queries) exposed at `/api/analytics/{overview,timeseries,threats}`; answers 503 when `CLICKHOUSE_URL` unset. Compose includes the `clickhouse` service.
 - [x] **4. Metrics Persistence** — DONE (Phase 2 session). `gateway/internal/metrics/reporter.go` flushes counters/latencies/traffic to Redis every 5s; `GlobalSnapshot()`/`GlobalEvents()` give cluster-wide views with local fallback.
 

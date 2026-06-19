@@ -15,6 +15,13 @@ gateway/gateway
 __pycache__/
 *.pyc
 *.pyo
+.pytest_cache/
+
+# Runtime logs (per-service *.log are regenerated on every run)
+*.log
+
+# Stray root npm lockfile (real lockfiles live in dashboard/ and browser-extension/)
+/package-lock.json
 
 # macOS Finder metadata
 .DS_Store

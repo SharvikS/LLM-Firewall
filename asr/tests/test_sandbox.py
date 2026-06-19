@@ -2,7 +2,7 @@
 Sandbox isolation tests.
 
 Uses stdlib unittest so it runs with no extra deps:
-    PYTHONPATH=.. python -m unittest analyzer.tests.test_sandbox
+    PYTHONPATH=.. python -m unittest asr.tests.test_sandbox
 
 The Docker-backed cases skip automatically when no daemon is reachable, so the
 suite is green on CI runners without Docker while still proving real isolation
@@ -11,8 +11,8 @@ suite is green on CI runners without Docker while still proving real isolation
 
 import unittest
 
-from analyzer.core import sandbox
-from analyzer.core.sandbox import FirecrackerSandboxManager, _connect_docker, _SECCOMP_PROFILE
+from asr.core import sandbox
+from asr.core.sandbox import FirecrackerSandboxManager, _connect_docker, _SECCOMP_PROFILE
 
 
 def _docker_available() -> bool:
