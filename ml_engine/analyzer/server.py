@@ -333,6 +333,11 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
         res = extract.extract_text(filename, content_type, data)
         base = {"kind": res.kind, "filename": filename,
                 "extractor": res.extractor, "extracted_chars": len(res.text)}
+        # Audit clarity: distinguish "image had no readable text" from "image
+        # could not be scanned" (OCR absent / timed out) in the event log.
+        if res.meta.get("ocr_attempted"):
+            base["ocr_attempted"] = True
+            base["ocr_failed"] = bool(res.meta.get("ocr_failed"))
 
         if not res.supported:
             # Images fail OPEN regardless of strict mode; only a real finding from

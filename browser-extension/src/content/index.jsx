@@ -425,9 +425,17 @@ import css from './content.css?inline';
     const kind = (file.type || '').startsWith('image/') ? 'image' : 'file';
     const strictBlock = config.strict && kind !== 'image';
     if (config.maxFileMB && file.size > config.maxFileMB * 1024 * 1024) {
-      return { decision: 'allow', risk: 0, kind, filename: file.name,
-        reason: `Skipped — over ${config.maxFileMB}MB scan limit`, categories: [],
-        pii: [], secrets: [], source: 'skipped' };
+      // An over-limit file is never scanned, so it's "unverified" — treat it
+      // exactly like an offline engine: fail CLOSED under strict policy, and
+      // fail open otherwise but say plainly it went through unscanned (an
+      // oversized image always fails open, consistent with the image contract).
+      return strictBlock
+        ? { decision: 'block', risk: 40, kind, filename: file.name,
+            reason: `Over ${config.maxFileMB}MB scan limit — blocked by strict policy`,
+            categories: ['unverified'], pii: [], secrets: [], source: 'skipped' }
+        : { decision: 'allow', risk: 0, kind, filename: file.name,
+            reason: `Over ${config.maxFileMB}MB scan limit — sent unscanned`,
+            categories: [], pii: [], secrets: [], source: 'skipped' };
     }
     let dataB64;
     try { dataB64 = await readFileB64(file); }
@@ -460,8 +468,11 @@ import css from './content.css?inline';
   // Scan a list of files; if any is blocked, show the modal and report. Returns
   // true when ALL files are clean (caller forwards them on), false otherwise.
   async function handleFiles(files) {
-    const verdicts = [];
-    for (const f of files) verdicts.push(await scanAttachment(f));
+    // Scan attachments concurrently: each scan is an async round-trip to the
+    // engine (OCR can take 0.5–2s/image), so a serial loop would stall the UI
+    // for the sum of all files. Promise.all preserves order, and the first
+    // block still wins below.
+    const verdicts = await Promise.all(files.map((f) => scanAttachment(f)));
     const bad = verdicts.find((v) => v.decision === 'block');
     if (!bad) return true;
 

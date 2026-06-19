@@ -48,6 +48,33 @@ def test_image_without_backend_is_unsupported_not_crash():
     # supported depends on OCR availability; the contract is "no exception".
 
 
+def test_spoofed_image_content_type_is_not_treated_as_image():
+    # A non-image that lies about its content_type must NOT get the privileged
+    # (fail-open) "image" classification — the bytes decide, not the label.
+    r = extract.extract_text("evil.exe", "image/png", b"\x4d\x5a\x90\x00\x03")  # "MZ" = PE
+    assert r.kind == "file" and not r.supported
+
+
+def test_real_image_mislabelled_as_binary_is_still_an_image():
+    # Conversely, real image bytes mislabelled as octet-stream are recognised.
+    r = extract.extract_text("photo.bin", "application/octet-stream", b"\x89PNG\r\n\x1a\n x")
+    assert r.kind == "image"
+
+
+def test_sniff_image_covers_common_formats():
+    assert extract._sniff_image(b"\xff\xd8\xff\xe0 jfif")      # JPEG
+    assert extract._sniff_image(b"GIF89a....")                 # GIF
+    assert extract._sniff_image(b"RIFF\x00\x00\x00\x00WEBPVP")  # WEBP
+    assert not extract._sniff_image(b"%PDF-1.7")               # not an image
+    assert not extract._sniff_image(b"")
+
+
+def test_spoofed_image_fails_closed_in_strict(servicer):
+    # The spoofing payoff would be a strict-mode bypass; confirm it's denied.
+    v = servicer.scan_file("evil.exe", "image/png", b"\x4d\x5a\x90\x00", strict=True)
+    assert v["decision"] == "block" and v["kind"] == "file"
+
+
 @pytest.mark.skipif(not _have("docx"), reason="python-docx not installed")
 def test_docx_extraction():
     import docx

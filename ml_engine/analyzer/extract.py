@@ -17,9 +17,11 @@ Returns an ExtractResult so the caller can distinguish "file" from "image"
 wasn't available (so strict mode can fail closed on the latter).
 """
 
+import concurrent.futures
 import io
 import logging
 import os
+import threading
 from dataclasses import dataclass, field
 
 logger = logging.getLogger("extract")
@@ -28,6 +30,12 @@ logger = logging.getLogger("extract")
 # (a multi-MB PDF), but the detectors only need a representative slice — and
 # Presidio is O(n) per recognizer, so an unbounded paste would stall the worker.
 MAX_EXTRACT_CHARS = int(os.getenv("DLP_MAX_EXTRACT_CHARS", "200000"))
+
+# Wall-clock budget for a single image's OCR. Both servers that call this run
+# multi-threaded (HTTP ThreadingHTTPServer, gRPC ThreadPoolExecutor), so a
+# pathological image must not tie up a worker indefinitely. On timeout the image
+# comes back unsupported (and, being an image, fails OPEN — never a false block).
+OCR_TIMEOUT_S = float(os.getenv("DLP_OCR_TIMEOUT_S", "20"))
 
 # Extensions we treat as already-plain-text (decode directly, no library).
 _TEXT_EXTS = {
@@ -83,6 +91,30 @@ def _is_image(ext: str, content_type: str) -> bool:
     return ext in _IMAGE_EXTS or (content_type or "").startswith("image/")
 
 
+# Magic-byte signatures for the image formats we OCR. The caller-supplied
+# filename / content_type are untrusted (a direct API call or a compromised
+# extension can spoof them), and "image" is a privileged classification — images
+# fail OPEN even under strict policy. So we only grant image treatment when the
+# bytes themselves prove it, which also means a real image mislabelled as
+# ".bin"/octet-stream is still recognised and OCR'd.
+_IMAGE_MAGIC = (
+    b"\x89PNG\r\n\x1a\n",   # PNG
+    b"\xff\xd8\xff",        # JPEG
+    b"GIF87a", b"GIF89a",   # GIF
+    b"BM",                  # BMP
+    b"II*\x00", b"MM\x00*", # TIFF (little- / big-endian)
+)
+
+
+def _sniff_image(data: bytes) -> bool:
+    """True iff the leading bytes match a known image signature."""
+    head = data[:16]
+    if any(head.startswith(sig) for sig in _IMAGE_MAGIC):
+        return True
+    # WEBP is a RIFF container: "RIFF"....(size)...."WEBP".
+    return head[:4] == b"RIFF" and head[8:12] == b"WEBP"
+
+
 # ── Per-format extractors (each import-guarded, returns text or raises) ───────
 
 def _extract_pdf(data: bytes) -> str:
@@ -133,13 +165,45 @@ def _extract_text_bytes(data: bytes) -> str:
 
 
 # OCR backends are lazy + cached: importing torch/easyocr is expensive, so we
-# only pay it on the first image and keep the reader resident afterwards.
+# only pay it on the first image and keep the reader resident afterwards. Both
+# callers are multi-threaded, so a lock guards the one-time reader construction
+# (EasyOCR's Reader() is not safe to enter concurrently — two threads racing it
+# would each download/load the weights and could corrupt the shared cache).
 _ocr_reader = None
 _ocr_backend = None  # "easyocr" | "tesseract" | "unavailable"
+_ocr_lock = threading.Lock()
 
 
-def _ocr_image(data: bytes) -> str:
-    global _ocr_reader, _ocr_backend
+def _easyocr_reader():
+    """Build the EasyOCR reader once, under a lock, and cache it.
+
+    Double-checked locking: the common path (reader already built) takes no lock;
+    only the first caller constructs it while the rest wait, so concurrent image
+    scans can never build two readers or race the weight download.
+    """
+    global _ocr_reader
+    if _ocr_reader is not None:
+        return _ocr_reader
+    with _ocr_lock:
+        if _ocr_reader is None:
+            import contextlib  # noqa: PLC0415
+            import easyocr  # noqa: PLC0415
+            # English only by default; GPU off for a CPU-only deployment. The
+            # first construction downloads detector/recogniser weights and prints
+            # a progress bar with block glyphs that crash a non-UTF-8 console
+            # (Windows cp1252), so we silence its stdout/stderr during build and
+            # pass verbose=False to mute the per-call progress bar. Set
+            # DLP_OCR_LANGS (comma-separated, e.g. "en,fr,de") for multilingual
+            # documents — EasyOCR supports 80+ languages.
+            langs = [l.strip() for l in os.getenv("DLP_OCR_LANGS", "en").split(",") if l.strip()] or ["en"]
+            with open(os.devnull, "w") as devnull, \
+                    contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+                _ocr_reader = easyocr.Reader(langs, gpu=False, verbose=False)
+    return _ocr_reader
+
+
+def _ocr_image_inner(data: bytes) -> str:
+    global _ocr_backend
 
     # Prefer tesseract when a binary is actually installed (fast, light); else
     # fall back to easyocr (torch-based, no system binary, downloads models once).
@@ -156,24 +220,26 @@ def _ocr_image(data: bytes) -> str:
             logger.debug("tesseract OCR unavailable (%s) — trying easyocr", exc)
 
     try:
-        import contextlib  # noqa: PLC0415
-        import easyocr  # noqa: PLC0415
-        if _ocr_reader is None:
-            # English only by default; GPU off for a CPU-only deployment. The
-            # first construction downloads detector/recogniser weights and prints
-            # a progress bar with block glyphs that crash a non-UTF-8 console
-            # (Windows cp1252), so we silence its stdout/stderr during build and
-            # pass verbose=False to mute the per-call progress bar.
-            langs = [l.strip() for l in os.getenv("DLP_OCR_LANGS", "en").split(",") if l.strip()]
-            with open(os.devnull, "w") as devnull, \
-                    contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
-                _ocr_reader = easyocr.Reader(langs, gpu=False, verbose=False)
+        reader = _easyocr_reader()
         _ocr_backend = "easyocr"
-        lines = _ocr_reader.readtext(data, detail=0, paragraph=True)
+        lines = reader.readtext(data, detail=0, paragraph=True)
         return "\n".join(lines)
     except Exception as exc:  # noqa: BLE001
         _ocr_backend = "unavailable"
         raise RuntimeError(f"no OCR backend available: {exc}") from exc
+
+
+def _ocr_image(data: bytes) -> str:
+    """Run OCR with a wall-clock budget so a pathological image can't pin a
+    worker thread forever. The OCR work itself is CPU-bound and not cancellable,
+    so on timeout we surrender the request (raise) and let the daemon thread
+    finish on its own rather than blocking the caller."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(_ocr_image_inner, data)
+        try:
+            return future.result(timeout=OCR_TIMEOUT_S)
+        except concurrent.futures.TimeoutError as exc:
+            raise RuntimeError(f"OCR timed out after {OCR_TIMEOUT_S:g}s") from exc
 
 
 def extract_text(filename: str, content_type: str, data: bytes) -> ExtractResult:
@@ -188,15 +254,23 @@ def extract_text(filename: str, content_type: str, data: bytes) -> ExtractResult
     ct = (content_type or "").lower()
 
     # ── Images → OCR ──────────────────────────────────────────────────────────
-    if _is_image(ext, ct):
+    # Trust the bytes, not the label: route to OCR only when a magic-byte sniff
+    # confirms a real image. This both rescues mislabelled images and denies the
+    # privileged "image" (fail-open) treatment to a non-image that merely claims
+    # an image content_type/extension — such a file falls through to the document
+    # / binary path below, where strict mode can fail closed on it.
+    if _sniff_image(data) or (_is_image(ext, ct) and not data):
         try:
             text = _ocr_image(data)
             text, truncated = _cap(text)
             return ExtractResult(kind="image", text=text, supported=True,
-                                 extractor=f"ocr:{_ocr_backend}", truncated=truncated)
+                                 extractor=f"ocr:{_ocr_backend}", truncated=truncated,
+                                 meta={"ocr_attempted": True, "ocr_failed": False,
+                                       "ocr_backend": _ocr_backend})
         except Exception as exc:  # noqa: BLE001
-            return ExtractResult(kind="image", supported=False,
-                                 extractor="ocr", error=str(exc))
+            return ExtractResult(kind="image", supported=False, extractor="ocr",
+                                 error=str(exc),
+                                 meta={"ocr_attempted": True, "ocr_failed": True})
 
     # ── Documents → format-specific extractor ────────────────────────────────
     handlers = []
