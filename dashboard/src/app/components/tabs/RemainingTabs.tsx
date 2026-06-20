@@ -191,6 +191,8 @@ export function TeamTab({ myRole }: { myRole?: Role }) {
   };
 
   const removeUser = async (id: string) => {
+    const u = users.find(x => x.id === id);
+    if (!confirm(`Remove ${u?.email ?? 'this user'}? They lose control-plane access immediately.`)) return;
     await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
     load();
   };

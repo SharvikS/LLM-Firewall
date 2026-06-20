@@ -311,6 +311,13 @@ export default function Dashboard() {
     return () => clearInterval(id);
   }, []);
 
+  // Breadcrumb context: the nav section the active tab belongs to (real,
+  // derived) rather than a hardcoded org name (the session carries no org).
+  const activeSection = useMemo(
+    () => NAV.find(g => g.items.some(it => it.key === activeTab))?.section ?? 'Platform',
+    [activeTab],
+  );
+
   // NAV with the live open-flag badge injected onto the Flags entry.
   const navWithBadges = useMemo<NavGroup[]>(() =>
     NAV.map(g => ({
@@ -438,8 +445,9 @@ export default function Dashboard() {
               style={{ background: 'linear-gradient(135deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 50%, var(--bg-card)) 100%)', color: 'var(--bg-main)' }}>
               {(me?.email?.[0] ?? '?')}
             </div>
+            {/* Presence dot reflects real gateway health, not a hardcoded green. */}
             <span className="absolute -bottom-px -right-px w-2 h-2 rounded-full border-2 z-20"
-              style={{ background: '#4ade80', borderColor: 'var(--bg-sec)' }}/>
+              style={{ background: statusColor, borderColor: 'var(--bg-sec)' }}/>
           </div>
           {!rail && (
             <>
@@ -471,7 +479,7 @@ export default function Dashboard() {
               <PanelLeft size={15}/>
             </button>
             <div className="flex items-center gap-2 text-[13px]">
-              <span className="hidden sm:inline" style={{ color: 'var(--text-muted)' }}>Acme Corp</span>
+              <span className="hidden sm:inline" style={{ color: 'var(--text-muted)' }}>{activeSection}</span>
               <ChevronRight size={12} className="hidden sm:inline" style={{ color: 'var(--text-muted)', opacity: 0.4 }}/>
               <span className="font-semibold">{activeTab}</span>
             </div>
@@ -496,11 +504,16 @@ export default function Dashboard() {
 
             <div className="w-px h-4 mx-1" style={{ background: 'var(--border-color)' }}/>
 
-            <button aria-label="Notifications" className="relative p-1.5 rounded-md transition-colors hover:bg-white/[0.06]"
+            <button aria-label="Notifications" onClick={() => setActiveTab('Flags')}
+              data-tip={openFlags > 0 ? `${openFlags} open DLP flag${openFlags === 1 ? '' : 's'}` : 'No open flags'}
+              className="relative p-1.5 rounded-md transition-colors hover:bg-white/[0.06]"
               style={{ color: 'var(--text-muted)' }}>
               <Bell size={15}/>
-              <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-red-500 rounded-full"
-                style={{ boxShadow: '0 0 4px rgba(239,68,68,0.6)' }}/>
+              {/* Only show the unread dot when there are actually open flags. */}
+              {openFlags > 0 && (
+                <span className="absolute top-1 right-1 w-1.5 h-1.5 bg-red-500 rounded-full"
+                  style={{ boxShadow: '0 0 4px rgba(239,68,68,0.6)' }}/>
+              )}
             </button>
           </div>
         </header>

@@ -74,6 +74,7 @@ export default function ApiKeysTab() {
   };
 
   const revoke = async (id: string) => {
+    if (!confirm('Revoke this API key? Any client using it will be denied immediately and this cannot be undone.')) return;
     const res = await fetch(`/api/admin/keys/${id}`, { method: 'DELETE' });
     if (res.ok) setKeys(ks => ks.map(k => k.id === id ? { ...k, active: false } : k));
   };

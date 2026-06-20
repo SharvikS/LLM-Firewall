@@ -149,7 +149,7 @@ export default function AuditLogsTab() {
           <button disabled={page === 0} onClick={() => setPage(p => Math.max(0, p - 1))}
             className="px-3 py-1.5 border border-base-border rounded-lg disabled:opacity-30 hover:bg-base-sec transition-colors">← Prev</button>
           <span className="px-3 py-1.5">Page {page + 1}</span>
-          <button disabled={events.length < limit} onClick={() => setPage(p => p + 1)}
+          <button disabled={(page + 1) * limit >= total} onClick={() => setPage(p => p + 1)}
             className="px-3 py-1.5 border border-base-border rounded-lg disabled:opacity-30 hover:bg-base-sec transition-colors">Next →</button>
         </div>
       </div>

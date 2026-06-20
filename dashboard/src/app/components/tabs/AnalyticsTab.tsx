@@ -97,8 +97,8 @@ function ChartTip({ active, payload, label }: any) {
 
 // ─── Card wrapper ─────────────────────────────────────────────────────────────
 
-function AnalyticsCard({ title, sub, accentColor, children }: {
-  title: string; sub?: string; accentColor?: string; children: React.ReactNode;
+function AnalyticsCard({ title, sub, accentColor, demo, children }: {
+  title: string; sub?: string; accentColor?: string; demo?: boolean; children: React.ReactNode;
 }) {
   const color = accentColor ?? 'var(--accent)';
   return (
@@ -112,7 +112,18 @@ function AnalyticsCard({ title, sub, accentColor, children }: {
       <div className="absolute top-0 left-0 right-0 h-px"
         style={{ background: `linear-gradient(90deg, transparent 10%, ${color}55 50%, transparent 90%)` }}/>
       <div className="mb-4">
-        <h3 className="text-sm font-semibold">{title}</h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold">{title}</h3>
+          {/* This card has no live data source yet, so it always shows sample
+              data — tag it explicitly so it is never read as live, even when the
+              rest of the page is wired to ClickHouse. */}
+          {demo && (
+            <span className="px-1.5 py-0.5 rounded-md text-[9px] font-semibold uppercase tracking-wider"
+              style={{ background: 'rgba(234,179,8,0.1)', color: 'rgba(234,179,8,0.9)', border: '1px solid rgba(234,179,8,0.2)' }}>
+              Demo
+            </span>
+          )}
+        </div>
         {sub && <p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{sub}</p>}
       </div>
       {children}
@@ -266,7 +277,7 @@ export default function AnalyticsTab() {
         </AnalyticsCard>
 
         {/* Latency Percentiles */}
-        <AnalyticsCard title="Latency Percentiles" sub="P50 / P95 / P99 over the last 30 minutes" accentColor="#34d399">
+        <AnalyticsCard title="Latency Percentiles" sub="P50 / P95 / P99 over the last 30 minutes" accentColor="#34d399" demo>
           <div className="h-48">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={LATENCY_DATA} margin={{ left: -18, bottom: 0 }}>
@@ -291,7 +302,7 @@ export default function AnalyticsTab() {
         </AnalyticsCard>
 
         {/* Model Usage */}
-        <AnalyticsCard title="Model Usage" sub="Token consumption and estimated cost by model" accentColor="#60a5fa">
+        <AnalyticsCard title="Model Usage" sub="Token consumption and estimated cost by model" accentColor="#60a5fa" demo>
           <div className="space-y-5 mt-1">
             {MODEL_USAGE.map(({ model, tokens, cost, color }, i) => {
               const pct = (tokens / maxTokens) * 100;
