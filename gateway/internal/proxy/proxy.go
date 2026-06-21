@@ -562,7 +562,7 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			// the deltas flow through — cross-chunk safe via a carry buffer. The
 			// X-Titan-Output-Masked header can't be set (headers already flushed),
 			// so the outcome is reflected in the audit log after the stream ends.
-			sm := newStreamMasker(w)
+			sm := newStreamMasker(w, prov)
 			p.rp.ServeHTTP(sm, r)
 			if err := sm.Close(); err != nil {
 				log.Warn("stream masker flush failed", slog.String("error", err.Error()))

@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/sharvik/llm-firewall/gateway/internal/provider"
 )
 
 // sseEvent builds one OpenAI-style streaming chunk for the given content.
@@ -31,7 +33,7 @@ func collectContent(t *testing.T, raw string) string {
 		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
 			continue
 		}
-		c, has, _ := extractDelta(ev)
+		c, has, _ := extractOpenAIDelta(ev)
 		if has {
 			sb.WriteString(c)
 		}
@@ -39,11 +41,17 @@ func collectContent(t *testing.T, raw string) string {
 	return sb.String()
 }
 
-// run feeds the given writes through a streamMasker and returns the output.
+// run feeds the given writes through an OpenAI streamMasker and returns output.
 func run(t *testing.T, writes []string) (string, bool) {
 	t.Helper()
+	return runProv(t, provider.OpenAI, writes)
+}
+
+// runProv feeds writes through a streamMasker for the given provider.
+func runProv(t *testing.T, prov provider.Type, writes []string) (string, bool) {
+	t.Helper()
 	rec := httptest.NewRecorder()
-	sm := newStreamMasker(rec)
+	sm := newStreamMasker(rec, prov)
 	for _, w := range writes {
 		if _, err := sm.Write([]byte(w)); err != nil {
 			t.Fatalf("write: %v", err)
@@ -144,5 +152,141 @@ func TestStreamMasksCreditCardSplitByWriteBoundary(t *testing.T) {
 	got := collectContent(t, out)
 	if strings.Contains(got, "4111 1111 1111 1111") {
 		t.Fatalf("card leaked: %q", got)
+	}
+}
+
+// --- Anthropic (Claude) streaming ------------------------------------------
+
+// anthropicEvent builds one content_block_delta SSE chunk (the text-carrying
+// Claude event). Anthropic prefixes each data line with an `event:` line.
+func anthropicEvent(text string) string {
+	ev := map[string]any{
+		"type":  "content_block_delta",
+		"index": 0,
+		"delta": map[string]any{"type": "text_delta", "text": text},
+	}
+	b, _ := json.Marshal(ev)
+	return "event: content_block_delta\ndata: " + string(b) + "\n\n"
+}
+
+func collectAnthropic(t *testing.T, raw string) string {
+	t.Helper()
+	var sb strings.Builder
+	for _, line := range strings.Split(raw, "\n") {
+		payload, ok := strings.CutPrefix(line, "data: ")
+		if !ok {
+			continue
+		}
+		var ev map[string]any
+		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
+			continue
+		}
+		c, has, _ := extractAnthropicDelta(ev)
+		if has {
+			sb.WriteString(c)
+		}
+	}
+	return sb.String()
+}
+
+func TestStreamMasksAnthropicEmail(t *testing.T) {
+	in := anthropicEvent("Reach me at john.doe@example.com today") +
+		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+	out, masked := runProv(t, provider.Anthropic, []string{in})
+	if !masked {
+		t.Fatal("expected Anthropic email to be masked")
+	}
+	got := collectAnthropic(t, out)
+	if strings.Contains(got, "john.doe@example.com") {
+		t.Fatalf("email leaked in Claude stream: %q", got)
+	}
+	if !strings.Contains(got, "<EMAIL_ADDRESS>") {
+		t.Fatalf("no mask token in Claude stream: %q", got)
+	}
+}
+
+func TestStreamMasksAnthropicSSNSplit(t *testing.T) {
+	parts := []string{"SSN ", "123", "-", "45", "-", "6789", " end"}
+	var writes []string
+	for _, p := range parts {
+		writes = append(writes, anthropicEvent(p))
+	}
+	writes = append(writes, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
+	out, masked := runProv(t, provider.Anthropic, writes)
+	if !masked {
+		t.Fatal("expected Claude SSN masked across chunks")
+	}
+	got := collectAnthropic(t, out)
+	if strings.Contains(got, "123-45-6789") {
+		t.Fatalf("SSN leaked in Claude stream: %q", got)
+	}
+	if !strings.Contains(got, "<US_SSN>") {
+		t.Fatalf("no SSN mask token in Claude stream: %q", got)
+	}
+}
+
+// --- Gemini (Google) streaming ---------------------------------------------
+
+func geminiEvent(text string) string {
+	ev := map[string]any{
+		"candidates": []any{map[string]any{
+			"content": map[string]any{
+				"role":  "model",
+				"parts": []any{map[string]any{"text": text}},
+			},
+		}},
+	}
+	b, _ := json.Marshal(ev)
+	return "data: " + string(b) + "\n\n"
+}
+
+func collectGemini(t *testing.T, raw string) string {
+	t.Helper()
+	var sb strings.Builder
+	for _, line := range strings.Split(raw, "\n") {
+		payload, ok := strings.CutPrefix(line, "data: ")
+		if !ok {
+			continue
+		}
+		var ev map[string]any
+		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
+			continue
+		}
+		c, has, _ := extractGeminiDelta(ev)
+		if has {
+			sb.WriteString(c)
+		}
+	}
+	return sb.String()
+}
+
+func TestStreamMasksGeminiEmail(t *testing.T) {
+	in := geminiEvent("Email me at john.doe@example.com please")
+	out, masked := runProv(t, provider.Google, []string{in})
+	if !masked {
+		t.Fatal("expected Gemini email to be masked")
+	}
+	got := collectGemini(t, out)
+	if strings.Contains(got, "john.doe@example.com") {
+		t.Fatalf("email leaked in Gemini stream: %q", got)
+	}
+	if !strings.Contains(got, "<EMAIL_ADDRESS>") {
+		t.Fatalf("no mask token in Gemini stream: %q", got)
+	}
+}
+
+func TestStreamMasksGeminiSSNSplit(t *testing.T) {
+	parts := []string{"SSN ", "123", "-", "45", "-", "6789", " end"}
+	var writes []string
+	for _, p := range parts {
+		writes = append(writes, geminiEvent(p))
+	}
+	out, masked := runProv(t, provider.Google, writes)
+	if !masked {
+		t.Fatal("expected Gemini SSN masked across chunks")
+	}
+	got := collectGemini(t, out)
+	if strings.Contains(got, "123-45-6789") {
+		t.Fatalf("SSN leaked in Gemini stream: %q", got)
 	}
 }

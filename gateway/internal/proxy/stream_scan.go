@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+
+	"github.com/sharvik/llm-firewall/gateway/internal/provider"
 )
 
 // Streaming output scanning.
@@ -38,6 +40,7 @@ var streamReplacers = []streamReplacer{
 	{regexp.MustCompile(`[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}`), "<EMAIL_ADDRESS>"},
 	{regexp.MustCompile(`\b\d{3}-\d{2}-\d{4}\b`), "<US_SSN>"},
 	{regexp.MustCompile(`\b\d{4}[ -]?\d{4}[ -]?\d{4}[ -]?\d{4}\b`), "<CREDIT_CARD>"},
+	{regexp.MustCompile(`\b(?:\+?1[-.\s])?(?:\(\d{3}\)|\d{3})[-.\s]\d{3}[-.\s]\d{4}\b`), "<PHONE_NUMBER>"},
 	{regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`), "<AWS_ACCESS_KEY>"},
 	{regexp.MustCompile(`\bsk-[A-Za-z0-9]{20,}\b`), "<SECRET>"},
 }
@@ -59,14 +62,15 @@ func maskStreamText(s string) (string, bool) {
 // streamMasker wraps the client ResponseWriter and rewrites SSE content deltas.
 type streamMasker struct {
 	http.ResponseWriter
+	prov     provider.Type   // upstream provider — drives the SSE delta shape
 	buf      bytes.Buffer    // incomplete trailing SSE bytes between Writes
 	carry    string          // held-back generated text (cross-chunk)
 	envelope json.RawMessage // a recent content event, reused to flush carry
 	masked   bool
 }
 
-func newStreamMasker(w http.ResponseWriter) *streamMasker {
-	return &streamMasker{ResponseWriter: w}
+func newStreamMasker(w http.ResponseWriter, prov provider.Type) *streamMasker {
+	return &streamMasker{ResponseWriter: w, prov: prov}
 }
 
 func (sm *streamMasker) Write(p []byte) (int, error) {
@@ -113,7 +117,7 @@ func (sm *streamMasker) handleLine(line []byte) error {
 		return werr
 	}
 
-	content, hasContent, finished := extractDelta(event)
+	content, hasContent, finished := sm.extractDelta(event)
 	if finished {
 		// A finish event ends generation: flush carry first, then forward it.
 		if err := sm.flushCarry(); err != nil {
@@ -178,7 +182,7 @@ func (sm *streamMasker) flushCarry() error {
 // writeContentEvent re-serializes event with delta.content replaced by emit and
 // writes it as a single SSE data line.
 func (sm *streamMasker) writeContentEvent(event map[string]any, emit string) error {
-	setDeltaContent(event, emit)
+	sm.setDeltaContent(event, emit)
 	out, err := json.Marshal(event)
 	if err != nil {
 		return nil // fail-open: skip rather than corrupt the stream
@@ -224,8 +228,40 @@ func (sm *streamMasker) Close() error {
 	return nil
 }
 
-// extractDelta pulls choices[0].delta.content and whether the choice finished.
-func extractDelta(event map[string]any) (content string, hasContent, finished bool) {
+// extractDelta pulls the assistant text from one SSE event and whether the
+// stream finished, dispatching on the active upstream provider. Each provider
+// streams a different envelope shape:
+//
+//   - OpenAI:    choices[0].delta.content        finish: choices[0].finish_reason
+//   - Anthropic: delta.text (content_block_delta) finish: type == message_stop
+//   - Gemini:    candidates[0].content.parts[].text  finish: candidates[0].finishReason
+func (sm *streamMasker) extractDelta(event map[string]any) (content string, hasContent, finished bool) {
+	switch sm.prov {
+	case provider.Anthropic:
+		return extractAnthropicDelta(event)
+	case provider.Google:
+		return extractGeminiDelta(event)
+	default:
+		return extractOpenAIDelta(event)
+	}
+}
+
+// setDeltaContent writes emit back into the provider-correct content path so the
+// re-serialized event matches the shape the client SDK expects.
+func (sm *streamMasker) setDeltaContent(event map[string]any, emit string) {
+	switch sm.prov {
+	case provider.Anthropic:
+		setAnthropicDelta(event, emit)
+	case provider.Google:
+		setGeminiDelta(event, emit)
+	default:
+		setOpenAIDelta(event, emit)
+	}
+}
+
+// --- OpenAI (choices[0].delta.content) -------------------------------------
+
+func extractOpenAIDelta(event map[string]any) (content string, hasContent, finished bool) {
 	choices, ok := event["choices"].([]any)
 	if !ok || len(choices) == 0 {
 		return "", false, false
@@ -247,9 +283,7 @@ func extractDelta(event map[string]any) (content string, hasContent, finished bo
 	return "", false, finished
 }
 
-// setDeltaContent writes emit into choices[0].delta.content (creating the path
-// if the model omitted it).
-func setDeltaContent(event map[string]any, emit string) {
+func setOpenAIDelta(event map[string]any, emit string) {
 	choices, ok := event["choices"].([]any)
 	if !ok || len(choices) == 0 {
 		return
@@ -267,6 +301,90 @@ func setDeltaContent(event map[string]any, emit string) {
 	// A flushed event must not also carry a finish_reason (we forward the real
 	// finish event separately).
 	delete(c0, "finish_reason")
+}
+
+// --- Anthropic (content_block_delta → delta.text) --------------------------
+
+func extractAnthropicDelta(event map[string]any) (content string, hasContent, finished bool) {
+	typ, _ := event["type"].(string)
+	switch typ {
+	case "message_stop":
+		return "", false, true
+	case "content_block_delta":
+		delta, ok := event["delta"].(map[string]any)
+		if !ok {
+			return "", false, false
+		}
+		// text_delta carries assistant text; other delta types (e.g.
+		// input_json_delta for tool use) are forwarded untouched.
+		if s, ok := delta["text"].(string); ok && s != "" {
+			return s, true, false
+		}
+	}
+	return "", false, false
+}
+
+func setAnthropicDelta(event map[string]any, emit string) {
+	delta, ok := event["delta"].(map[string]any)
+	if !ok {
+		delta = map[string]any{"type": "text_delta"}
+		event["delta"] = delta
+	}
+	delta["text"] = emit
+}
+
+// --- Gemini (candidates[0].content.parts[].text) ---------------------------
+
+func extractGeminiDelta(event map[string]any) (content string, hasContent, finished bool) {
+	cands, ok := event["candidates"].([]any)
+	if !ok || len(cands) == 0 {
+		return "", false, false
+	}
+	c0, ok := cands[0].(map[string]any)
+	if !ok {
+		return "", false, false
+	}
+	if fr, ok := c0["finishReason"]; ok && fr != nil && fr != "" {
+		finished = true
+	}
+	cnt, ok := c0["content"].(map[string]any)
+	if !ok {
+		return "", false, finished
+	}
+	parts, ok := cnt["parts"].([]any)
+	if !ok || len(parts) == 0 {
+		return "", false, finished
+	}
+	var b strings.Builder
+	for _, p := range parts {
+		if pm, ok := p.(map[string]any); ok {
+			if s, ok := pm["text"].(string); ok {
+				b.WriteString(s)
+			}
+		}
+	}
+	if b.Len() > 0 {
+		return b.String(), true, finished
+	}
+	return "", false, finished
+}
+
+func setGeminiDelta(event map[string]any, emit string) {
+	cands, ok := event["candidates"].([]any)
+	if !ok || len(cands) == 0 {
+		return
+	}
+	c0, ok := cands[0].(map[string]any)
+	if !ok {
+		return
+	}
+	cnt, ok := c0["content"].(map[string]any)
+	if !ok {
+		cnt = map[string]any{}
+		c0["content"] = cnt
+	}
+	// Collapse to a single text part carrying the masked content.
+	cnt["parts"] = []any{map[string]any{"text": emit}}
 }
 
 // looksStreamingJSON is a tiny guard the proxy can use if needed.
