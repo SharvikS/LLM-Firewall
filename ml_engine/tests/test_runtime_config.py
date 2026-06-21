@@ -1,11 +1,26 @@
 """Tests for the runtime governance config plane (no heavy ML deps)."""
 
+import copy
 import os
 import sys
+
+import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from analyzer import runtime_config
+
+
+@pytest.fixture(autouse=True)
+def _restore_runtime_config():
+    """runtime_config._config is a process-global singleton. These tests mutate
+    it (e.g. disabling US_SSN); without restoring it the change leaks into every
+    later test in the session — which previously silently disabled SSN masking
+    for the scan_text suite. Snapshot and restore around each test."""
+    snapshot = copy.deepcopy(runtime_config._config)
+    yield
+    runtime_config._config.clear()
+    runtime_config._config.update(snapshot)
 
 
 def test_defaults_present():
