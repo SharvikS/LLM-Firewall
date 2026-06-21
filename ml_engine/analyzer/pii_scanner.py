@@ -15,12 +15,50 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from presidio_analyzer import AnalyzerEngine
+from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 from presidio_anonymizer import AnonymizerEngine
 from presidio_anonymizer.entities import OperatorConfig
 
 logger = logging.getLogger("pii_scanner")
+
+
+# --- High-precision custom recognizers -------------------------------------
+# Presidio's built-in US_SSN recognizer rejects the canonical dashed format
+# (e.g. "123-45-6789") via an over-aggressive validator, and its PHONE_NUMBER
+# recognizer scores common US formats at 0.40 — below any sane threshold. For a
+# DLP product these are the two most-tested entity types, so we supply explicit,
+# pattern-based recognizers that fire deterministically regardless of the spaCy
+# model in use.
+def _build_custom_recognizers() -> list[PatternRecognizer]:
+    ssn = PatternRecognizer(
+        supported_entity="US_SSN",
+        name="us_ssn_strong",
+        patterns=[
+            # Dashed or spaced SSN — high precision.
+            Pattern("ssn-dashed", r"\b\d{3}[-\s]\d{2}[-\s]\d{4}\b", 0.85),
+            # Bare 9-digit — only meaningful with nearby SSN context (boosted below).
+            Pattern("ssn-bare", r"\b\d{9}\b", 0.3),
+        ],
+        context=["ssn", "social", "security"],
+    )
+    phone = PatternRecognizer(
+        supported_entity="PHONE_NUMBER",
+        name="us_phone_strong",
+        patterns=[
+            # (415) 555-0132 | 415-555-0132 | 415.555.0132 | 415 555 0132 | +1 415 555 0132
+            # No leading \b: a "(" after a space is not a word boundary, which
+            # previously dropped the parenthesised form. Separators between groups
+            # are required so a run of digits / a 16-digit card never matches.
+            Pattern(
+                "us-phone",
+                r"(?:\+?1[-.\s]?)?(?:\(\d{3}\)\s?|\d{3}[-.\s])\d{3}[-.\s]\d{4}\b",
+                0.75,
+            ),
+        ],
+        context=["phone", "call", "tel", "mobile", "cell", "contact"],
+    )
+    return [ssn, phone]
 
 # Entities we treat as sensitive. Extend as compliance requirements grow.
 SENSITIVE_ENTITIES = [
@@ -65,6 +103,14 @@ class PIIScanner:
             nlp_engine=nlp_engine,
             supported_languages=["en"],
         )
+        # Register high-precision SSN / phone recognizers (see module docstring).
+        # remove_recognizer first so the weak built-ins don't shadow ours.
+        for rec in _build_custom_recognizers():
+            try:
+                self._analyzer.registry.remove_recognizer(rec.name)
+            except Exception:
+                pass
+            self._analyzer.registry.add_recognizer(rec)
         self._anonymizer = AnonymizerEngine()
 
         # Replace each entity with its type tag rather than a generic "[REDACTED]"

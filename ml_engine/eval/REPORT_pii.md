@@ -8,16 +8,16 @@
 |---|---|
 | Samples | 30 |
 | **Precision** | **100.0%** |
-| **Recall (detection rate)** | **80.0%** |
-| **F1** | **88.9%** |
-| Accuracy | 90.0% |
+| **Recall (detection rate)** | **100.0%** |
+| **F1** | **100.0%** |
+| Accuracy | 100.0% |
 | False-positive rate | 0.0% |
 
-Confusion: TP=12 FP=0 TN=15 FN=3
+Confusion: TP=15 FP=0 TN=15 FN=0
 
 ## Entity-level recall
 
-Overall: **73.7%** (14/19 expected entities found)
+Overall: **100.0%** (19/19 expected entities found)
 
 | Entity | Found / Expected |
 |---|---|
@@ -25,11 +25,5 @@ Overall: **73.7%** (14/19 expected entities found)
 | EMAIL_ADDRESS | 5/5 |
 | IP_ADDRESS | 1/1 |
 | PERSON | 3/3 |
-| PHONE_NUMBER | 2/5 |
-| US_SSN | 1/3 |
-
-## Missed (false negatives)
-
-- You can call me at (415) 555-0132 tomorrow morning.
-- My social security number is 123-45-6789 for the application.
-- Text me on 646-555-0123 if the package is delayed.
+| PHONE_NUMBER | 5/5 |
+| US_SSN | 3/3 |
