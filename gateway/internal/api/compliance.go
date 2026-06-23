@@ -1,3 +1,10 @@
+//go:build enterprise
+
+// TITAN Enterprise — commercial license (see LICENSE-ENTERPRISE.md), not MIT.
+//
+// Compliance reporting and audit export. This is a commercial feature; the
+// community build registers the same routes but returns a 402 upsell
+// (compliance_community.go).
 package api
 
 import (

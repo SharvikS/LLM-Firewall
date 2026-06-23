@@ -167,6 +167,10 @@ services:
       GRPC_WORKERS: "4"
       EMBED_PORT: "8001"
       EMBED_MODEL: "all-MiniLM-L6-v2"
+      # Open-core edition. "community" (default) disables the enterprise-only
+      # hallucination/groundedness detector; set to "enterprise" to load it.
+      # Keep this in sync with the gateway's TITAN_EDITION. See EDITIONS.md.
+      TITAN_EDITION: "${TITAN_EDITION:-community}"
       # Where browser-DLP events from the extension are relayed (engine /report
       # → gateway). Inside compose the gateway is reachable by service name, NOT
       # localhost (which would be the ml_engine container itself).
@@ -199,6 +203,12 @@ services:
       - ./gateway/.env
     environment:
       LISTEN_ADDR: ":8080"
+      # Open-core edition gate. "community" (default, MIT) keeps all enterprise
+      # features off. Set to "enterprise" AND provide TITAN_LICENSE_KEY to enable
+      # them — note the image must also be built with `-tags enterprise`. The
+      # default compose image is the community build. See EDITIONS.md.
+      TITAN_EDITION: "${TITAN_EDITION:-community}"
+      TITAN_LICENSE_KEY: "${TITAN_LICENSE_KEY:-}"
       TARGET_URL: "https://api.groq.com/openai"
       DB_CONN_STRING: "postgresql://root@cockroachdb:26257/defaultdb?sslmode=disable"
       KAFKA_BROKERS: "redpanda:29092"
@@ -216,6 +226,12 @@ services:
       QDRANT_URL: "http://qdrant:6333"
       EMBEDDING_URL: "http://ml_engine:8001/embed"
       SEMANTIC_CACHE_THRESHOLD: "0.95"
+      # Response-side groundedness / hallucination gate (opt-in). Flip
+      # GROUNDEDNESS_ENABLED to "true" here AND HALLUCINATION_ENABLED on the
+      # ml_engine service to activate the NLI check.
+      GROUNDEDNESS_ENABLED: "false"
+      GROUNDEDNESS_ENGINE_URL: "http://ml_engine:8001"
+      GROUNDEDNESS_TIMEOUT_MS: "4000"
       CLICKHOUSE_URL: "http://clickhouse:8123"
       CLICKHOUSE_USER: "default"
       CLICKHOUSE_DATABASE: "titan"

@@ -27,6 +27,9 @@ export interface GatewaySettings {
   toxicity_enabled: boolean;
   toxicity_block_threshold: number;
   code_leak_block: boolean;
+  hallucination_enabled: boolean;
+  hallucination_block_threshold: number;
+  hallucination_block: boolean;
   pii_entities: Record<string, boolean>;
   _offline?: boolean;
 }

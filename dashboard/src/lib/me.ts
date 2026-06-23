@@ -2,11 +2,29 @@
 
 export type Role = 'viewer' | 'compliance' | 'security' | 'admin';
 
+export type Edition = 'community' | 'enterprise';
+
+// Commercial features, mirrors gateway internal/edition.Feature.
+export type Feature =
+  | 'billing' | 'alerts' | 'plugins' | 'sso' | 'compliance' | 'groundedness';
+
 export interface Me {
   authenticated: boolean;
   email?: string;
   role?: Role;
   machine?: boolean;
+  edition?: Edition;
+  features?: Feature[];
+}
+
+// hasFeature reports whether the current session's edition entitles a feature.
+export function hasFeature(me: Me | null | undefined, f: Feature): boolean {
+  return !!me?.features?.includes(f);
+}
+
+// isEnterprise reports whether the active edition is Enterprise.
+export function isEnterprise(me: Me | null | undefined): boolean {
+  return me?.edition === 'enterprise';
 }
 
 const ROLE_LEVEL: Record<Role, number> = { viewer: 1, compliance: 2, security: 3, admin: 4 };

@@ -45,6 +45,7 @@ A drop-in reverse proxy for OpenAI, Anthropic, Groq, and local LLMs (Ollama, LM 
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [Security](#security)
+- [Editions](#editions)
 - [License](#license)
 
 ---
@@ -923,7 +924,7 @@ kubectl apply -f k8s/istio-gateway.yaml         # Istio ingress + mTLS policy
 
 ### Planned
 
-- [ ] **Future** — Response-side hallucination / factuality detection
+- [x] **Phase 23** — Response-side hallucination / groundedness detection (NLI gate: scores each answer against the request's context, flags or blocks unsupported claims; opt-in via `HALLUCINATION_ENABLED` + `GROUNDEDNESS_ENABLED`, surfaced in Settings + Events)
 - [ ] **Future** — Grafana alerting rules + on-call integrations
 - [ ] **Future** — Managed cluster autoscaling policies and cost dashboards
 
@@ -954,8 +955,13 @@ git commit -m "feat(gateway): add X-Request-ID header propagation"
 Types: `feat`, `fix`, `perf`, `refactor`, `test`, `docs`, `chore`  
 Scopes: `gateway`, `ml_engine`, `dashboard`, `k8s`, `docker`
 
+> **Open-core note:** community contributions target the **MIT core** only. Code
+> under a `//go:build enterprise` tag (or otherwise listed as Enterprise in
+> [EDITIONS.md](EDITIONS.md)) is commercially licensed and not open to external
+> PRs. By contributing you agree your contribution is licensed under MIT.
+
 **Areas where contributions are especially welcome:**
-- Additional ML detection models (hallucination, response-side scanning)
+- Additional core ML detection models (injection, toxicity, PII coverage)
 - Grafana dashboards and alerting rules
 - Load/stress test harness
 - Integration tests against real LLM providers (with cassette recording)
@@ -986,9 +992,34 @@ See [`docs/security/RED_TEAM_REVIEW_Phase4.md`](docs/security/RED_TEAM_REVIEW_Ph
 
 ---
 
+## Editions
+
+TITAN is **open-core**. The complete zero-trust security engine — injection/PII/
+toxicity/secret detection, output scanning, caching, guardrails, the policy
+engine, the proxy, SDKs, and the core dashboard — is free and MIT-licensed.
+
+A set of **org-scale** features is commercial (**TITAN Enterprise**): per-tenant
+metering & plan quotas, real-time SOC alerting, WASM custom-rule plugins, OIDC
+SSO, compliance/audit export, and hallucination/groundedness scoring.
+
+```bash
+go build ./...                  # Community (MIT) — default, free
+go build -tags enterprise ./... # Enterprise — activates with a license key
+```
+
+Commercial features are isolated behind a `//go:build enterprise` tag **and** a
+runtime license gate, so the default open-core build contains none of the
+commercial logic. See **[EDITIONS.md](EDITIONS.md)** for the full feature matrix
+and **[LICENSE-ENTERPRISE.md](LICENSE-ENTERPRISE.md)** for commercial terms.
+
+---
+
 ## License
 
-[MIT](LICENSE) — see the `LICENSE` file for details.
+The open-core project is licensed under [MIT](LICENSE) — see the `LICENSE` file.
+The TITAN Enterprise components (files tagged `//go:build enterprise`) are
+commercially licensed; see [LICENSE-ENTERPRISE.md](LICENSE-ENTERPRISE.md) and
+[EDITIONS.md](EDITIONS.md).
 
 ---
 

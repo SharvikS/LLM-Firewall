@@ -24,6 +24,22 @@ from analyzer.injection_detector import InjectionDetector
 from analyzer.pii_scanner import PIIScanner, PIIResult
 from analyzer.toxicity_detector import ToxicityDetector
 from analyzer.secret_scanner import SecretScanner
+
+# Hallucination / groundedness scoring is a TITAN Enterprise feature. It is only
+# loaded when TITAN_EDITION=enterprise, and the detector module itself may be
+# absent in an open-core (MIT) checkout — so the import is optional and guarded.
+# See EDITIONS.md.
+_EDITION = os.getenv("TITAN_EDITION", "community").strip().lower()
+_ENTERPRISE = _EDITION == "enterprise"
+HallucinationDetector = None
+if _ENTERPRISE:
+    try:
+        from analyzer.hallucination_detector import HallucinationDetector
+    except ImportError:
+        logging.getLogger(__name__).warning(
+            "TITAN_EDITION=enterprise but hallucination_detector is unavailable — "
+            "groundedness scoring disabled"
+        )
 from analyzer import embed
 from analyzer import extract
 from analyzer import runtime_config
@@ -65,7 +81,9 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
         self._injection = InjectionDetector()
         self._toxicity = ToxicityDetector()
         self._secrets = SecretScanner()
-        logger.info("AnalyzerService ready")
+        # Enterprise-only; None in the open-core build (groundedness disabled).
+        self._hallucination = HallucinationDetector() if HallucinationDetector else None
+        logger.info("AnalyzerService ready (edition=%s)", _EDITION)
 
     def AnalyzePrompt(
         self,
@@ -311,6 +329,45 @@ class AnalyzerServicer(analyzer_pb2_grpc.AnalyzerServiceServicer):
             "categories": categories, "pii": [], "secrets": [], "masked_text": text,
         }
 
+    def scan_groundedness(self, context: str, response: str) -> dict:
+        """Score an assistant response for groundedness in the request context.
+
+        Returns a verdict dict (risk 0-100, plus the groundedness specifics) for
+        the /scan-groundedness HTTP side-channel. Decision policy:
+          * "flag"  — response is poorly grounded; surfaced + audited, answer kept
+          * "block" — same finding but the operator opted to strip the answer
+            (runtime_config hallucination_block=true)
+          * "allow" — grounded, or the check could not run (no context / no model);
+            groundedness ALWAYS fails open — a hallucination gate must never strip
+            a real answer just because it couldn't be evaluated.
+        """
+        rc = runtime_config.get()
+        base = {"category": "hallucination", "checked": False, "grounded": True,
+                "unsupported": [], "sentences_checked": 0}
+        # Enterprise feature: absent in the open-core build → always fail open.
+        if self._hallucination is None:
+            return {**base, "decision": "allow", "risk": 0.0,
+                    "reason": "groundedness scoring is a TITAN Enterprise feature"}
+        if not rc["hallucination_enabled"]:
+            return {**base, "decision": "allow", "risk": 0.0,
+                    "reason": "groundedness check disabled"}
+
+        res = self._hallucination.score(context or "", response or "")
+        base.update({"checked": res.checked, "grounded": res.grounded,
+                     "unsupported": res.unsupported[:20],
+                     "sentences_checked": res.sentences_checked})
+
+        # Unchecked (no context/model) or grounded → allow, fail-open.
+        if not res.checked or res.grounded:
+            return {**base, "decision": "allow", "risk": round(res.risk * 100, 1),
+                    "reason": res.description or "grounded"}
+
+        decision = "block" if rc["hallucination_block"] else "flag"
+        logger.warning("GROUNDEDNESS %s — risk=%.2f (%s)",
+                       decision.upper(), res.risk, res.description)
+        return {**base, "decision": decision, "risk": round(res.risk * 100, 1),
+                "reason": f"Possible hallucination: {res.description}"}
+
     def scan_file(self, filename: str, content_type: str, data: bytes,
                   strict: bool = False) -> dict:
         """Scan an uploaded file or image (browser DLP /scan-file path).
@@ -467,7 +524,8 @@ def serve() -> None:
     servicer = AnalyzerServicer()
 
     # Start the HTTP side-channel (/embed + /config + /scan + /scan-file) alongside gRPC.
-    embed.start(scan_fn=servicer.scan_text, scan_file_fn=servicer.scan_file)
+    embed.start(scan_fn=servicer.scan_text, scan_file_fn=servicer.scan_file,
+                groundedness_fn=servicer.scan_groundedness)
 
     # Tracing is opt-in: no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set.
     telemetry.init()

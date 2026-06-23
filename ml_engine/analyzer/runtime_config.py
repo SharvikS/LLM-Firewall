@@ -36,6 +36,11 @@ _config = {
     "toxicity_enabled": _env_bool("TOXICITY_ENABLED", True),
     "toxicity_block_threshold": float(os.getenv("TOXICITY_BLOCK_THRESHOLD", "0.85")),
     "code_leak_block": _env_bool("CODE_LEAK_BLOCK", False),
+    # Response-side groundedness / hallucination gate (opt-in; heavier NLI model).
+    # block=False means "flag + audit only" — never strip an answer by default.
+    "hallucination_enabled": _env_bool("HALLUCINATION_ENABLED", False),
+    "hallucination_block_threshold": float(os.getenv("HALLUCINATION_BLOCK_THRESHOLD", "0.5")),
+    "hallucination_block": _env_bool("HALLUCINATION_BLOCK", False),
     "pii_entities": dict(_DEFAULT_PII_ENTITIES),
 }
 
@@ -46,6 +51,9 @@ _COERCE = {
     "toxicity_enabled": bool,
     "toxicity_block_threshold": float,
     "code_leak_block": bool,
+    "hallucination_enabled": bool,
+    "hallucination_block_threshold": float,
+    "hallucination_block": bool,
 }
 
 
@@ -75,6 +83,8 @@ def update(patch: dict) -> dict:
         # threshold sanity
         t = _config["toxicity_block_threshold"]
         _config["toxicity_block_threshold"] = max(0.0, min(1.0, t))
+        h = _config["hallucination_block_threshold"]
+        _config["hallucination_block_threshold"] = max(0.0, min(1.0, h))
         out = dict(_config)
         out["pii_entities"] = dict(_config["pii_entities"])
     logger.info(

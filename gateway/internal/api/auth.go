@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sharvik/llm-firewall/gateway/internal/auth"
+	"github.com/sharvik/llm-firewall/gateway/internal/edition"
 	"github.com/sharvik/llm-firewall/gateway/internal/logger"
 	"github.com/sharvik/llm-firewall/gateway/internal/store"
 )
@@ -87,9 +88,11 @@ func (h *authHandler) login(w http.ResponseWriter, r *http.Request) {
 func (h *authHandler) me(w http.ResponseWriter, r *http.Request) {
 	id := identityFrom(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
-		"email":   id.Email,
-		"role":    id.Role,
-		"machine": id.Machine,
+		"email":    id.Email,
+		"role":     id.Role,
+		"machine":  id.Machine,
+		"edition":  string(edition.Current()),
+		"features": edition.Entitled(),
 	})
 }
 

@@ -62,6 +62,10 @@ type Settings struct {
 	ToxicityEnabled        bool            `json:"toxicity_enabled"`
 	ToxicityBlockThreshold float64         `json:"toxicity_block_threshold"`
 	CodeLeakBlock          bool            `json:"code_leak_block"`
+	// Response-side groundedness / hallucination gate.
+	HallucinationEnabled        bool       `json:"hallucination_enabled"`
+	HallucinationBlockThreshold float64    `json:"hallucination_block_threshold"`
+	HallucinationBlock          bool       `json:"hallucination_block"`
 	PIIEntities            map[string]bool `json:"pii_entities"`
 }
 
@@ -137,6 +141,9 @@ func DefaultsFromConfig(cfg *config.Config) Settings {
 		PIIRedactionEnabled:    true,
 		ToxicityEnabled:        cfg.ToxicityEnabled,
 		ToxicityBlockThreshold: cfg.ToxicityBlockThreshold,
+		HallucinationEnabled:        cfg.GroundednessEnabled,
+		HallucinationBlockThreshold: 0.5,
+		HallucinationBlock:          false,
 		CodeLeakBlock:          cfg.CodeLeakBlock,
 		PIIEntities:            DefaultPIIEntities(),
 	}
@@ -330,6 +337,12 @@ func (s *Settings) clamp() {
 	}
 	if s.ToxicityBlockThreshold > 1 {
 		s.ToxicityBlockThreshold = 1
+	}
+	if s.HallucinationBlockThreshold < 0 {
+		s.HallucinationBlockThreshold = 0
+	}
+	if s.HallucinationBlockThreshold > 1 {
+		s.HallucinationBlockThreshold = 1
 	}
 	if s.PIIEntities == nil {
 		s.PIIEntities = DefaultPIIEntities()

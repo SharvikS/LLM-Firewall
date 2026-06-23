@@ -555,6 +555,8 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Stage 7: Forward.
 	outputMasked := false
+	groundednessFlagged := false
+	var groundednessReason string
 	if isStream {
 		if set.OutputScanEnabled {
 			// Streamed (SSE) responses can't be buffered without destroying the
@@ -575,8 +577,9 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		} else {
 			p.rp.ServeHTTP(w, r)
 		}
-	} else if set.OutputScanEnabled {
-		// Buffer the response (no tee), scan/mask the assistant text, then send.
+	} else if set.OutputScanEnabled || p.cfg.GroundednessEnabled {
+		// Buffer the response (no tee), scan/mask the assistant text, optionally
+		// score its groundedness, then send.
 		bw := newBufferingResponse(w)
 		p.rp.ServeHTTP(bw, r)
 
@@ -585,12 +588,32 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			bw.body.Len() > 0 && r.Context().Err() == nil
 
 		if scannable {
-			if rewritten, did := p.scanResponseBody(r.Context(), reqID, tenantName, prov, finalBody); did {
-				finalBody = rewritten
-				outputMasked = true
-				w.Header().Set("X-Titan-Output-Masked", "true")
-				metrics.Global.PIIMasked.Add(1)
-				log.Info("output scan — response PII/secrets masked")
+			if set.OutputScanEnabled {
+				if rewritten, did := p.scanResponseBody(r.Context(), reqID, tenantName, prov, finalBody); did {
+					finalBody = rewritten
+					outputMasked = true
+					w.Header().Set("X-Titan-Output-Masked", "true")
+					metrics.Global.PIIMasked.Add(1)
+					log.Info("output scan — response PII/secrets masked")
+				}
+			}
+			// Response-side hallucination gate: score the (masked) answer against
+			// the request context. Fail-open — never withholds on its own failure.
+			if gv, flagged := p.scanGroundedness(r.Context(), prov, body, finalBody); flagged {
+				groundednessFlagged = true
+				groundednessReason = gv.Reason
+				w.Header().Set("X-Titan-Groundedness", gv.Decision)
+				log.Warn("output scan — low groundedness",
+					slog.String("decision", gv.Decision), slog.Float64("risk", gv.Risk))
+				if gv.Decision == "block" {
+					// Replace each assistant message with a refusal, reusing the
+					// provider-aware walker; the client still gets valid JSON.
+					if rewritten, did := rewriteAssistantContent(prov, finalBody, func(string) (string, bool) {
+						return "[Response withheld by TITAN: not grounded in the provided context.]", true
+					}); did {
+						finalBody = rewritten
+					}
+				}
 			}
 			// Cache the post-mask body so masked content is served on cache hits.
 			ct := map[string]string{"Content-Type": bw.Header().Get("Content-Type")}
@@ -631,7 +654,13 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if outputMasked {
 		auditAction = "OUTPUT_MASKED"
 	}
-	p.pushEvent(reqID, tenantName, auditAction, float64(analysis.RiskScore), r.URL.Path, "")
+	// A groundedness finding takes precedence in the audit trail — it's the more
+	// security-relevant outcome and drives SOC alerting.
+	if groundednessFlagged {
+		auditAction = "HALLUCINATION_FLAGGED"
+		p.alerts.Emit(alerts.Event{Action: "HALLUCINATION_FLAGGED", Tenant: tenantName, Reason: groundednessReason})
+	}
+	p.pushEvent(reqID, tenantName, auditAction, float64(analysis.RiskScore), r.URL.Path, groundednessReason)
 	// "Audit All Requests" (default on) writes clean ALLOWs to the durable audit
 	// log. When disabled, only security-relevant outcomes (blocks, masks) persist.
 	if set.AuditAllRequests || auditAction != "ALLOWED" {

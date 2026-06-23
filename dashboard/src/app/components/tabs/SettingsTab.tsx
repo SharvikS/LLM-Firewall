@@ -247,6 +247,12 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
               <SettingRow label="Block Source-Code Pastes" sub="Reject large source-code pastes outright instead of just flagging them (prevents code exfiltration).">
                 <Toggle on={!!settings?.code_leak_block} disabled={!settings} onChange={() => patch({ code_leak_block: !settings?.code_leak_block })}/>
               </SettingRow>
+              <SettingRow label="Hallucination / Groundedness Gate" sub="Score each response against the request's context (RAG/system docs) and flag answers that aren't supported by it. Requires Output Response Scanning.">
+                <Toggle on={!!settings?.hallucination_enabled} disabled={!settings} onChange={() => patch({ hallucination_enabled: !settings?.hallucination_enabled })}/>
+              </SettingRow>
+              <SettingRow label="Block Ungrounded Responses" sub="When the groundedness gate fires, withhold the answer instead of just flagging it. Off = flag + audit only (recommended).">
+                <Toggle on={!!settings?.hallucination_block} disabled={!settings || !settings?.hallucination_enabled} onChange={() => patch({ hallucination_block: !settings?.hallucination_block })}/>
+              </SettingRow>
               <SettingRow label="Audit All Requests" sub="Write every request — including clean ALLOWs — to the durable audit log. When off, only blocks and masks are persisted.">
                 <Toggle on={!!settings?.audit_all_requests} disabled={!settings} onChange={() => patch({ audit_all_requests: !settings?.audit_all_requests })}/>
               </SettingRow>

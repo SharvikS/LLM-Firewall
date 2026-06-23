@@ -26,6 +26,7 @@ import (
 	"github.com/sharvik/llm-firewall/gateway/internal/billing"
 	"github.com/sharvik/llm-firewall/gateway/internal/cache"
 	"github.com/sharvik/llm-firewall/gateway/internal/config"
+	"github.com/sharvik/llm-firewall/gateway/internal/edition"
 	"github.com/sharvik/llm-firewall/gateway/internal/events"
 	"github.com/sharvik/llm-firewall/gateway/internal/logger"
 	"github.com/sharvik/llm-firewall/gateway/internal/metrics"
@@ -53,6 +54,23 @@ func main() {
 		slog.String("target", cfg.TargetURL),
 		slog.String("env", cfg.AppEnv),
 	)
+
+	// ── Edition / licensing (open-core) ───────────────────────────────────────
+	// Resolves the active edition once. Commercial features (metering/quotas, SOC
+	// alerting, WASM plugins, OIDC SSO, compliance export, groundedness) activate
+	// only when this is Enterprise — which requires both an enterprise build and a
+	// valid license key. See internal/edition and EDITIONS.md.
+	ed := edition.Resolve(cfg.Edition, cfg.LicenseKey)
+	if ed == edition.Enterprise {
+		log.Info("TITAN Enterprise edition active — commercial features enabled")
+	} else {
+		log.Info("TITAN Community edition (open-core, MIT) — enterprise features disabled",
+			slog.Bool("enterprise_build", edition.BuiltEnterprise))
+	}
+	// Groundedness is a commercial feature: force it off unless entitled.
+	if !edition.Has(edition.Groundedness) {
+		cfg.GroundednessEnabled = false
+	}
 
 	// In production, refuse to start with public default secrets.
 	if cfg.IsProduction() {
@@ -107,10 +125,13 @@ func main() {
 		DefaultRole:  auth.Role(cfg.OIDCDefaultRole),
 	}
 	var oidcClient *auth.OIDCClient
-	if oidcCfg.Enabled() {
+	switch {
+	case !edition.Has(edition.SSO):
+		log.Info("OIDC SSO disabled — TITAN Enterprise feature")
+	case oidcCfg.Enabled():
 		oidcClient = auth.NewOIDCClient(oidcCfg, cfg.AuthSigningSecret)
 		log.Info("OIDC SSO enabled", slog.String("issuer", cfg.OIDCIssuer))
-	} else {
+	default:
 		log.Info("OIDC SSO disabled — set OIDC_ISSUER + client creds to enable")
 	}
 
@@ -133,7 +154,12 @@ func main() {
 
 	limiter := ratelimit.New(redisClient, cfg.RateLimitRPM, time.Duration(cfg.RateLimitWindowSec)*time.Second, cfg.RateLimitTPM)
 	exactCache := cache.New(redisClient, time.Duration(cfg.CacheTTLSec)*time.Second)
-	meter := billing.NewMeter(redisClient) // per-tenant usage metering + plan quota
+	// Per-tenant usage metering + plan quota — a commercial feature. nil in
+	// Community; the proxy and billing API are nil-safe.
+	var meter *billing.Meter
+	if edition.Has(edition.Billing) {
+		meter = billing.NewMeter(redisClient)
+	}
 
 	// ── Runtime settings plane (dashboard-tunable; persisted in DB) ───────────
 	// Seeds from config/env, hydrates any persisted overrides, then fans every
@@ -150,8 +176,14 @@ func main() {
 	settingsMgr.ApplyAll()
 	log.Info("runtime settings plane ready")
 
-	// Real-time SOC alerting — reads webhook config live from the settings plane.
+	// Real-time SOC alerting — a commercial feature. Constructed unconditionally
+	// (the Community build links a no-op dispatcher), but the live config is
+	// forced disabled unless the Alerts feature is entitled, so no webhook ever
+	// fires in Community / unlicensed builds.
 	alertDispatcher := alerts.New(func() alerts.Config {
+		if !edition.Has(edition.Alerts) {
+			return alerts.Config{}
+		}
 		s := settingsMgr.Get()
 		return alerts.Config{Enabled: s.AlertsEnabled, WebhookURL: s.AlertWebhookURL, MinRisk: s.AlertMinRisk}
 	})
@@ -237,8 +269,16 @@ func main() {
 	// ── Policy Engine (DB-backed, 30s refresh) ────────────────────────────────
 	policyEngine := policy.NewEngine(st)
 
-	// ── WASM custom-rule plugins (optional) ───────────────────────────────────
-	pluginRT, err := plugins.Load(ctx, cfg.PluginDir, time.Duration(cfg.PluginTimeoutMs)*time.Millisecond)
+	// ── WASM custom-rule plugins (commercial feature; optional) ───────────────
+	// Only loaded when entitled. In Community the runtime is a no-op stub.
+	pluginDir := cfg.PluginDir
+	if !edition.Has(edition.Plugins) {
+		if pluginDir != "" {
+			log.Info("WASM plugins disabled — TITAN Enterprise feature")
+		}
+		pluginDir = ""
+	}
+	pluginRT, err := plugins.Load(ctx, pluginDir, time.Duration(cfg.PluginTimeoutMs)*time.Millisecond)
 	if err != nil {
 		// A plugin runtime failure must never take the gateway down — degrade to
 		// a disabled plugin stage and keep serving. Individual bad plugins are

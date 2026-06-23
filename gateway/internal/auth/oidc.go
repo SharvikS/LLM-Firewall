@@ -1,3 +1,10 @@
+//go:build enterprise
+
+// TITAN Enterprise — commercial license (see LICENSE-ENTERPRISE.md), not MIT.
+//
+// OIDC single sign-on for the control plane. This is a commercial feature; the
+// community build links a stub (oidc_community.go) whose OIDCConfig is never
+// Enabled() and whose flow methods report that SSO requires TITAN Enterprise.
 package auth
 
 import (

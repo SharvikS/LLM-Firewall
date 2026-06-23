@@ -54,6 +54,7 @@ BROWSER_EVENT_TOKEN = os.getenv("BROWSER_EVENT_TOKEN", "")
 _model = None
 _scan_fn = None       # set by start(); maps raw text → DLP verdict dict
 _scan_file_fn = None  # set by start(); maps (filename, content_type, bytes, strict) → verdict
+_groundedness_fn = None  # set by start(); maps (context, response) → groundedness verdict
 
 # Largest base64-encoded attachment we'll accept on /scan-file. Keeps a runaway
 # upload from exhausting the worker; the extension enforces its own cap too.
@@ -145,10 +146,41 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         if self.path == "/scan-file":
             self._handle_scan_file()
             return
+        if self.path == "/scan-groundedness":
+            self._handle_scan_groundedness()
+            return
         if self.path == "/report":
             self._handle_report()
             return
         self._respond(404, {"error": "not found"})
+
+    def _handle_scan_groundedness(self):
+        """Score an assistant response against the request context for
+        groundedness (the response-side hallucination gate).
+
+        Body: {"context": str, "response": str}. The gateway calls this after an
+        upstream response when the groundedness gate is enabled. Fail-open: an
+        empty/absent field, a disabled gate, or any error yields an allow verdict
+        — a hallucination check must never strip a real answer on its own failure.
+        """
+        if _groundedness_fn is None:
+            self._respond(503, {"error": "groundedness scanner not available"})
+            return
+        try:
+            body = self._read_json()
+            context = body.get("context", "")
+            response = body.get("response", "")
+            if not isinstance(context, str) or not isinstance(response, str):
+                self._respond(400, {"error": "context and response must be strings"})
+                return
+            self._respond(200, _groundedness_fn(context, response))
+        except Exception as exc:
+            logger.error("scan-groundedness error: %s", exc)
+            # Fail open: never block an answer because the check itself errored.
+            self._respond(200, {"decision": "allow", "risk": 0.0, "checked": False,
+                                "grounded": True, "category": "hallucination",
+                                "reason": f"groundedness check error: {exc}",
+                                "unsupported": [], "sentences_checked": 0})
 
     def _handle_scan(self):
         if _scan_fn is None:
@@ -320,7 +352,7 @@ def _load_model() -> None:
         )
 
 
-def start(scan_fn=None, scan_file_fn=None) -> None:
+def start(scan_fn=None, scan_file_fn=None, groundedness_fn=None) -> None:
     """Start the HTTP side-channel and load the embedding model.
 
     The HTTP server always starts so the /config control plane is reachable;
@@ -330,9 +362,10 @@ def start(scan_fn=None, scan_file_fn=None) -> None:
     /scan endpoint (the browser DLP extension). When None, /scan answers 503.
     scan_file_fn similarly backs /scan-file (file/image attachments).
     """
-    global _scan_fn, _scan_file_fn
+    global _scan_fn, _scan_file_fn, _groundedness_fn
     _scan_fn = scan_fn
     _scan_file_fn = scan_file_fn
+    _groundedness_fn = groundedness_fn
     _load_model()
     server = http.server.ThreadingHTTPServer(("0.0.0.0", EMBED_PORT), _Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -342,4 +375,6 @@ def start(scan_fn=None, scan_file_fn=None) -> None:
         routes += ", /scan, /report"
     if scan_file_fn is not None:
         routes += ", /scan-file"
+    if groundedness_fn is not None:
+        routes += ", /scan-groundedness"
     logger.info("ML HTTP side-channel listening on port %d (%s)", EMBED_PORT, routes)

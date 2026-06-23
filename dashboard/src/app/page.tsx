@@ -6,7 +6,7 @@ import {
   ChevronRight, Network, Cpu, ShieldAlert, ClipboardList,
   Fingerprint, Eye, Plus, Command,
   PanelLeft, Key, CreditCard,
-  AlertCircle, BarChart2, CornerDownLeft, Flag,
+  AlertCircle, BarChart2, CornerDownLeft, Flag, Lock,
 } from 'lucide-react';
 
 import OverviewTab    from './components/tabs/OverviewTab';
@@ -23,7 +23,7 @@ import {
   DataPrivacyTab, SandboxesTab, VulnerabilitiesTab,
 } from './components/tabs/RemainingTabs';
 import { TitanLogo } from './components/TitanLogo';
-import { fetchMe, logout, ROLE_LABEL, type Me } from '@/lib/me';
+import { fetchMe, logout, hasFeature, ROLE_LABEL, type Me, type Feature } from '@/lib/me';
 import { LogOut } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -34,7 +34,10 @@ type TabKey =
   | 'Audit Logs' | 'Access Control' | 'Data Privacy'
   | 'Settings' | 'Team' | 'API Keys' | 'Billing';
 
-interface NavEntry { key: TabKey; label: string; icon: React.ReactNode; keywords?: string; badge?: number }
+// `feature` marks an entry as a commercial (TITAN Enterprise) surface; it is
+// hidden unless the current session's edition entitles that feature. The data
+// plane enforces the paywall regardless — this only keeps the UI honest.
+interface NavEntry { key: TabKey; label: string; icon: React.ReactNode; keywords?: string; badge?: number; feature?: Feature }
 interface NavGroup { section: string; items: NavEntry[] }
 
 // ─── Navigation model (single source for sidebar + command palette) ──────────
@@ -63,7 +66,7 @@ const NAV: NavGroup[] = [
     section: 'Compliance',
     items: [
       { key: 'Audit Logs',     label: 'Audit Logs',     icon: <ClipboardList size={15}/>, keywords: 'history export csv soc2' },
-      { key: 'Access Control', label: 'Access Control', icon: <Fingerprint size={15}/>,   keywords: 'rbac permissions roles' },
+      { key: 'Access Control', label: 'Access Control', icon: <Fingerprint size={15}/>,   keywords: 'rbac permissions roles sso', feature: 'sso' },
       { key: 'Data Privacy',   label: 'Data Privacy',   icon: <Eye size={15}/>,           keywords: 'pii masking gdpr presidio' },
     ],
   },
@@ -71,14 +74,12 @@ const NAV: NavGroup[] = [
     section: 'Admin',
     items: [
       { key: 'Settings', label: 'Settings', icon: <Settings size={15}/>,   keywords: 'theme preferences config' },
-      { key: 'Team',     label: 'Team',     icon: <Users size={15}/>,      keywords: 'members invite' },
+      { key: 'Team',     label: 'Team',     icon: <Users size={15}/>,      keywords: 'members invite sso', feature: 'sso' },
       { key: 'API Keys', label: 'API Keys', icon: <Key size={15}/>,        keywords: 'tokens credentials tenants' },
-      { key: 'Billing',  label: 'Billing',  icon: <CreditCard size={15}/>, keywords: 'usage cost invoice' },
+      { key: 'Billing',  label: 'Billing',  icon: <CreditCard size={15}/>, keywords: 'usage cost invoice', feature: 'billing' },
     ],
   },
 ];
-
-const ALL_NAV: NavEntry[] = NAV.flatMap(g => g.items);
 
 // ─── Page transition variants ────────────────────────────────────────────────
 
@@ -138,8 +139,8 @@ const PALETTE_ACTIONS: PaletteAction[] = [
   { label: 'View Active Sandboxes', icon: <Cpu size={13}/>,  tab: 'Sandboxes', hint: 'Action', keywords: 'firecracker vm' },
 ];
 
-function CommandPalette({ open, onClose, onNavigate }: {
-  open: boolean; onClose: () => void; onNavigate: (t: TabKey) => void;
+function CommandPalette({ open, onClose, onNavigate, entries }: {
+  open: boolean; onClose: () => void; onNavigate: (t: TabKey) => void; entries: NavEntry[];
 }) {
   const [query, setQuery] = useState('');
   const [index, setIndex] = useState(0);
@@ -150,14 +151,14 @@ function CommandPalette({ open, onClose, onNavigate }: {
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const navMatches = ALL_NAV
+    const navMatches = entries
       .filter(e => !q || e.label.toLowerCase().includes(q) || (e.keywords ?? '').includes(q))
       .map(e => ({ kind: 'nav' as const, label: e.label, icon: e.icon, tab: e.key }));
     const actionMatches = PALETTE_ACTIONS
       .filter(a => !q || a.label.toLowerCase().includes(q) || (a.keywords ?? '').includes(q))
       .map(a => ({ kind: 'action' as const, label: a.label, icon: a.icon, tab: a.tab }));
     return [...navMatches, ...actionMatches];
-  }, [query]);
+  }, [query, entries]);
 
   // Clamp selection when results shrink
   useEffect(() => { setIndex(i => Math.min(i, Math.max(0, results.length - 1))); }, [results.length]);
@@ -253,6 +254,35 @@ function CommandPalette({ open, onClose, onNavigate }: {
   );
 }
 
+// ─── Enterprise upsell (shown if a gated tab is reached without entitlement) ──
+
+function EnterpriseUpsell({ label }: { label: string }) {
+  return (
+    <div className="flex h-full w-full items-center justify-center p-8">
+      <div className="max-w-md text-center rounded-2xl border p-8"
+        style={{ borderColor: 'var(--border-color)', background: 'var(--bg-card, rgba(255,255,255,0.02))' }}>
+        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl"
+          style={{ background: 'color-mix(in srgb, var(--accent) 12%, transparent)', color: 'var(--accent)' }}>
+          <Lock size={22}/>
+        </div>
+        <h2 className="text-lg font-semibold mb-1" style={{ color: 'var(--text-main)' }}>
+          {label} is a TITAN Enterprise feature
+        </h2>
+        <p className="text-[13px] mb-5" style={{ color: 'var(--text-muted)' }}>
+          This surface is part of the commercial edition. You&apos;re running TITAN
+          Community (open-core). Upgrade to unlock multi-tenant governance, SSO/RBAC,
+          usage metering &amp; quotas, SOC alerting, and hallucination detection.
+        </p>
+        <a href="https://titan.sharvik.tech/pricing" target="_blank" rel="noreferrer"
+          className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[13px] font-medium text-white"
+          style={{ background: 'var(--accent)' }}>
+          View Enterprise plans
+        </a>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 const RAIL_W = 60;
@@ -318,12 +348,20 @@ export default function Dashboard() {
     [activeTab],
   );
 
-  // NAV with the live open-flag badge injected onto the Flags entry.
+  // NAV with the live open-flag badge injected onto the Flags entry, and
+  // commercial entries dropped unless the session's edition entitles them.
+  // Empty groups are removed so the sidebar shows no orphan section headers.
   const navWithBadges = useMemo<NavGroup[]>(() =>
     NAV.map(g => ({
       ...g,
-      items: g.items.map(it => it.key === 'Flags' ? { ...it, badge: openFlags } : it),
-    })), [openFlags]);
+      items: g.items
+        .filter(it => !it.feature || hasFeature(me, it.feature))
+        .map(it => it.key === 'Flags' ? { ...it, badge: openFlags } : it),
+    })).filter(g => g.items.length > 0), [openFlags, me]);
+
+  // Flattened, entitlement-filtered entries for the command palette.
+  const navEntries = useMemo<NavEntry[]>(
+    () => navWithBadges.flatMap(g => g.items), [navWithBadges]);
 
   // Current session identity (the proxy guarantees we're authenticated here).
   useEffect(() => { fetchMe().then(setMe); }, []);
@@ -351,6 +389,10 @@ export default function Dashboard() {
   }, []);
 
   const renderTab = () => {
+    // Defensive: gated tabs are hidden from the nav, but if a session lands on
+    // one without entitlement (e.g. an edition downgrade) show an upsell instead.
+    const gated = NAV.flatMap(g => g.items).find(it => it.key === activeTab)?.feature;
+    if (gated && !hasFeature(me, gated)) return <EnterpriseUpsell label={activeTab}/>;
     switch (activeTab) {
       case 'Overview':       return <OverviewTab/>;
       case 'Analytics':      return <AnalyticsTab/>;
@@ -384,7 +426,7 @@ export default function Dashboard() {
       <div className="pointer-events-none fixed bottom-0 right-0 w-[30%] h-[30%] rounded-full opacity-[0.012] blur-[120px]"
         style={{ background: 'var(--accent)' }}/>
 
-      <CommandPalette open={isCmdkOpen} onClose={() => setCmdk(false)} onNavigate={navigate}/>
+      <CommandPalette open={isCmdkOpen} onClose={() => setCmdk(false)} onNavigate={navigate} entries={navEntries}/>
 
       {/* ── Sidebar (full ↔ icon rail, never fully hidden) ───────────── */}
       <motion.aside initial={false}

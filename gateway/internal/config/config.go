@@ -53,6 +53,16 @@ type Config struct {
 	OutputScanEnabled   bool
 	OutputScanTimeoutMs int // ML deadline for output scans (looser than inline)
 
+	// Response-side groundedness / hallucination gate. When enabled, a buffered
+	// (non-stream) response is scored against the request's context via the ML
+	// engine's HTTP side-channel; a poorly-grounded answer is flagged (audited +
+	// header) and, if the engine is in block mode, refused. Requires the engine's
+	// own HALLUCINATION_ENABLED to actually run the NLI check. Fail-open: any
+	// error leaves the answer untouched.
+	GroundednessEnabled   bool
+	GroundednessEngineURL string // e.g. http://ml_engine:8001 (HTTP side-channel)
+	GroundednessTimeoutMs int
+
 	// WASM custom-rule plugins: directory of .wasm detection modules run as an
 	// extra pipeline stage. Empty = disabled. Each call is bounded by the timeout.
 	PluginDir       string
@@ -107,6 +117,13 @@ type Config struct {
 	ClickHouseUser     string
 	ClickHousePassword string
 	ClickHouseDatabase string
+
+	// Edition / licensing (open-core). Edition is "community" (default, MIT) or
+	// "enterprise"; commercial features activate only when Edition=="enterprise"
+	// AND LicenseKey is set AND the binary was built with `-tags enterprise`.
+	// See internal/edition and EDITIONS.md.
+	Edition    string
+	LicenseKey string
 }
 
 // Load reads environment variables and returns a validated Config.
@@ -144,6 +161,13 @@ func Load() (*Config, error) {
 		RateLimitTPM:        getEnvInt64("RATE_LIMIT_TPM", 0),
 		OutputScanEnabled:   getEnvBool("OUTPUT_SCAN_ENABLED", true),
 		OutputScanTimeoutMs: getEnvInt("OUTPUT_SCAN_TIMEOUT_MS", 2000),
+
+		Edition:    getEnv("TITAN_EDITION", "community"),
+		LicenseKey: getEnvWithFile("TITAN_LICENSE_KEY", ""),
+
+		GroundednessEnabled:   getEnvBool("GROUNDEDNESS_ENABLED", false),
+		GroundednessEngineURL: getEnv("GROUNDEDNESS_ENGINE_URL", ""),
+		GroundednessTimeoutMs: getEnvInt("GROUNDEDNESS_TIMEOUT_MS", 4000),
 
 		PluginDir:       os.Getenv("PLUGIN_DIR"),
 		PluginTimeoutMs: getEnvInt("PLUGIN_TIMEOUT_MS", 500),

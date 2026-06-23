@@ -1,5 +1,9 @@
-// Package plugins runs operator-supplied WebAssembly detection rules as an
-// extra, sandboxed stage of the request pipeline.
+//go:build enterprise
+
+// TITAN Enterprise — commercial license (see LICENSE-ENTERPRISE.md), not MIT.
+//
+// The wazero-backed WASM custom-rule runtime. Operator-supplied WebAssembly
+// detection rules run as an extra, sandboxed stage of the request pipeline.
 //
 // Why WASM: custom detection logic often needs to ship faster than the gateway
 // release cycle and may be written by a different team. A .wasm module is a
@@ -16,7 +20,8 @@
 //
 // Verdict JSON: {"block":bool,"score":number,"reason":string}.
 //
-// See plugins/sample/ for a reference plugin and its build script.
+// The shared Verdict type lives in plugins.go; the community build ships a no-op
+// runtime in runtime_community.go.
 package plugins
 
 import (
@@ -39,14 +44,6 @@ import (
 // instancePoolWarm is how many module instances each plugin pre-warms so the
 // hot path rarely pays cold-instantiation latency.
 const instancePoolWarm = 4
-
-// Verdict is the result of one plugin evaluating a prompt.
-type Verdict struct {
-	Block  bool    `json:"block"`
-	Score  float64 `json:"score"`
-	Reason string  `json:"reason"`
-	Plugin string  `json:"plugin"` // filled by the runtime, not the module
-}
 
 type plugin struct {
 	name     string

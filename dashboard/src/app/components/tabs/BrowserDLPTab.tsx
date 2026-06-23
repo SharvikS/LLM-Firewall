@@ -28,7 +28,7 @@ interface Overview {
   by_site: CountBucket[]; by_category: CountBucket[]; by_kind?: CountBucket[]; series_24h: TimeBucket[];
   recent: Violation[]; top_offenders: Offender[]; _offline?: boolean;
 }
-
+  
 const SITE_LABEL: Record<string, string> = { chatgpt: 'ChatGPT', claude: 'Claude', gemini: 'Gemini', perplexity: 'Perplexity' };
 const CAT_LABEL: Record<string, string> = {
   pii: 'PII', secret: 'Secrets', injection: 'Prompt Injection',

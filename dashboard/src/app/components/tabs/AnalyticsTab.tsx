@@ -29,6 +29,7 @@ const THREAT_LABELS: Record<string, string> = {
   CEDAR_BLOCKED: 'Policy (Cedar)',
   RATE_LIMITED: 'Rate Limit',
   PII_MASKED: 'PII Masked',
+  HALLUCINATION_FLAGGED: 'Hallucination',
 };
 
 // ─── Static demo data ─────────────────────────────────────────────────────────

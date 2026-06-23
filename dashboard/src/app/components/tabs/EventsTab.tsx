@@ -16,6 +16,8 @@ const ACTION_META: Record<string, { label: string; color: string; bg: string }> 
   RATE_LIMITED:  { label: 'Rate Limited', color: 'text-yellow-400', bg: 'bg-yellow-400/10' },
   PII_MASKED:    { label: 'PII Masked',   color: 'text-blue-400',  bg: 'bg-blue-400/10' },
   CACHE_HIT:     { label: 'Cache Hit',    color: 'text-purple-400',bg: 'bg-purple-400/10' },
+  OUTPUT_MASKED: { label: 'Output Masked', color: 'text-blue-400', bg: 'bg-blue-400/10' },
+  HALLUCINATION_FLAGGED: { label: 'Hallucination', color: 'text-pink-400', bg: 'bg-pink-400/10' },
   ALLOWED:       { label: 'Allowed',      color: 'text-green-400', bg: 'bg-green-400/10' },
   // Endpoint-side DLP from the browser extension (ChatGPT/Claude/Gemini web UIs).
   BROWSER_DLP_BLOCK:    { label: 'Browser Block',    color: 'text-red-400',    bg: 'bg-red-400/10' },
@@ -52,7 +54,7 @@ export default function EventsTab() {
     return () => clearInterval(id);
   }, [fetchEvents]);
 
-  const filters = ['ALL', 'ML_BLOCKED', 'PII_MASKED', 'RATE_LIMITED', 'CEDAR_BLOCKED', 'BROWSER_DLP_BLOCK', 'BROWSER_DLP_REDACT', 'CACHE_HIT', 'ALLOWED'];
+  const filters = ['ALL', 'ML_BLOCKED', 'PII_MASKED', 'HALLUCINATION_FLAGGED', 'RATE_LIMITED', 'CEDAR_BLOCKED', 'BROWSER_DLP_BLOCK', 'BROWSER_DLP_REDACT', 'CACHE_HIT', 'ALLOWED'];
 
   const visible = events.filter(e => {
     const matchFilter = filter === 'ALL' || e.action === filter;

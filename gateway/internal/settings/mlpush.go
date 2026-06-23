@@ -32,6 +32,9 @@ type mlConfig struct {
 	ToxicityEnabled        bool            `json:"toxicity_enabled"`
 	ToxicityBlockThreshold float64         `json:"toxicity_block_threshold"`
 	CodeLeakBlock          bool            `json:"code_leak_block"`
+	HallucinationEnabled        bool       `json:"hallucination_enabled"`
+	HallucinationBlockThreshold float64    `json:"hallucination_block_threshold"`
+	HallucinationBlock          bool       `json:"hallucination_block"`
 	PIIEntities            map[string]bool `json:"pii_entities"`
 }
 
@@ -49,6 +52,9 @@ func NewMLPusher(configURL string) ApplyFunc {
 			ToxicityEnabled:        s.ToxicityEnabled,
 			ToxicityBlockThreshold: s.ToxicityBlockThreshold,
 			CodeLeakBlock:          s.CodeLeakBlock,
+			HallucinationEnabled:        s.HallucinationEnabled,
+			HallucinationBlockThreshold: s.HallucinationBlockThreshold,
+			HallucinationBlock:          s.HallucinationBlock,
 			PIIEntities:            s.PIIEntities,
 		})
 		if err != nil {

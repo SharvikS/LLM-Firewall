@@ -69,12 +69,9 @@ func TestJWTTamperedSignatureRejected(t *testing.T) {
 	}
 }
 
-func TestOIDCDisabledByDefault(t *testing.T) {
+func TestOIDCEmptyConfigDisabled(t *testing.T) {
+	// True in every edition: an empty config is never enabled.
 	if (OIDCConfig{}).Enabled() {
 		t.Fatal("empty OIDC config must be disabled")
-	}
-	full := OIDCConfig{Issuer: "https://idp", ClientID: "c", ClientSecret: "s", RedirectURL: "https://gw/cb"}
-	if !full.Enabled() {
-		t.Fatal("fully-configured OIDC should be enabled")
 	}
 }

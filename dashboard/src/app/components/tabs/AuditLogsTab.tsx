@@ -20,6 +20,7 @@ interface AuditEvent {
 const ACTION_COLOR: Record<string, string> = {
   ALLOWED: 'text-green-400', ML_BLOCKED: 'text-red-400', PII_MASKED: 'text-blue-400',
   RATE_LIMITED: 'text-yellow-400', CEDAR_BLOCKED: 'text-orange-400', CACHE_HIT: 'text-purple-400',
+  OUTPUT_MASKED: 'text-blue-400', HALLUCINATION_FLAGGED: 'text-pink-400',
 };
 
 export default function AuditLogsTab() {
@@ -97,7 +98,7 @@ export default function AuditLogsTab() {
         </div>
         <select value={filterAction} onChange={e => setFilter(e.target.value)}
           className="px-3 py-2 bg-base-sec border border-base-border rounded-lg text-sm text-base-text outline-none focus:border-base-muted/60 transition-colors">
-          {['ALL','ALLOWED','ML_BLOCKED','PII_MASKED','RATE_LIMITED','CEDAR_BLOCKED','CACHE_HIT'].map(a => (
+          {['ALL','ALLOWED','ML_BLOCKED','PII_MASKED','HALLUCINATION_FLAGGED','RATE_LIMITED','CEDAR_BLOCKED','CACHE_HIT'].map(a => (
             <option key={a} value={a}>{a}</option>
           ))}
         </select>
