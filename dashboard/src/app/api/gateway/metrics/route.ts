@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
-import { GATEWAY } from '@/lib/gateway';
+import { GATEWAY, gatewayReadHeaders } from '@/lib/gateway';
 
 export async function GET() {
   try {
     const res = await fetch(`${GATEWAY}/api/metrics`, {
+      headers: gatewayReadHeaders(),
       next: { revalidate: 0 },
       signal: AbortSignal.timeout(3000),
     });

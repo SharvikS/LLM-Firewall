@@ -351,12 +351,15 @@ func main() {
 		})
 	})
 
-	// Dashboard read API (no auth — metrics are not sensitive)
+	// Dashboard read API (server-to-server via Next.js). Metrics, events and
+	// analytics can expose tenant activity, so require the same machine token
+	// used for /admin/v1 while still letting CORS preflights through.
 	r.Route("/api", func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 				w.Header().Set("Access-Control-Allow-Origin", "*")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type,X-Admin-Token,Authorization")
 				if req.Method == http.MethodOptions {
 					w.WriteHeader(http.StatusNoContent)
 					return
@@ -364,6 +367,7 @@ func main() {
 				next.ServeHTTP(w, req)
 			})
 		})
+		r.Use(gatewaymw.AdminTokenAuth(cfg.AdminToken))
 		r.Get("/metrics", metricsHandler)
 		r.Get("/events", eventsHandler)
 

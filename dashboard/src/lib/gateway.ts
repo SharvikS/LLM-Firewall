@@ -7,6 +7,10 @@ import { SESSION_COOKIE } from '@/lib/session';
 export const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL ?? 'http://localhost:8080';
 export const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? 'titan-admin-dev-secret';
 
+export function gatewayReadHeaders(): HeadersInit {
+  return { 'X-Admin-Token': ADMIN_TOKEN };
+}
+
 // adminFetch calls the gateway admin API as the *currently logged-in user* by
 // forwarding their session JWT, so the gateway enforces per-user RBAC. It falls
 // back to the machine master token only when there is no session (server-to-

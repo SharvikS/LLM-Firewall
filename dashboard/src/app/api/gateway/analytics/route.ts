@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GATEWAY } from '@/lib/gateway';
+import { GATEWAY, gatewayReadHeaders } from '@/lib/gateway';
 
 async function fetchJson(path: string) {
   const res = await fetch(`${GATEWAY}${path}`, {
+    headers: gatewayReadHeaders(),
     next: { revalidate: 0 },
     signal: AbortSignal.timeout(4000),
   });
