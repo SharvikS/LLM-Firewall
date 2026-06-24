@@ -402,7 +402,7 @@ func main() {
 
 	// LLM proxy — all /v1/* routes require a valid API key (fail-closed)
 	r.Group(func(r chi.Router) {
-		r.Use(gatewaymw.APIKeyAuth(st))
+		r.Use(gatewaymw.APIKeyAuthWithCache(st, time.Duration(cfg.AuthCacheTTLSec)*time.Second))
 
 		// Batch API — specific routes must be registered before the proxy
 		// wildcard so chi matches them first.
