@@ -351,6 +351,9 @@ func main() {
 		})
 	})
 
+	// Prometheus scrape endpoint. Dashboard JSON remains at /api/metrics.
+	r.Get("/metrics", prometheusHandler)
+
 	// Dashboard read API (no auth — metrics are not sensitive)
 	r.Route("/api", func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
@@ -474,6 +477,11 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 		"uptime_seconds":   int64(time.Since(metrics.StartTime).Seconds()),
 		"traffic_chart":    snap.TrafficChart,
 	})
+}
+
+func prometheusHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	w.Write([]byte(metrics.PrometheusText(r.Context()))) //nolint:errcheck
 }
 
 func eventsHandler(w http.ResponseWriter, r *http.Request) {
