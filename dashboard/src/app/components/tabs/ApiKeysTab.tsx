@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Copy, Trash2, Eye, EyeOff, Key, Check, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Plus, Copy, Trash2, EyeOff, Key, Check, RefreshCw, AlertTriangle } from 'lucide-react';
 
 interface APIKey {
   id: string; tenant_id: string; name: string;
@@ -45,15 +45,16 @@ export default function ApiKeysTab() {
     }
     if (tRes?.ok) {
       const data = await tRes.json();
-      setTenants(data.tenants ?? []);
-      if (!form.tenant_id && data.tenants?.length) {
-        setForm(f => ({ ...f, tenant_id: data.tenants[0].id }));
-      }
+      const tenantList: Tenant[] = data.tenants ?? [];
+      setTenants(tenantList);
+      setForm(f => f.tenant_id || tenantList.length === 0 ? f : { ...f, tenant_id: tenantList[0].id });
     }
     setLoading(false);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => {
+    queueMicrotask(() => { void fetchData(); });
+  }, [fetchData]);
 
   const generate = async () => {
     if (!form.name.trim() || !form.tenant_id) return;
@@ -114,7 +115,7 @@ export default function ApiKeysTab() {
             <div className="flex items-start gap-3">
               <AlertTriangle size={16} className="text-green-400 mt-0.5 shrink-0"/>
               <div className="flex-1">
-                <div className="text-sm font-semibold text-green-400 mb-1">Save this key — it won't be shown again</div>
+                <div className="text-sm font-semibold text-green-400 mb-1">Save this key — it won&apos;t be shown again</div>
                 <div className="flex items-center gap-3 bg-base-sec border border-base-border rounded-lg px-4 py-2.5">
                   <code className="text-sm font-mono text-base-text flex-1 break-all">{newKey.raw}</code>
                   <button onClick={() => copy(newKey.raw, 'banner')} className={`shrink-0 transition-colors ${copied === 'banner' ? 'text-green-400' : 'text-base-muted hover:text-base-text'}`}>

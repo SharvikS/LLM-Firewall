@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { ShieldAlert, Eye, Zap, CheckCircle, Filter, Search } from 'lucide-react';
+import { CheckCircle, Search } from 'lucide-react';
 
 interface Event {
   event_id: string; request_id: string; tenant_id: string; action: string;
@@ -49,8 +49,8 @@ export default function EventsTab() {
   }, []);
 
   useEffect(() => {
-    fetchEvents();
-    const id = setInterval(fetchEvents, 5000);
+    queueMicrotask(() => { void fetchEvents(); });
+    const id = setInterval(() => { void fetchEvents(); }, 5000);
     return () => clearInterval(id);
   }, [fetchEvents]);
 

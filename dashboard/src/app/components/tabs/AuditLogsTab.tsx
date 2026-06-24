@@ -44,7 +44,9 @@ export default function AuditLogsTab() {
     setLoading(false);
   }, [page]);
 
-  useEffect(() => { fetchAudit(); }, [fetchAudit]);
+  useEffect(() => {
+    queueMicrotask(() => { void fetchAudit(); });
+  }, [fetchAudit]);
 
   const visible = events.filter(e => {
     const matchA = filterAction === 'ALL' || e.action === filterAction;

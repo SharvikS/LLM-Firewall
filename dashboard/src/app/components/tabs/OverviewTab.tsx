@@ -1,11 +1,11 @@
 'use client';
 
-import { useEffect, useState, useCallback, useRef } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useEffect, useState, useCallback, useRef, useSyncExternalStore, type ReactNode } from 'react';
+import { motion } from 'framer-motion';
 import {
   ShieldAlert, Eye, Zap, CheckCircle, RefreshCw,
-  TrendingUp, TrendingDown, Minus, Activity,
-  Shield, Lock, Clock,
+  TrendingUp, TrendingDown, Minus,
+  Shield, Lock,
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
@@ -31,7 +31,7 @@ interface Event {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const ACTION_CONFIG: Record<string, { label: string; color: string; dot: string; icon: React.ReactNode }> = {
+const ACTION_CONFIG: Record<string, { label: string; color: string; dot: string; icon: ReactNode }> = {
   ML_BLOCKED:    { label: 'ML Blocked',    color: '#f87171', dot: '#f87171', icon: <ShieldAlert size={12}/> },
   CEDAR_BLOCKED: { label: 'Policy Block',  color: '#fb923c', dot: '#fb923c', icon: <Lock size={12}/> },
   RATE_LIMITED:  { label: 'Rate Limited',  color: '#facc15', dot: '#facc15', icon: <Zap size={12}/> },
@@ -39,6 +39,14 @@ const ACTION_CONFIG: Record<string, { label: string; color: string; dot: string;
   CACHE_HIT:     { label: 'Cache Hit',     color: '#a78bfa', dot: '#a78bfa', icon: <CheckCircle size={12}/> },
   ALLOWED:       { label: 'Allowed',       color: '#4ade80', dot: '#4ade80', icon: <CheckCircle size={12}/> },
 };
+
+const subscribeToClient = () => () => {};
+const clientSnapshot = () => true;
+const serverSnapshot = () => false;
+
+function useIsClient() {
+  return useSyncExternalStore(subscribeToClient, clientSnapshot, serverSnapshot);
+}
 
 // ─── Hooks ───────────────────────────────────────────────────────────────────
 
@@ -125,11 +133,25 @@ function MetricCard({ title, value, rawValue, sub, trend, accentColor }: {
 
 // ─── Custom Chart Tooltip ─────────────────────────────────────────────────────
 
-function ChartTooltip({ active, payload }: { active?: boolean; payload?: any[] }) {
+type ChartTooltipPayload = {
+  value?: string | number;
+  payload?: { label?: string };
+};
+
+function payloadNumber(value: string | number | undefined) {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+}
+
+function ChartTooltip({ active, payload }: { active?: boolean; payload?: ChartTooltipPayload[] }) {
   if (!active || !payload?.length) return null;
   const label = payload[0]?.payload?.label ?? '';
-  const requests = payload[0]?.value ?? 0;
-  const blocked  = payload[1]?.value ?? 0;
+  const requests = payloadNumber(payload[0]?.value);
+  const blocked  = payloadNumber(payload[1]?.value);
   const blockPct = requests > 0 ? ((blocked / requests) * 100).toFixed(1) : '0.0';
   return (
     <div className="rounded-xl shadow-2xl overflow-hidden text-xs"
@@ -231,6 +253,7 @@ export default function OverviewTab() {
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLast] = useState<Date | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const isClient = useIsClient();
 
   const fetchData = useCallback(async () => {
     const [mRes, eRes] = await Promise.all([
@@ -250,8 +273,8 @@ export default function OverviewTab() {
   }, [fetchData]);
 
   useEffect(() => {
-    fetchData();
-    const id = setInterval(fetchData, 5000);
+    queueMicrotask(() => { void fetchData(); });
+    const id = setInterval(() => { void fetchData(); }, 5000);
     return () => clearInterval(id);
   }, [fetchData]);
 
@@ -355,29 +378,31 @@ export default function OverviewTab() {
           </div>
 
           <div className="flex-1 px-3 pb-4">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartDisplay} margin={{ top: 4, right: 4, left: -18, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="gReq" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%"   stopColor="var(--accent)" stopOpacity={0.25}/>
-                    <stop offset="70%"  stopColor="var(--accent)" stopOpacity={0.05}/>
-                    <stop offset="100%" stopColor="var(--accent)" stopOpacity={0}/>
-                  </linearGradient>
-                  <linearGradient id="gBlk" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%"   stopColor="#f87171" stopOpacity={0.3}/>
-                    <stop offset="70%"  stopColor="#f87171" stopOpacity={0.05}/>
-                    <stop offset="100%" stopColor="#f87171" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} opacity={0.5}/>
-                <XAxis dataKey="label" stroke="var(--text-muted)" fontSize={9} tickLine={false} axisLine={false} minTickGap={32}/>
-                <YAxis stroke="var(--text-muted)" fontSize={9} tickLine={false} axisLine={false} tickFormatter={kfmt}/>
-                <RTooltip content={<ChartTooltip/>}
-                  cursor={{ stroke: 'var(--text-muted)', strokeWidth: 1, strokeDasharray: '4 3', opacity: 0.4 }}/>
-                <Area type="monotone" dataKey="requests" stroke="var(--accent)" strokeWidth={1.5} fill="url(#gReq)" dot={false}/>
-                <Area type="monotone" dataKey="blocked"  stroke="#f87171"       strokeWidth={1.5} fill="url(#gBlk)" dot={false}/>
-              </AreaChart>
-            </ResponsiveContainer>
+            {isClient && (
+              <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
+                <AreaChart data={chartDisplay} margin={{ top: 4, right: 4, left: -18, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="gReq" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%"   stopColor="var(--accent)" stopOpacity={0.25}/>
+                      <stop offset="70%"  stopColor="var(--accent)" stopOpacity={0.05}/>
+                      <stop offset="100%" stopColor="var(--accent)" stopOpacity={0}/>
+                    </linearGradient>
+                    <linearGradient id="gBlk" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%"   stopColor="#f87171" stopOpacity={0.3}/>
+                      <stop offset="70%"  stopColor="#f87171" stopOpacity={0.05}/>
+                      <stop offset="100%" stopColor="#f87171" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} opacity={0.5}/>
+                  <XAxis dataKey="label" stroke="var(--text-muted)" fontSize={9} tickLine={false} axisLine={false} minTickGap={32}/>
+                  <YAxis stroke="var(--text-muted)" fontSize={9} tickLine={false} axisLine={false} tickFormatter={kfmt}/>
+                  <RTooltip content={<ChartTooltip/>}
+                    cursor={{ stroke: 'var(--text-muted)', strokeWidth: 1, strokeDasharray: '4 3', opacity: 0.4 }}/>
+                  <Area type="monotone" dataKey="requests" stroke="var(--accent)" strokeWidth={1.5} fill="url(#gReq)" dot={false}/>
+                  <Area type="monotone" dataKey="blocked"  stroke="#f87171"       strokeWidth={1.5} fill="url(#gBlk)" dot={false}/>
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
 
