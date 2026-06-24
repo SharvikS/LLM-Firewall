@@ -17,16 +17,51 @@ spec:
       annotations:
         sidecar.istio.io/inject: "true" # Mandatory Istio mTLS boundary
     spec:
+      terminationGracePeriodSeconds: 30
       containers:
       - name: gateway
         image: ghcr.io/sharviks/llm-firewall-gateway:latest
         ports:
         - containerPort: 8080
         env:
-        - name: REDPANDA_BROKERS
-          value: "redpanda.platform.svc.cluster.local:9092"
-        - name: COCKROACH_URL
+        - name: LISTEN_ADDR
+          value: ":8080"
+        - name: TARGET_URL
+          value: "https://api.groq.com/openai"
+        - name: DB_CONN_STRING
           value: "postgresql://root@cockroachdb.platform.svc.cluster.local:26257/defaultdb?sslmode=verify-full"
+        - name: KAFKA_BROKERS
+          value: "redpanda.platform.svc.cluster.local:9092"
+        - name: REDIS_ADDR
+          value: "redis.platform.svc.cluster.local:6379"
+        - name: ANALYZER_ADDR
+          value: "titan-ml.llm-firewall.svc.cluster.local:50051"
+        - name: ADMIN_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: titan-secrets
+              key: admin-token
+        - name: GROQ_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: titan-secrets
+              key: provider-api-key
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          timeoutSeconds: 3
+          failureThreshold: 3
         resources:
           requests:
             cpu: "500m"
