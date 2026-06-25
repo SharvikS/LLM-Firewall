@@ -4,19 +4,19 @@ Project documentation, organized by purpose. The top-level [README](../README.md
 is the product overview; everything here is the deeper detail.
 
 ## architecture/ — design & technical analyses
-- [design_document.md](architecture/design_document.md) — system design of record
+- [design_document.md](architecture/design_document.md) — original architecture blueprint plus current implementation notes
 - [titan_architecture_analysis.md](architecture/titan_architecture_analysis.md) — architecture review
 - [TITAN_MODE_Architecture_Review.md](architecture/TITAN_MODE_Architecture_Review.md)
 - [enterprise_platform_v2_review.md](architecture/enterprise_platform_v2_review.md)
 - [image_scanning_analysis.md](architecture/image_scanning_analysis.md) — browser DLP image/file scanning review
-- [image-file-scanning-implementation.md](architecture/image-file-scanning-implementation.md)
+- [image-file-scanning-implementation.md](architecture/image-file-scanning-implementation.md) — historical implementation plan; current code is in `ml_engine/analyzer/extract.py`, `server.py`, and `embed.py`
 
 ## planning/ — plans, status & handoffs
 - [PROJECT_STATUS.md](planning/PROJECT_STATUS.md) — current build status
-- [architecture_plan.md](planning/architecture_plan.md)
-- [browser_extension_plan.md](planning/browser_extension_plan.md)
-- [MVP.md](planning/MVP.md)
-- [claude_v1_handoff.md](planning/claude_v1_handoff.md)
+- [architecture_plan.md](planning/architecture_plan.md) — historical plan
+- [browser_extension_plan.md](planning/browser_extension_plan.md) — historical plan
+- [MVP.md](planning/MVP.md) — historical milestone plan
+- [claude_v1_handoff.md](planning/claude_v1_handoff.md) — historical handoff
 
 ## operations/ — demos, runbooks & disaster recovery
 - [DEMO.md](operations/DEMO.md) · [DEMO_RUNBOOK.md](operations/DEMO_RUNBOOK.md)

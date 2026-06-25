@@ -1,7 +1,27 @@
 # LLM-Firewall (TITAN Gateway) — Project Status Log
 
 > **Auto-maintained log.** Updated at the end of every major session or when significant changes are made.
-> Last updated: 2026-06-14 (GA-Hardening + Customer-Journey Testing Session)
+> Last updated: 2026-06-25 (Documentation Freshness Pass)
+
+---
+
+## 2026-06-25 — Documentation Freshness Pass
+
+Audited the root README, docs index, testing guide, and demo runbooks against the
+current code and Compose topology. Updated stale facts around Go/Python versions,
+the gateway pipeline ordering (governance gates run before cache lookup), the
+11-service local stack, default dashboard credentials, analyzer timeout defaults,
+Admin API key creation response shape, browser DLP testing, and screenshot links.
+
+Also marked older architecture/planning documents as historical where they no
+longer match the implemented system exactly, so they remain useful context
+without being mistaken for the operational source of truth.
+
+Verification during the orientation immediately before this pass:
+
+- `cd gateway && go test ./...` passed.
+- Worktree was clean before docs edits.
+- Ambient Python lacked the ML test dependencies, so ML tests were not rerun.
 
 ---
 
@@ -211,7 +231,7 @@ several latent faults that would have broken the client demo:
 | 2 | Enterprise Architecture & Design | Done |
 | 3 | Documentation & UI Mockups | Done |
 | 4 | Python ML Analyzer (injection + PII detection) | Done |
-| 5 | Kafka Audit Logging & Postgres Integration | Done |
+| 5 | Kafka/Redpanda Audit Logging & CockroachDB Integration | Done |
 | 6 | Next.js Dashboard (full CRUD UI) | Done |
 | 7 | Titan V2 — Cedar, Firecracker, CockroachDB migration | Done |
 | 8 | Multi-Region Active-Active Deployment | Done (Helm chart + region overlays; cluster provisioning/Terraform out of scope) |
@@ -226,16 +246,20 @@ several latent faults that would have broken the client demo:
 |---|---|---|
 | Go API Gateway | `/gateway` | Reverse proxy, auth, rate limiting (RPM + TPM), provider failover, semantic cache (SHA-256), gRPC client, admin API |
 | Python ML Analyzer | `/ml_engine/analyzer` | Regex + HuggingFace transformer (TF-IDF fallback) injection detection, Presidio PII masking, gRPC server |
-| PostgreSQL Store | `/gateway/internal/store` | Tenants, API keys, policies, audit events, migrations |
-| Next.js Dashboard | `/dashboard` | API Keys, Policies, Audit Logs, Metrics, Settings, Command Palette |
-| Docker Compose | `/docker-compose.yml` | Full stack: Redis, CockroachDB, Redpanda, ML Engine, Gateway, Dashboard |
+| CockroachDB Store | `/gateway/internal/store` | Tenants, users, API keys, policies, settings, DLP flags, audit events, migrations |
+| Next.js Dashboard | `/dashboard` | Auth/RBAC, Overview, Analytics, Browser DLP, DLP Flags, Policies, Audit Logs, Settings, Team, API Keys, Billing, Vulnerabilities |
+| Docker Compose | `/docker-compose.yml` | 11-service local stack: gateway, ML engine, dashboard, Redis, CockroachDB, Redpanda, Console, ClickHouse, Qdrant, Jaeger, Grafana |
 | Local Dev Script | `/start_local.sh` | Orchestrates venv, ML engine, gateway, dashboard |
-| Kafka Audit Streaming | `/gateway/internal/kafka` | Async event producer, 500ms batch flush |
+| Kafka Audit Streaming | `/gateway/internal/events` | Async producer plus consumer group that persists audit batches after successful DB writes |
 | K8s Manifests | `/k8s/` | gateway-deployment.yaml, asr-deployment.yaml, istio-gateway.yaml (manual only) |
 
 ---
 
 ## Pending Items
+
+> **Historical note:** this backlog comes from earlier build phases. The current
+> completion state is captured in the dated session entries above and the
+> top-level README roadmap.
 
 ### Critical (Blocks Enterprise Readiness)
 
@@ -282,7 +306,7 @@ several latent faults that would have broken the client demo:
 | File | Change |
 |---|---|
 | `ml_engine/requirements.txt` | Added `transformers`, `torch`, `huggingface-hub`, `sentencepiece` |
-| `ml_engine/analyzer/injection_detector.py` | Upgraded Layer 2 to HuggingFace `protectai/deberta-v3-base-injection` transformer; TF-IDF+LR kept as startup fallback if model unavailable |
+| `ml_engine/analyzer/injection_detector.py` | Upgraded Layer 2 to HuggingFace DeBERTa injection detection; this early entry used `protectai/deberta-v3-base-injection`, later switched to the public `protectai/deberta-v3-base-prompt-injection-v2`; TF-IDF+LR kept as startup fallback if model unavailable |
 | `ml_engine/analyzer/server.py` | Fixed `_rebuild_body` bug: non-JSON body now wrapped in `{"messages":[{"role":"user","content":...}]}` instead of returning raw string |
 | `gateway/internal/config/config.go` | Added `FallbackTargetURL`, `FallbackAPIKey`, `RateLimitTPM` fields (env: `FALLBACK_TARGET_URL`, `FALLBACK_API_KEY`, `RATE_LIMIT_TPM`) |
 | `gateway/internal/ratelimit/ratelimit.go` | Added `tpmLimit` field; new `AllowTokens()` method with atomic Redis Lua TPM tumbling-window script |
@@ -423,4 +447,3 @@ All remaining pending items (#1–#18) closed this session, one commit per item:
 1. Read this file at the start of each session for full context.
 2. Pick a pending item from the list above.
 3. When work is done, mark the item `[x]` and add a new entry to the **Session Log** section above.
-

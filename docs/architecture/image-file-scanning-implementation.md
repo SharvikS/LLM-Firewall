@@ -1,6 +1,19 @@
 # Image & File Scanning — Full Implementation Plan
 ### TITAN LLM Firewall | Browser DLP Extension + ML Engine
 
+> **Status, 2026-06-25:** This file is a preserved implementation plan. The
+> feature is already implemented in the current codebase, but not with the exact
+> file split proposed below. The source of truth is:
+>
+> - `ml_engine/analyzer/extract.py` for text extraction, magic-byte image
+>   sniffing, OCR, timeouts, and file-type policy.
+> - `ml_engine/analyzer/server.py` for `scan_file` verdict composition.
+> - `ml_engine/analyzer/embed.py` for `POST /scan-file`.
+> - `browser-extension/src/background.js` and `browser-extension/src/content/index.jsx`
+>   for attachment interception, engine calls, local fallback, and reporting.
+>
+> Keep the sections below as design background, not as an open checklist.
+
 ---
 
 ## Table of Contents

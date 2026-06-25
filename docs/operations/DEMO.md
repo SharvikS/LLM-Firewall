@@ -8,7 +8,7 @@ Everything runs from one command. Allow ~2 minutes for the stack to settle
 ```bash
 open -a Docker                       # make sure Docker Desktop is running
 cd ~/Desktop/Projects/LLM_Firewall
-docker compose up -d --build         # full stack: 10 services
+docker compose up -d --build         # full stack: 11 services
 docker compose ps                    # wait until everything is healthy/running
 ```
 
@@ -27,6 +27,7 @@ dashboard's API Keys tab.)
 | What | URL |
 |---|---|
 | Dashboard (main demo surface) | http://localhost:3000 |
+| Grafana ClickHouse dashboard | http://localhost:3001 |
 | Jaeger distributed traces | http://localhost:16686 |
 | Redpanda console (Kafka audit WAL) | http://localhost:8082 |
 | CockroachDB admin | http://localhost:8081 |
@@ -85,7 +86,7 @@ docker compose logs ml_engine --tail 50
 docker compose restart gateway           # safe — stateless, recovers metrics from Redis
 ```
 
-Worst case, full reset (keeps volumes/data): `docker compose down && docker compose up -d`
+Worst case, full reset (keeps volumes/data): `docker compose down && docker compose up -d --build`
 
 Fail-safe behaviors already built in: if ClickHouse is down the Analytics tab
 falls back to demo data; if Redis is down the gateway still proxies (rate

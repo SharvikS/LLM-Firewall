@@ -1,5 +1,11 @@
 # Zero-Trust LLM Gateway ("LLM Firewall") - Architecture & Implementation Plan
 
+> **Status, 2026-06-25:** Historical implementation plan. The current system
+> uses CockroachDB instead of plain PostgreSQL, Redpanda/Kafka as the canonical
+> audit stream, ClickHouse for OLAP analytics, Qdrant for semantic caching,
+> Cedar for policy evaluation, and a Next.js 16 dashboard. Use the root
+> `README.md` and `docs/planning/PROJECT_STATUS.md` for the current architecture.
+
 This document outlines the blueprint for building an industry-grade, highly scalable LLM security gateway.
 
 ## 1. System Design & Architecture
@@ -53,7 +59,7 @@ We will use the best-in-class stack optimized for concurrency, machine learning,
     *   *Why:* The undisputed king of ML ecosystems.
     *   *Libraries:* 
         *   **Microsoft Presidio:** Industry standard for PII detection and anonymization.
-        *   **Hugging Face Transformers:** For running lightweight classification models (e.g., `deberta-v3-base-injection`) locally.
+        *   **Hugging Face Transformers:** For running lightweight classification models (current implementation uses `protectai/deberta-v3-base-prompt-injection-v2`) locally.
 *   **Web UI (Control Plane):** **Next.js (React) + TypeScript + Tailwind CSS**
     *   *Why:* Fast to build, server-side rendering for SEO/performance, and excellent developer experience.
     *   *Components:* Shadcn/ui or Tremor (great for analytics dashboards).

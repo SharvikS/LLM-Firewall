@@ -43,7 +43,7 @@ This is consistent across **both** the Python server AND the JS content script, 
 ---
 
 ### 2. Dual OCR Backend with Graceful Degradation
-[extract.py L141–176](file:///Users/sharvik/Desktop/Projects/LLM_Firewall/ml_engine/analyzer/extract.py#L141-L176) implements a smart cascading OCR strategy:
+[extract.py](../../ml_engine/analyzer/extract.py) implements a smart cascading OCR strategy:
 
 - **Tesseract** (fast, system binary) → probed first with `get_tesseract_version()`
 - **EasyOCR** (torch-based, zero system binary) → fallback with GPU disabled and progress output silenced
@@ -68,7 +68,7 @@ A binary file can't be redacted in-place, so upgrading to block is correct.
 ---
 
 ### 4. All Three Attachment Entry Points Are Intercepted
-[content/index.jsx L400–540](file:///Users/sharvik/Desktop/Projects/LLM_Firewall/browser-extension/src/content/index.jsx#L400-L540) intercepts all three paths that can bring a file into the composer:
+[content/index.jsx](../../browser-extension/src/content/index.jsx) intercepts all three paths that can bring a file into the composer:
 
 | Entry Point | Handler | 
 |---|---|
@@ -91,18 +91,21 @@ And uses `validate=False` in `base64.b64decode` for tolerance, with a 25 MB size
 
 ---
 
-### 6. Image MIME Type Detection is Double-Checked
-[extract.py L82–83](file:///Users/sharvik/Desktop/Projects/LLM_Firewall/ml_engine/analyzer/extract.py#L82-L83):
+### 6. Image Type Detection Uses Magic-Byte Sniffing
+[extract.py](../../ml_engine/analyzer/extract.py):
 ```python
-def _is_image(ext: str, content_type: str) -> bool:
-    return ext in _IMAGE_EXTS or (content_type or "").startswith("image/")
+def _sniff_image(data: bytes) -> bool:
+    ...
 ```
-Extension AND MIME type are each independently sufficient — a PNG named `.bin` is still treated as an image.
+The engine trusts bytes over labels. A real image mislabelled as `.bin` is still
+recognized by its signature, while a non-image that claims `content_type:
+image/png` falls through to the document/binary path where strict mode can block
+it.
 
 ---
 
 ### 7. Well-Covered Test Suite for Images
-[test_scan_file.py](file:///Users/sharvik/Desktop/Projects/LLM_Firewall/ml_engine/tests/test_scan_file.py) covers:
+[test_scan_file.py](../../ml_engine/tests/test_scan_file.py) covers:
 - `test_image_without_backend_is_unsupported_not_crash` — no OCR → no exception
 - `test_unscannable_image_never_blocks_even_in_strict` — fail-open contract, both strict and non-strict
 - Document types (DOCX, XLSX) with `@pytest.mark.skipif` guards for optional deps
@@ -114,21 +117,21 @@ Extension AND MIME type are each independently sufficient — a PNG named `.bin`
 ### ✅ RESOLVED — CRITICAL: MIME-Spoofing via Trusted `content_type`
 **Was:** `_is_image()` trusted the caller-supplied `content_type` / extension. A direct API call could send `{"filename": "evil.exe", "content_type": "image/png", ...}` to claim the privileged *image* classification (which fails open even under strict policy), bypassing the strict-mode block a normal binary would get.
 
-**Fixed in [extract.py](file:///Users/sharvik/Desktop/Projects/LLM_Firewall/ml_engine/analyzer/extract.py):** routing is now decided by a **magic-byte sniff** (`_sniff_image()`, checking PNG/JPEG/GIF/BMP/TIFF/WEBP signatures), not the label. A non-image that lies about its `content_type` falls through to the document/binary path where strict mode fails closed — and, as a bonus, a *real* image mislabelled as `.bin`/octet-stream is now correctly recognised and OCR'd. Covered by `test_spoofed_image_content_type_is_not_treated_as_image`, `test_spoofed_image_fails_closed_in_strict`, and `test_real_image_mislabelled_as_binary_is_still_an_image`.
+**Fixed in [extract.py](../../ml_engine/analyzer/extract.py):** routing is now decided by a **magic-byte sniff** (`_sniff_image()`, checking PNG/JPEG/GIF/BMP/TIFF/WEBP signatures), not the label. A non-image that lies about its `content_type` falls through to the document/binary path where strict mode fails closed — and, as a bonus, a *real* image mislabelled as `.bin`/octet-stream is now correctly recognised and OCR'd. Covered by `test_spoofed_image_content_type_is_not_treated_as_image`, `test_spoofed_image_fails_closed_in_strict`, and `test_real_image_mislabelled_as_binary_is_still_an_image`.
 
 ---
 
 ### ✅ RESOLVED — CRITICAL: `_ocr_reader` Init Was Thread-Unsafe
 **Was:** `_ocr_reader` / `_ocr_backend` were bare module globals. Both servers run multi-threaded (HTTP `ThreadingHTTPServer`, gRPC `ThreadPoolExecutor`), so two concurrent image scans could each enter `easyocr.Reader(...)` — whose constructor (weight download + load) is **not thread-safe** — and corrupt the shared model cache.
 
-**Fixed in [extract.py](file:///Users/sharvik/Desktop/Projects/LLM_Firewall/ml_engine/analyzer/extract.py):** reader construction moved to `_easyocr_reader()` using **double-checked locking** under a module-level `threading.Lock`. The hot path (reader already built) takes no lock; only the first caller constructs the reader while the rest wait, so two readers can never be built concurrently.
+**Fixed in [extract.py](../../ml_engine/analyzer/extract.py):** reader construction moved to `_easyocr_reader()` using **double-checked locking** under a module-level `threading.Lock`. The hot path (reader already built) takes no lock; only the first caller constructs the reader while the rest wait, so two readers can never be built concurrently.
 
 ---
 
 ### ✅ RESOLVED — HIGH: `maxFileMB` Silent-Allow Bypass
 **Was:** an over-limit file returned `decision: 'allow'` unconditionally and was never scanned, so a large file with embedded credentials passed silently even under strict policy.
 
-**Fixed in [content/index.jsx](file:///Users/sharvik/Desktop/Projects/LLM_Firewall/browser-extension/src/content/index.jsx):** an oversized file is now treated as *unverified*, mirroring the offline-engine contract — it **fails closed (block) under strict policy** and otherwise fails open with an explicit `"sent unscanned"` reason instead of a silent allow. (An oversized image still fails open, consistent with the image contract.)
+**Fixed in [content/index.jsx](../../browser-extension/src/content/index.jsx):** an oversized file is now treated as *unverified*, mirroring the offline-engine contract — it **fails closed (block) under strict policy** and otherwise fails open with an explicit `"sent unscanned"` reason instead of a silent allow. (An oversized image still fails open, consistent with the image contract.)
 
 ---
 
@@ -140,7 +143,7 @@ EasyOCR supports 80+ languages via `DLP_OCR_LANGS` (comma-separated, e.g. `"en,f
 ### ✅ RESOLVED — MEDIUM: Sequential File Scanning
 **Was:** `for (const f of files) verdicts.push(await scanAttachment(f));` scanned a multi-file upload serially, stalling the UI for the *sum* of per-file OCR times.
 
-**Fixed in [content/index.jsx](file:///Users/sharvik/Desktop/Projects/LLM_Firewall/browser-extension/src/content/index.jsx):** `await Promise.all(files.map(scanAttachment))` — scans run concurrently, order is preserved, and the first block still wins.
+**Fixed in [content/index.jsx](../../browser-extension/src/content/index.jsx):** `await Promise.all(files.map(scanAttachment))` — scans run concurrently, order is preserved, and the first block still wins.
 
 ---
 
@@ -157,7 +160,7 @@ These are hard problems, but for a security product targeting enterprise, QR cod
 ### ✅ RESOLVED — MEDIUM: Engine-Side OCR Timeout
 **Was:** `background.js` aborted the *HTTP request* after `Math.max(cfg.timeoutMs, 8000)`, but the **engine** put no bound on the OCR call, so a pathological image could pin a worker thread indefinitely.
 
-**Fixed in [extract.py](file:///Users/sharvik/Desktop/Projects/LLM_Firewall/ml_engine/analyzer/extract.py):** `_ocr_image()` now runs the OCR work on a one-shot executor with `future.result(timeout=OCR_TIMEOUT_S)` (`DLP_OCR_TIMEOUT_S`, default 20s). On timeout the request surrenders and the image comes back `supported=False` — and, being an image, fails open rather than producing a false block. (OCR is CPU-bound and not cancellable, so the daemon thread finishes on its own; the *request* is what's bounded.)
+**Fixed in [extract.py](../../ml_engine/analyzer/extract.py):** `_ocr_image()` now runs the OCR work on a one-shot executor with `future.result(timeout=OCR_TIMEOUT_S)` (`DLP_OCR_TIMEOUT_S`, default 20s). On timeout the request surrenders and the image comes back `supported=False` — and, being an image, fails open rather than producing a false block. (OCR is CPU-bound and not cancellable, so the daemon thread finishes on its own; the *request* is what's bounded.)
 
 ---
 

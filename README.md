@@ -11,8 +11,8 @@ A drop-in reverse proxy for OpenAI, Anthropic, Groq, and local LLMs (Ollama, LM 
 
 <br/>
 
-[![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://golang.org)
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
+[![Go](https://img.shields.io/badge/Go-1.26+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://golang.org)
+[![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org)
 [![Next.js](https://img.shields.io/badge/Next.js-16-000000?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://docker.com)
 [![gRPC](https://img.shields.io/badge/gRPC-Protocol-244C5A?style=for-the-badge&logo=grpc&logoColor=white)](https://grpc.io)
@@ -72,25 +72,25 @@ Client Request
 [2c] Custom Guardrails         ─ Operator-defined no-code regex deny rules (403)
     │
     ▼
-[3] Exact + Semantic Cache     ─ Redis SHA-256 + Qdrant vector similarity
+[3] ML Analysis (gRPC)         ─ Injection + toxicity + PII/secret masking
     │
     ▼
-[4] ML Analysis (gRPC)         ─ Injection + toxicity + PII scanner (150ms timeout)
+[4] WASM Plugins              ─ Sandboxed operator-supplied custom detectors (wazero)
     │
     ▼
-[4b] WASM Plugins              ─ Sandboxed operator-supplied custom detectors (wazero)
+[5] Policy Engine              ─ Cedar ABAC: ALLOW / DENY (default-deny)
     │
     ▼
-[5] Policy Engine              ─ Cedar ABAC: ALLOW / DENY / LOG (default-deny)
+[6] Exact + Semantic Cache     ─ Redis SHA-256 + Qdrant vector similarity
     │
     ▼
-[6] LLM Proxy + Failover       ─ Primary → fallback with transparent retry
+[7] LLM Proxy + Failover       ─ Primary → fallback with transparent retry
     │
     ▼
-[7] Output Scanning            ─ Mask PII/secrets in the model's reply (incl. SSE streams)
+[8] Output Scanning            ─ Mask PII/secrets in the model's reply (incl. SSE streams)
     │
     ▼
-[8] Async Audit Log            ─ Full event streamed to Kafka, zero latency impact
+[9] Async Audit Log            ─ Full event streamed to Kafka, zero latency impact
     │
     ▼
   Response to Client
@@ -155,8 +155,8 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
 
 | Component | Language | Role | Key Dependencies |
 |-----------|----------|------|-----------------|
-| **API Gateway** | Go 1.21 | Data plane — intercepts all LLM traffic | `go-chi`, `pgx`, `redis-go`, `franz-go` |
-| **ML Engine** | Python 3.10 | Intelligence plane — threat analysis via gRPC | `transformers`, `presidio`, `spaCy`, `gRPC` |
+| **API Gateway** | Go 1.26 | Data plane — intercepts all LLM traffic | `go-chi`, `pgx`, `redis-go`, `franz-go` |
+| **ML Engine** | Python 3.12 | Intelligence plane — threat analysis via gRPC | `transformers`, `presidio`, `spaCy`, `gRPC` |
 | **Dashboard** | Next.js 16 | Control plane — management UI | `React 19`, `Recharts 3`, `Framer Motion 12` |
 | **CockroachDB** | SQL | Persistent store — tenants, keys, policies, audit | Postgres-wire compatible |
 | **Redis** | In-memory | Rate limiting, exact cache, metrics buffer | Lua scripts for atomic operations |
@@ -169,7 +169,7 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
 
 ### Zero-Trust Security
 
-**Prompt Injection & Jailbreak Detection** — A two-layer defense: instant regex matching against 12 known attack signatures (DAN, goal hijacking, system override), followed by a HuggingFace `protectai/deberta-v3-base-injection` transformer model with a TF-IDF fallback — all within a 150ms gRPC timeout.
+**Prompt Injection & Jailbreak Detection** — A two-layer defense: instant regex matching against known attack signatures (DAN, goal hijacking, system override), followed by a HuggingFace `protectai/deberta-v3-base-prompt-injection-v2` transformer model with a trained TF-IDF fallback. The inline analyzer deadline is runtime-tunable; local compose seeds it at 500ms for the active transformer path.
 
 **Per-message PII Masking** — Microsoft Presidio detects and masks 11 entity types **independently per message** in multi-turn conversations before any data leaves your network: `CREDIT_CARD`, `EMAIL_ADDRESS`, `IBAN`, `IP_ADDRESS`, `PERSON`, `PHONE_NUMBER`, `US_SSN`, `US_BANK_NUMBER`, `US_DRIVER_LICENSE`, `US_ITIN`, `US_PASSPORT`. spaCy NER handles context-aware extraction. Each message is scanned in isolation — masking in one turn never corrupts adjacent turns.
 
@@ -247,7 +247,7 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
 
 **Enterprise Dashboard** — A polished Next.js 16 / React 19 / Tailwind CSS 4 control plane with animated count-up metric cards, gradient-bordered KPI panels, staggered threat feed animations, dark/light/midnight/cobalt themes, command palette (`⌘K`), and collapsible sidebar.
 
-**One-command Stack** — `docker-compose up -d` boots the complete 8-service cluster.
+**One-command Stack** — `docker compose up -d --build` boots the complete 11-service local stack: gateway, ML engine, dashboard, Redis, CockroachDB, Redpanda, Redpanda Console, ClickHouse, Qdrant, Jaeger, and Grafana.
 
 ### Detection Efficacy
 
@@ -255,7 +255,7 @@ The ML governance controls are measured against held-out evaluation corpora (`ml
 
 | Control | Model | Precision | Recall | F1 | False-Positive Rate |
 |---------|-------|-----------|--------|----|--------------------|
-| **Prompt Injection** | `deberta-v3-base-injection` | 93.9% | 86.1% | 89.9% | 5.6% |
+| **Prompt Injection** | `deberta-v3-base-prompt-injection-v2` | 93.9% | 86.1% | 89.9% | 5.6% |
 | **Toxicity** | `unitary/toxic-bert` | 100% | 70.6% | 82.8% | 0% |
 | **PII** | Microsoft Presidio | 100% | 80.0% | 88.9% | 0% |
 
@@ -291,7 +291,7 @@ The following security and reliability fixes have been applied since the initial
 | 13 | **ML model overfitting guard** — Falls back gracefully if training data < 100 samples; logs WARNING | Prevents TF-IDF classifier from running on insufficient training data |
 | 14 | **Concurrent embedding server** — `ThreadingHTTPServer` instead of `HTTPServer` | Semantic cache lookups no longer serialize under concurrent gateway requests |
 
-### Analyzer (`analyzer/`)
+### ML Engine (`ml_engine/`)
 
 | # | Fix | Impact |
 |---|-----|--------|
@@ -469,16 +469,16 @@ cp .env.example .env
 # GROQ_API_KEY=gsk_...   (or OPENAI_API_KEY, etc.)
 # ADMIN_TOKEN=your-secret-admin-token
 
-# 3. Start the full stack (Gateway, ML Engine, Dashboard, Redis, CockroachDB, Kafka, Qdrant)
-docker-compose up -d
+# 3. Start the full stack
+docker compose up -d --build
 
 # 4. Verify all services are healthy
-docker-compose ps
+docker compose ps
 
 # 5. Open the dashboard and log in
 open http://localhost:3000
 # Default admin login (override via DEFAULT_ADMIN_EMAIL / DEFAULT_ADMIN_PASSWORD):
-#   admin@titan.local  /  titan-admin
+#   admin@titan.local  /  admin@123
 
 # 6. Send a test request through the gateway
 curl -X POST http://localhost:8080/v1/chat/completions \
@@ -503,6 +503,8 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 | CockroachDB Admin | `http://localhost:8081` | Database console |
 | Redpanda Console | `http://localhost:8082` | Kafka topic browser |
 | Qdrant Dashboard | `http://localhost:6333/dashboard` | Vector DB UI |
+| Jaeger | `http://localhost:16686` | Distributed traces |
+| Grafana | `http://localhost:3001` | ClickHouse dashboards |
 
 ---
 
@@ -573,12 +575,18 @@ for await (const chunk of stream) {
 ### curl
 
 ```bash
-# Generate a tenant API key via the Admin API
+# Create a tenant, then generate a tenant API key via the Admin API.
+# The create-key endpoint expects the tenant UUID returned by /tenants.
+curl -X POST http://localhost:8080/admin/v1/tenants \
+  -H "X-Admin-Token: your-admin-token" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Acme Corp", "tier": "pro", "rate_limit": 600}'
+
 curl -X POST http://localhost:8080/admin/v1/keys \
   -H "X-Admin-Token: your-admin-token" \
   -H "Content-Type: application/json" \
-  -d '{"tenant_id": "acme-corp", "name": "production-key"}'
-# → {"raw_key": "titan_abc123...", "key_prefix": "titan_ab12cd34", ...}
+  -d '{"tenant_id": "<tenant-uuid-from-previous-response>", "name": "production-key"}'
+# → {"key": "titan_abc123...", "metadata": {"key_prefix": "titan_ab12cd34", ...}}
 
 # Use it like any OpenAI key
 curl http://localhost:8080/v1/chat/completions \
@@ -628,7 +636,7 @@ All configuration is passed via environment variables. The `.env.example` contai
 | `EMBEDDING_URL` | `http://localhost:8001/embed` | No | Embedding service endpoint (MiniLM) |
 | `SEMANTIC_CACHE_THRESHOLD` | `0.95` | No | Cosine similarity threshold for cache hits |
 | `ANALYZER_ADDR` | `localhost:50051` | No | ML engine gRPC address |
-| `ANALYZER_TIMEOUT_MS` | `150` | No | ML analysis timeout in milliseconds |
+| `ANALYZER_TIMEOUT_MS` | `150` (`500` in compose) | No | ML analysis timeout in milliseconds |
 | `ANALYZER_TLS_ENABLED` | `false` | No | Enable TLS for gateway → ML engine channel (fail-closed: server exits if cert load fails) |
 | `ANALYZER_TLS_CERT_FILE` | `/etc/certs/ca.crt` | No | CA cert for ML-engine server verification |
 | `ANALYZER_TLS_CLIENT_CERT` | — | No | Client cert for **mutual** TLS (set with the key to enable mTLS) |
@@ -664,7 +672,7 @@ All configuration is passed via environment variables. The `.env.example` contai
 | `AUTH_SIGNING_SECRET` | `titan-dev-signing-secret-change-me` | Session token signing key — **change in production** |
 | `AUTH_SESSION_TTL_HOURS` | `12` | Dashboard session lifetime |
 | `DEFAULT_ADMIN_EMAIL` | `admin@titan.local` | Bootstrap admin login |
-| `DEFAULT_ADMIN_PASSWORD` | `titan-admin` | Bootstrap admin password — **change in production** |
+| `DEFAULT_ADMIN_PASSWORD` | `admin@123` | Bootstrap admin password — **change in production** |
 | `APP_ENV` | `development` | `development` or `production` (hardens cookie/SSO behavior) |
 | `OIDC_ISSUER` | — | OIDC issuer URL; empty = SSO disabled |
 | `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | — | OIDC client credentials |
@@ -828,7 +836,7 @@ GET    /health          # Liveness probe — returns 200 OK
 
 | Layer | Technology | Version | Role |
 |-------|-----------|---------|------|
-| Data Plane | Go | 1.21+ | High-performance reverse proxy |
+| Data Plane | Go | 1.26+ | High-performance reverse proxy |
 | Router | go-chi | v5 | HTTP routing and middleware chain |
 | DB Driver | pgx | v5 | CockroachDB / PostgreSQL driver |
 | Cache Client | go-redis | v9 | Redis operations + Lua scripting |
@@ -837,9 +845,9 @@ GET    /health          # Liveness probe — returns 200 OK
 | Auth / SSO | OIDC + signed sessions | — | Dashboard login, SSO, four-tier RBAC |
 | OLAP Analytics | ClickHouse | 24+ | Audit OLAP read path (`/api/analytics/*`) |
 | Tracing | OpenTelemetry + Jaeger | — | Distributed gateway → ML → provider traces |
-| Intelligence Plane | Python | 3.10+ | ML analysis via gRPC |
+| Intelligence Plane | Python | 3.12 target | ML analysis via gRPC |
 | gRPC Framework | gRPC | 1.62+ | Gateway ↔ ML engine transport |
-| Injection Detection | `protectai/deberta-v3-base-injection` | — | Transformer-based prompt injection classifier |
+| Injection Detection | `protectai/deberta-v3-base-prompt-injection-v2` | — | Transformer-based prompt injection classifier |
 | PII Detection | Microsoft Presidio | 2.2+ | Entity recognition and anonymization |
 | NLP | spaCy | 3.7+ | Named entity recognition (PERSON, LOC) |
 | Embeddings | `all-MiniLM-L6-v2` | — | 384-dim sentence embeddings for semantic cache |
@@ -893,7 +901,7 @@ kubectl apply -f k8s/istio-gateway.yaml         # Istio ingress + mTLS policy
 - [x] **Phase 3** — Python ML Analyzer (gRPC): injection detection, PII masking, embedding service
 - [x] **Phase 4** — Apache Kafka audit streaming, CockroachDB integration, DB indexes
 - [x] **Phase 5** — Qdrant semantic caching, Redis metrics reporter, provider failover, gRPC mTLS
-- [x] **Phase 6** — Next.js 16 enterprise dashboard: 14 tabs, Recharts analytics, 4 themes, command palette
+- [x] **Phase 6** — Next.js 16 enterprise dashboard: 16 tabs, Recharts analytics, 4 themes, command palette
 - [x] **Phase 7** — Security hardening: 15 fixes across gateway, ML engine, and analyzer (OOM defense, per-message PII, default-deny policy, fail-closed TLS, sandbox allowlist, Kafka context fix, API key entropy, stats persistence, async auth touch)
 - [x] **Phase 8** — Production UI overhaul: animated count-up cards, gradient accent lines, shimmer skeletons, live-dot indicators, spring-physics nav, staggered threat feed, premium chart tooltips
 - [x] **Feature completion** — Toxicity/sentiment detection, source-code & secret leak prevention, OpenAPI 3.0 + Swagger UI (`/docs`), Python & Node Admin SDKs, async batch API (`/v1/batch`)
@@ -924,7 +932,6 @@ kubectl apply -f k8s/istio-gateway.yaml         # Istio ingress + mTLS policy
 
 ### Planned
 
-- [x] **Phase 23** — Response-side hallucination / groundedness detection (NLI gate: scores each answer against the request's context, flags or blocks unsupported claims; opt-in via `HALLUCINATION_ENABLED` + `GROUNDEDNESS_ENABLED`, surfaced in Settings + Events)
 - [ ] **Future** — Grafana alerting rules + on-call integrations
 - [ ] **Future** — Managed cluster autoscaling policies and cost dashboards
 

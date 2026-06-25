@@ -39,8 +39,8 @@ start is seconds, not minutes, after the first build.
 ./scripts/smoke.sh
 ```
 
-12+ checks covering health/readiness, auth, injection/toxicity/plugin blocks,
-PII masking, analytics, audit, and a **live settings round-trip**. Expect
+17 checks covering health/readiness, dashboard auth, injection/toxicity/plugin
+blocks, PII masking, metrics, analytics, audit, and a **live settings round-trip**. Expect
 `PASS=… FAIL=0`.
 
 ---

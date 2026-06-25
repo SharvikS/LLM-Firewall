@@ -1,5 +1,15 @@
 # Enterprise Architecture Design: Zero-Trust LLM Gateway
 
+> **Status, 2026-06-25:** This document is the original architecture blueprint.
+> The current implementation has evolved beyond a few early assumptions:
+> CockroachDB is the operational SQL store, Kafka/Redpanda is the canonical
+> audit stream, a Go consumer persists audit events to CockroachDB, ClickHouse
+> independently consumes the same Kafka topic for OLAP analytics, and policies
+> are evaluated with Cedar from a DB-backed in-memory cache. For day-to-day
+> operations, prefer the top-level `README.md`, `docs/planning/PROJECT_STATUS.md`,
+> and the code paths in `gateway/internal/proxy`, `gateway/internal/store`,
+> `gateway/internal/events`, and `platform/clickhouse/init.sql`.
+
 This document serves as the comprehensive architectural blueprint, addressing the 10 prerequisite requirements before code generation begins.
 
 ---
