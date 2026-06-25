@@ -13,7 +13,10 @@ import (
 )
 
 // userHandler serves control-plane user management (admin-only routes).
-type userHandler struct{ st *store.Store }
+type userHandler struct {
+	st    *store.Store
+	audit *auditRecorder
+}
 
 func (h *userHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 	users, err := h.st.ListUsers(r.Context())
@@ -58,6 +61,10 @@ func (h *userHandler) createUser(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "could not create user (email may already exist)"})
 		return
 	}
+	h.audit.Record(r, controlAuditEvent{
+		Action: "ADMIN_USER_CREATED", StatusCode: http.StatusCreated,
+		TargetType: "user", TargetID: u.ID.String(), Reason: "user created",
+	})
 	writeJSON(w, http.StatusCreated, u)
 }
 
@@ -83,6 +90,10 @@ func (h *userHandler) updateRole(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
 	}
+	h.audit.Record(r, controlAuditEvent{
+		Action:     "ADMIN_USER_ROLE_UPDATED",
+		TargetType: "user", TargetID: u.ID.String(), Reason: "user role updated to " + u.Role,
+	})
 	writeJSON(w, http.StatusOK, u)
 }
 
@@ -101,5 +112,8 @@ func (h *userHandler) deleteUser(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "delete user", err)
 		return
 	}
+	h.audit.Record(r, controlAuditEvent{
+		Action: "ADMIN_USER_DELETED", TargetType: "user", TargetID: id.String(), Reason: "user deleted",
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }

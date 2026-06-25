@@ -113,6 +113,14 @@ func auditEventToRow(e AuditEvent) store.AuditRow {
 		StatusCode: e.StatusCode,
 		Reason:     e.Reason,
 		Region:     e.Region,
+		ActorID:    e.ActorID,
+		ActorEmail: e.ActorEmail,
+		ActorRole:  e.ActorRole,
+		ActorType:  e.ActorType,
+		TargetType: e.TargetType,
+		TargetID:   e.TargetID,
+		SourceIP:   e.SourceIP,
+		UserAgent:  e.UserAgent,
 	}
 	if id, err := uuid.Parse(e.TenantID); err == nil && id != uuid.Nil {
 		row.TenantID = &id

@@ -7,7 +7,6 @@ import (
 	"github.com/google/uuid"
 )
 
-
 // ── HashKey ───────────────────────────────────────────────────────────────────
 
 func TestHashKey(t *testing.T) {
@@ -21,7 +20,7 @@ func TestHashKey(t *testing.T) {
 
 	t.Run("known_value", func(t *testing.T) {
 		// Pre-computed SHA-256 of the dev key — validated in Phase 5 seed fix.
-		const key  = "titan_dev_localkeyfortesting1234"
+		const key = "titan_dev_localkeyfortesting1234"
 		const want = "423dc836d6e0dd409ff96c02e6833a4eb83e61de5730a243520255aa9a56dd55"
 		got := HashKey(key)
 		if got != want {

@@ -11,23 +11,25 @@ import (
 
 // User is the public (hash-free) view of a control-plane user.
 type User struct {
-	ID           uuid.UUID  `json:"id"`
-	Email        string     `json:"email"`
-	Role         string     `json:"role"`
-	AuthProvider string     `json:"auth_provider"`
-	Disabled     bool       `json:"disabled"`
-	CreatedAt    time.Time  `json:"created_at"`
-	LastLogin    *time.Time `json:"last_login,omitempty"`
+	ID              uuid.UUID  `json:"id"`
+	Email           string     `json:"email"`
+	Role            string     `json:"role"`
+	AuthProvider    string     `json:"auth_provider"`
+	ExternalSubject *string    `json:"external_subject,omitempty"`
+	Disabled        bool       `json:"disabled"`
+	CreatedAt       time.Time  `json:"created_at"`
+	LastLogin       *time.Time `json:"last_login,omitempty"`
 }
 
 // UserCred carries the fields needed to authenticate a login (includes the hash).
 type UserCred struct {
-	ID           uuid.UUID
-	Email        string
-	PasswordHash string
-	Role         string
-	AuthProvider string
-	Disabled     bool
+	ID              uuid.UUID
+	Email           string
+	PasswordHash    string
+	Role            string
+	AuthProvider    string
+	ExternalSubject *string
+	Disabled        bool
 }
 
 // CreateUser inserts a local or OIDC user. password_hash may be "" for OIDC.
@@ -36,9 +38,9 @@ func (s *Store) CreateUser(ctx context.Context, email, passwordHash, role, provi
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO users(email, password_hash, role, auth_provider)
 		VALUES($1,$2,$3,$4)
-		RETURNING id,email,role,auth_provider,disabled,created_at,last_login`,
+		RETURNING id,email,role,auth_provider,external_subject,disabled,created_at,last_login`,
 		email, passwordHash, role, provider,
-	).Scan(&u.ID, &u.Email, &u.Role, &u.AuthProvider, &u.Disabled, &u.CreatedAt, &u.LastLogin)
+	).Scan(&u.ID, &u.Email, &u.Role, &u.AuthProvider, &u.ExternalSubject, &u.Disabled, &u.CreatedAt, &u.LastLogin)
 	return &u, err
 }
 
@@ -46,9 +48,26 @@ func (s *Store) CreateUser(ctx context.Context, email, passwordHash, role, provi
 func (s *Store) GetUserCredByEmail(ctx context.Context, email string) (*UserCred, error) {
 	var c UserCred
 	err := s.pool.QueryRow(ctx,
-		`SELECT id,email,password_hash,role,auth_provider,disabled FROM users WHERE email=$1`,
+		`SELECT id,email,password_hash,role,auth_provider,external_subject,disabled FROM users WHERE email=$1`,
 		email,
-	).Scan(&c.ID, &c.Email, &c.PasswordHash, &c.Role, &c.AuthProvider, &c.Disabled)
+	).Scan(&c.ID, &c.Email, &c.PasswordHash, &c.Role, &c.AuthProvider, &c.ExternalSubject, &c.Disabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// GetUserCredByProviderSubject returns a federated user by stable IdP subject.
+func (s *Store) GetUserCredByProviderSubject(ctx context.Context, provider, subject string) (*UserCred, error) {
+	var c UserCred
+	err := s.pool.QueryRow(ctx,
+		`SELECT id,email,password_hash,role,auth_provider,external_subject,disabled
+		 FROM users WHERE auth_provider=$1 AND external_subject=$2`,
+		provider, subject,
+	).Scan(&c.ID, &c.Email, &c.PasswordHash, &c.Role, &c.AuthProvider, &c.ExternalSubject, &c.Disabled)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -61,7 +80,7 @@ func (s *Store) GetUserCredByEmail(ctx context.Context, email string) (*UserCred
 // ListUsers returns all users (hash-free), newest first.
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id,email,role,auth_provider,disabled,created_at,last_login FROM users ORDER BY created_at DESC`)
+		`SELECT id,email,role,auth_provider,external_subject,disabled,created_at,last_login FROM users ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +88,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	var out []User
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Email, &u.Role, &u.AuthProvider, &u.Disabled, &u.CreatedAt, &u.LastLogin); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.Role, &u.AuthProvider, &u.ExternalSubject, &u.Disabled, &u.CreatedAt, &u.LastLogin); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -89,9 +108,9 @@ func (s *Store) UpdateUserRole(ctx context.Context, id uuid.UUID, role string) (
 	var u User
 	err := s.pool.QueryRow(ctx, `
 		UPDATE users SET role=$2 WHERE id=$1
-		RETURNING id,email,role,auth_provider,disabled,created_at,last_login`,
+		RETURNING id,email,role,auth_provider,external_subject,disabled,created_at,last_login`,
 		id, role,
-	).Scan(&u.ID, &u.Email, &u.Role, &u.AuthProvider, &u.Disabled, &u.CreatedAt, &u.LastLogin)
+	).Scan(&u.ID, &u.Email, &u.Role, &u.AuthProvider, &u.ExternalSubject, &u.Disabled, &u.CreatedAt, &u.LastLogin)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -120,17 +139,43 @@ func (s *Store) TouchLastLogin(ctx context.Context, id uuid.UUID) {
 
 // UpsertOIDCUser ensures an OIDC-authenticated identity has a user row. New
 // users are provisioned with defaultRole; existing users keep their role.
-func (s *Store) UpsertOIDCUser(ctx context.Context, email, defaultRole string) (*UserCred, error) {
+func (s *Store) UpsertOIDCUser(ctx context.Context, email, subject, defaultRole string) (*UserCred, error) {
+	if subject != "" {
+		existing, err := s.GetUserCredByProviderSubject(ctx, "oidc", subject)
+		if err != nil {
+			return nil, err
+		}
+		if existing != nil {
+			return existing, nil
+		}
+	}
+
 	existing, err := s.GetUserCredByEmail(ctx, email)
 	if err != nil {
 		return nil, err
 	}
 	if existing != nil {
+		if existing.AuthProvider != "oidc" {
+			return nil, errors.New("email already exists with non-OIDC auth provider")
+		}
+		if existing.ExternalSubject == nil && subject != "" {
+			_, err := s.pool.Exec(ctx, `UPDATE users SET external_subject=$2 WHERE id=$1`, existing.ID, subject)
+			if err != nil {
+				return nil, err
+			}
+			existing.ExternalSubject = &subject
+		}
 		return existing, nil
 	}
-	u, err := s.CreateUser(ctx, email, "", defaultRole, "oidc")
+	var u User
+	err = s.pool.QueryRow(ctx, `
+		INSERT INTO users(email, password_hash, role, auth_provider, external_subject)
+		VALUES($1,'',$2,'oidc',$3)
+		RETURNING id,email,role,auth_provider,external_subject,disabled,created_at,last_login`,
+		email, defaultRole, subject,
+	).Scan(&u.ID, &u.Email, &u.Role, &u.AuthProvider, &u.ExternalSubject, &u.Disabled, &u.CreatedAt, &u.LastLogin)
 	if err != nil {
 		return nil, err
 	}
-	return &UserCred{ID: u.ID, Email: u.Email, Role: u.Role, AuthProvider: "oidc"}, nil
+	return &UserCred{ID: u.ID, Email: u.Email, Role: u.Role, AuthProvider: "oidc", ExternalSubject: u.ExternalSubject}, nil
 }

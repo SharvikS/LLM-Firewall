@@ -47,7 +47,10 @@ The multi-region data topology:
 | `region` | `local` | Region tag on pods, audit events and Cedar context |
 | `gateway.autoscaling.*` | 3–12 pods @70% CPU | HPA bounds |
 | `gateway.otlpEndpoint` | `""` (off) | OTLP collector for distributed tracing |
+| `gateway.env.OIDC_*` | mostly unset | OIDC issuer/client/group-role knobs passed to the gateway |
 | `externalServices.clickhouseURL` | platform svc | OLAP analytics read path |
-| `secrets.existingSecret` | `""` | Use a pre-created Secret instead of chart-managed |
+| `secrets.authSigningSecret` | `change-me` | Dashboard session signing secret; replace in production |
+| `secrets.oidcClientSecret` | `""` | OIDC client secret; optional unless SSO is enabled |
+| `secrets.existingSecret` | `""` | Use a pre-created Secret instead of chart-managed; include `admin-token`, `auth-signing-secret`, `provider-api-key`, `fallback-api-key`, and optional `oidc-client-secret` |
 
 Render without installing: `helm template titan ./helm/titan`.

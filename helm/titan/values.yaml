@@ -23,6 +23,8 @@ gateway:
     maxReplicas: 12
     targetCPUUtilizationPercentage: 70
   env:
+    AUTH_SESSION_TTL_HOURS: "12"
+    OIDC_REQUIRE_VERIFIED_EMAIL: "true"
     RATE_LIMIT_RPM: "600"
     RATE_LIMIT_TPM: "0"
     CACHE_TTL_SEC: "3600"
@@ -70,8 +72,11 @@ externalServices:
 secrets:
   # Set via --set-string or an external secret manager in production.
   adminToken: "change-me"
+  authSigningSecret: "change-me"
   providerAPIKey: ""
   fallbackAPIKey: ""
+  oidcClientSecret: ""
   # Reference an existing Secret instead of creating one from the values
-  # above (keys: admin-token, provider-api-key, fallback-api-key).
+  # above (keys: admin-token, auth-signing-secret, provider-api-key,
+  # fallback-api-key, oidc-client-secret).
   existingSecret: ""

@@ -118,11 +118,18 @@ func main() {
 	}
 	sessionIssuer := auth.NewIssuer(cfg.AuthSigningSecret, time.Duration(cfg.AuthSessionTTLHours)*time.Hour)
 	oidcCfg := auth.OIDCConfig{
-		Issuer:       cfg.OIDCIssuer,
-		ClientID:     cfg.OIDCClientID,
-		ClientSecret: cfg.OIDCClientSecret,
-		RedirectURL:  cfg.OIDCRedirectURL,
-		DefaultRole:  auth.Role(cfg.OIDCDefaultRole),
+		Issuer:               cfg.OIDCIssuer,
+		ClientID:             cfg.OIDCClientID,
+		ClientSecret:         cfg.OIDCClientSecret,
+		RedirectURL:          cfg.OIDCRedirectURL,
+		DefaultRole:          auth.Role(cfg.OIDCDefaultRole),
+		RequireVerifiedEmail: cfg.OIDCRequireVerifiedEmail,
+		RoleGroups: map[auth.Role][]string{
+			auth.RoleAdmin:      cfg.OIDCAdminGroups,
+			auth.RoleSecurity:   cfg.OIDCSecurityGroups,
+			auth.RoleCompliance: cfg.OIDCComplianceGroups,
+			auth.RoleViewer:     cfg.OIDCViewerGroups,
+		},
 	}
 	var oidcClient *auth.OIDCClient
 	switch {
@@ -185,7 +192,7 @@ func main() {
 			return alerts.Config{}
 		}
 		s := settingsMgr.Get()
-		return alerts.Config{Enabled: s.AlertsEnabled, WebhookURL: s.AlertWebhookURL, MinRisk: s.AlertMinRisk}
+		return alerts.Config{Enabled: s.AlertsEnabled, WebhookURL: s.AlertWebhookURL, MinRisk: s.AlertMinRisk, Format: s.AlertFormat}
 	})
 
 	// Semantic cache is optional — only created when QDRANT_URL is set.

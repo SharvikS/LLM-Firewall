@@ -16,6 +16,7 @@ import (
 type billingHandler struct {
 	st    *store.Store
 	meter *billing.Meter
+	audit *auditRecorder
 }
 
 // tenantUsage is a tenant plus its current-month usage, for the dashboard table.
@@ -95,5 +96,9 @@ func (h *billingHandler) updatePlan(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "tenant not found"})
 		return
 	}
+	h.audit.Record(r, controlAuditEvent{
+		Action:     "ADMIN_TENANT_PLAN_UPDATED",
+		TargetType: "tenant", TargetID: tenant.ID.String(), Reason: "tenant plan updated to " + tenant.Tier,
+	})
 	writeJSON(w, http.StatusOK, tenant)
 }

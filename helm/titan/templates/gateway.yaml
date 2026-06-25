@@ -78,11 +78,22 @@ spec:
                 secretKeyRef:
                   name: {{ include "titan.secretName" . }}
                   key: admin-token
+            - name: AUTH_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "titan.secretName" . }}
+                  key: auth-signing-secret
             - name: GROQ_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ include "titan.secretName" . }}
                   key: provider-api-key
+            - name: OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "titan.secretName" . }}
+                  key: oidc-client-secret
+                  optional: true
             {{- range $k, $v := .Values.gateway.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}

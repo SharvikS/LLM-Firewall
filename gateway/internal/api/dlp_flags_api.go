@@ -21,7 +21,10 @@ func atoiDefault(s string, def int) int {
 // dlpFlagsHandler serves the admin portal's repeat-offender view: which subjects
 // have crossed the DLP violation threshold, their violation history, and the
 // ability to acknowledge a flag once handled.
-type dlpFlagsHandler struct{ st *store.Store }
+type dlpFlagsHandler struct {
+	st    *store.Store
+	audit *auditRecorder
+}
 
 // listFlags GET /dlp/flags?status=open|acknowledged&limit=N
 func (h *dlpFlagsHandler) listFlags(w http.ResponseWriter, r *http.Request) {
@@ -91,5 +94,8 @@ func (h *dlpFlagsHandler) ackFlag(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no open flag with that id"})
 		return
 	}
+	h.audit.Record(r, controlAuditEvent{
+		Action: "ADMIN_DLP_FLAG_ACKED", TargetType: "dlp_flag", TargetID: id.String(), Reason: "DLP flag acknowledged",
+	})
 	writeJSON(w, http.StatusOK, map[string]any{"acknowledged": true, "id": id, "by": by})
 }

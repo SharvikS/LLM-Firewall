@@ -29,6 +29,14 @@ type AuditEvent struct {
 	Path       string    `json:"path"`
 	Reason     string    `json:"reason"`
 	Region     string    `json:"region"`
+	ActorID    string    `json:"actor_id,omitempty"`
+	ActorEmail string    `json:"actor_email,omitempty"`
+	ActorRole  string    `json:"actor_role,omitempty"`
+	ActorType  string    `json:"actor_type,omitempty"`
+	TargetType string    `json:"target_type,omitempty"`
+	TargetID   string    `json:"target_id,omitempty"`
+	SourceIP   string    `json:"source_ip,omitempty"`
+	UserAgent  string    `json:"user_agent,omitempty"`
 	Timestamp  time.Time `json:"timestamp"`
 }
 

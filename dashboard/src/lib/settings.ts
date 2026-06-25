@@ -16,6 +16,7 @@ export interface GatewaySettings {
   alerts_enabled: boolean;
   alert_webhook_url: string; // write-only; always returned blank
   alert_min_risk: number;
+  alert_format: 'generic' | 'splunk_hec' | 'datadog' | 'elastic';
   rate_limit_rpm: number;
   rate_limit_tpm: number;
   cache_ttl_sec: number;

@@ -54,6 +54,14 @@ CREATE TABLE IF NOT EXISTS audit_events (
     latency_ms    INTEGER,
     status_code   INTEGER,
     reason        TEXT,
+    actor_id      TEXT,
+    actor_email   TEXT,
+    actor_role    TEXT,
+    actor_type    TEXT,
+    target_type   TEXT,
+    target_id     TEXT,
+    source_ip     TEXT,
+    user_agent    TEXT,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -64,6 +72,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS policies_global_name_uniq ON policies(name) WH
 CREATE INDEX IF NOT EXISTS idx_audit_created  ON audit_events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_tenant   ON audit_events(tenant_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_action   ON audit_events(action, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_actor_email_created ON audit_events(actor_email, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_target_created ON audit_events(target_type, target_id, created_at DESC);
 
 -- Covering index for ListAPIKeys(tenant_id ORDER BY created_at DESC).
 -- Without this the query degrades to a full table scan as the key count grows.

@@ -197,17 +197,17 @@ All of this runs in **a single Go binary** with **<1ms overhead** on the hot pat
 
 **Multi-Tenant Architecture** — True tenant isolation with scoped API keys. Each key is bound to a tenant, tracked for last-use, and revocable without downtime.
 
-**Authentication, RBAC & SSO** — The control plane is protected by session-based login (signed tokens, configurable TTL) and optional **OIDC single sign-on** (`OIDC_*`). Every Admin API route is gated by a four-tier role model — **Viewer** (read-only surfaces), **Compliance** (audit exports), **Security** (edit config, policies, guardrails, upstream), and **Admin** (credentials, user management, plan changes). A default admin is bootstrapped from `DEFAULT_ADMIN_EMAIL` / `DEFAULT_ADMIN_PASSWORD`; the legacy `X-Admin-Token` still works for machine-to-machine automation.
+**Authentication, RBAC & SSO** — The control plane is protected by session-based login (signed tokens, configurable TTL) and optional **OIDC single sign-on** (`OIDC_*`). Enterprise OIDC validates the provider-signed `id_token` against JWKS, issuer, audience, expiry, nonce, and verified-email claims, then maps configured IdP groups into the four TITAN roles. Every Admin API route is gated by **Viewer** (read-only surfaces), **Compliance** (audit exports), **Security** (edit config, policies, guardrails, upstream), and **Admin** (credentials, user management, plan changes). A default admin is bootstrapped from `DEFAULT_ADMIN_EMAIL` / `DEFAULT_ADMIN_PASSWORD`; the legacy `X-Admin-Token` still works for machine-to-machine automation.
 
 **Per-Tenant Configuration Layering** — Any gateway-plane setting (rate limits, cache TTL, analyzer timeout, output scanning, audit toggles, upstream) can be overridden per tenant as a sparse JSON patch layered over the global defaults at read time. Tenants inherit global values for everything they don't override; reverting an override (`DELETE /admin/v1/settings?tenant=…`) drops them back to the baseline. Switch scope live from the Settings tab.
 
 **Per-Tenant Usage Metering & Plan Quotas** — Redis-backed usage counters meter requests, tokens, and blocked calls per tenant per month. Four plans — **Free** (10k req/mo), **Starter** (100k, $49), **Pro** (1M, $499), and **Enterprise** (unlimited) — are enforced at admission: a tenant over quota gets a `429` *before* the upstream LLM is ever called. Usage and plan management live on the Billing tab.
 
-**Real-Time SOC Alerting** — High-risk events (`ML_BLOCKED` above a configurable risk threshold, `QUOTA_EXCEEDED`) are dispatched to a webhook in a non-blocking worker. The payload is dual-format — human-readable text that renders in **Slack / Microsoft Teams** plus structured JSON for **SIEM / PagerDuty / Splunk HEC**. Per-`(tenant, action)` coalescing (60s window) prevents alert storms. Configure and fire a live test from Settings → Notifications.
+**Real-Time SOC Alerting** — High-risk events (`ML_BLOCKED` above a configurable risk threshold, `QUOTA_EXCEEDED`) are dispatched to a webhook in a non-blocking worker. Payloads carry the stable `titan.siem.v1` event contract with selectable envelopes for **generic JSON / Slack / Teams**, **Splunk HEC**, **Datadog**, and **Elastic ECS**. Per-`(tenant, action)` coalescing (60s window) prevents alert storms. Configure and fire a live test from Settings → Notifications.
 
 **API Key Lifecycle** — Generate cryptographically random keys (`titan_` prefix + 64 hex chars), list with metadata, copy-to-clipboard, and instant revocation. Prefixes use 14 characters (`titan_` + 8 random hex = ~4.3 billion unique display values). Last-used timestamps update via a deduplicated background writer that survives transient DB errors.
 
-**Complete Audit Trail** — Every request and response is logged with `tenant_id`, `request_id`, `action`, `risk_score`, `latency_ms`, and `timestamp`. Logs stream to Kafka asynchronously via `context.Background()` — the audit producer context is never cancelled by the proxy returning. The queue applies 50ms backpressure before dropping, and drops are logged at ERROR level.
+**Complete Audit Trail** — Every request and response is logged with `tenant_id`, `request_id`, `action`, `risk_score`, `latency_ms`, and `timestamp`. Control-plane auth/admin actions add actor, role, actor type, target, source IP, and user-agent metadata so SSO, settings, policy, key, user, plan, and DLP-ack actions are audit-reviewable. Request-path logs stream to Kafka asynchronously via `context.Background()` — the audit producer context is never cancelled by the proxy returning. The queue applies 50ms backpressure before dropping, and drops are logged at ERROR level.
 
 ### Performance & Operations
 
@@ -678,6 +678,8 @@ All configuration is passed via environment variables. The `.env.example` contai
 | `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | — | OIDC client credentials |
 | `OIDC_REDIRECT_URL` | — | OIDC callback URL |
 | `OIDC_DEFAULT_ROLE` | `viewer` | Role assigned to new SSO users |
+| `OIDC_REQUIRE_VERIFIED_EMAIL` | `true` | Require `email_verified=true` when the IdP supplies the claim |
+| `OIDC_ADMIN_GROUPS` / `OIDC_SECURITY_GROUPS` / `OIDC_COMPLIANCE_GROUPS` / `OIDC_VIEWER_GROUPS` | — | Comma-separated IdP groups mapped to TITAN roles for first-time SSO users |
 | `DASHBOARD_URL` | `http://localhost:3000` | Dashboard URL for the SSO bounce-back |
 
 ### Analytics, Tracing & Operations (`gateway/`)

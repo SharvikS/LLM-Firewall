@@ -28,4 +28,5 @@ type Config struct {
 	Enabled    bool
 	WebhookURL string
 	MinRisk    float64
+	Format     string // generic | splunk_hec | datadog | elastic
 }

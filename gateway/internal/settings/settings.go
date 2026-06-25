@@ -51,6 +51,7 @@ type Settings struct {
 	AlertsEnabled   bool    `json:"alerts_enabled"`
 	AlertWebhookURL string  `json:"alert_webhook_url"`
 	AlertMinRisk    float64 `json:"alert_min_risk"`
+	AlertFormat     string  `json:"alert_format"`
 
 	// ── Custom guardrails (no-code deny rules, applied in-proxy) ──────────────
 	// Operator-defined regex/keyword rules that block matching prompts before they
@@ -58,15 +59,15 @@ type Settings struct {
 	Guardrails []Guardrail `json:"guardrails"`
 
 	// ── ML plane (pushed to the Python engine over HTTP) ──────────────────────
-	PIIRedactionEnabled    bool            `json:"pii_redaction_enabled"`
-	ToxicityEnabled        bool            `json:"toxicity_enabled"`
-	ToxicityBlockThreshold float64         `json:"toxicity_block_threshold"`
-	CodeLeakBlock          bool            `json:"code_leak_block"`
+	PIIRedactionEnabled    bool    `json:"pii_redaction_enabled"`
+	ToxicityEnabled        bool    `json:"toxicity_enabled"`
+	ToxicityBlockThreshold float64 `json:"toxicity_block_threshold"`
+	CodeLeakBlock          bool    `json:"code_leak_block"`
 	// Response-side groundedness / hallucination gate.
-	HallucinationEnabled        bool       `json:"hallucination_enabled"`
-	HallucinationBlockThreshold float64    `json:"hallucination_block_threshold"`
-	HallucinationBlock          bool       `json:"hallucination_block"`
-	PIIEntities            map[string]bool `json:"pii_entities"`
+	HallucinationEnabled        bool            `json:"hallucination_enabled"`
+	HallucinationBlockThreshold float64         `json:"hallucination_block_threshold"`
+	HallucinationBlock          bool            `json:"hallucination_block"`
+	PIIEntities                 map[string]bool `json:"pii_entities"`
 }
 
 // Guardrail is one operator-defined deny rule. Pattern is a Go regular
@@ -137,15 +138,16 @@ func DefaultsFromConfig(cfg *config.Config) Settings {
 
 		AlertsEnabled: false,
 		AlertMinRisk:  90,
+		AlertFormat:   "generic",
 
-		PIIRedactionEnabled:    true,
-		ToxicityEnabled:        cfg.ToxicityEnabled,
-		ToxicityBlockThreshold: cfg.ToxicityBlockThreshold,
+		PIIRedactionEnabled:         true,
+		ToxicityEnabled:             cfg.ToxicityEnabled,
+		ToxicityBlockThreshold:      cfg.ToxicityBlockThreshold,
 		HallucinationEnabled:        cfg.GroundednessEnabled,
 		HallucinationBlockThreshold: 0.5,
 		HallucinationBlock:          false,
-		CodeLeakBlock:          cfg.CodeLeakBlock,
-		PIIEntities:            DefaultPIIEntities(),
+		CodeLeakBlock:               cfg.CodeLeakBlock,
+		PIIEntities:                 DefaultPIIEntities(),
 	}
 }
 
@@ -355,6 +357,11 @@ func (s *Settings) clamp() {
 	}
 	if s.AlertMinRisk > 100 {
 		s.AlertMinRisk = 100
+	}
+	switch s.AlertFormat {
+	case "splunk_hec", "datadog", "elastic":
+	default:
+		s.AlertFormat = "generic"
 	}
 	// Cap guardrail count and drop entries with no pattern so a bad rule set can't
 	// bloat the request path.

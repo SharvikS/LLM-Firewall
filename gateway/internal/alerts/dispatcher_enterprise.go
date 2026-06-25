@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/sharvik/llm-firewall/gateway/internal/logger"
+	"github.com/sharvik/llm-firewall/gateway/internal/siem"
 )
 
 // Dispatcher owns the worker goroutine and the dedup state.
@@ -70,7 +71,7 @@ func (d *Dispatcher) SendTest(ctx context.Context, url string) error {
 	if url == "" {
 		return fmt.Errorf("no webhook URL configured")
 	}
-	return d.post(ctx, url, Event{
+	return d.post(ctx, url, siem.FormatGeneric, Event{
 		Action: "TEST", Tenant: "—", Reason: "TITAN test alert — your SOC webhook is wired correctly.",
 		Risk: 0, At: time.Now(),
 	})
@@ -90,7 +91,7 @@ func (d *Dispatcher) run() {
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		if err := d.post(ctx, cfg.WebhookURL, ev); err != nil {
+		if err := d.post(ctx, cfg.WebhookURL, cfg.Format, ev); err != nil {
 			logger.Get().Warn("alert webhook delivery failed", slog.String("error", err.Error()))
 		}
 		cancel()
@@ -109,22 +110,10 @@ func (d *Dispatcher) suppressed(ev Event) bool {
 	return false
 }
 
-// post sends a payload that Slack/Teams render nicely ("text") while also
-// carrying structured fields for generic HTTP/SIEM collectors.
-func (d *Dispatcher) post(ctx context.Context, url string, ev Event) error {
-	text := fmt.Sprintf(":shield: *TITAN %s* — tenant `%s` · risk %.0f\n%s",
-		ev.Action, ev.Tenant, ev.Risk, ev.Reason)
-	payload := map[string]any{
-		"text":       text,
-		"source":     "titan-gateway",
-		"action":     ev.Action,
-		"tenant":     ev.Tenant,
-		"reason":     ev.Reason,
-		"risk_score": ev.Risk,
-		"request_id": ev.RequestID,
-		"path":       ev.Path,
-		"timestamp":  ev.At.UTC().Format(time.RFC3339),
-	}
+// post sends a versioned SIEM payload. The generic format keeps a top-level
+// text field so Slack/Teams incoming webhooks still render a useful message.
+func (d *Dispatcher) post(ctx context.Context, url, format string, ev Event) error {
+	payload := siem.Envelope(format, alertToSIEM(ev))
 	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
@@ -140,4 +129,28 @@ func (d *Dispatcher) post(ctx context.Context, url string, ev Event) error {
 		return fmt.Errorf("webhook returned %d", resp.StatusCode)
 	}
 	return nil
+}
+
+func alertToSIEM(ev Event) siem.Event {
+	if ev.At.IsZero() {
+		ev.At = time.Now()
+	}
+	out := siem.Event{
+		SchemaVersion: siem.SchemaVersion,
+		Vendor:        "titan",
+		Product:       "titan-gateway",
+		EventType:     "security",
+		EventAction:   ev.Action,
+		Severity:      siem.Severity(ev.Action, ev.Risk),
+		Category:      siem.Category(ev.Action),
+		TenantID:      ev.Tenant,
+		RequestID:     ev.RequestID,
+		Path:          ev.Path,
+		Reason:        ev.Reason,
+		RiskScore:     ev.Risk,
+		Source:        "gateway",
+		Timestamp:     ev.At.UTC(),
+	}
+	out.Message = siem.Message(out)
+	return out
 }

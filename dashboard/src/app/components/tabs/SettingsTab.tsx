@@ -413,6 +413,18 @@ export default function SettingsTab({ theme, onThemeChange }: Props) {
                   className="w-full px-3 py-2.5 bg-base-sec border border-base-border rounded-lg text-sm outline-none focus:border-base-muted/60 transition-colors font-mono disabled:opacity-50"/>
                 <p className="text-xs text-base-muted mt-1.5">Blocked requests at/above this risk alert; quota breaches always alert.</p>
               </div>
+              <div className="mt-5 max-w-xs">
+                <label className="text-xs font-semibold text-base-muted uppercase tracking-widest block mb-1.5">Collector format</label>
+                <select value={settings?.alert_format ?? 'generic'} disabled={!settings}
+                  onChange={e => patch({ alert_format: e.target.value as GatewaySettings['alert_format'] })}
+                  className="w-full px-3 py-2.5 bg-base-sec border border-base-border rounded-lg text-sm outline-none focus:border-base-muted/60 transition-colors disabled:opacity-50">
+                  <option value="generic">Generic JSON / Slack / Teams</option>
+                  <option value="splunk_hec">Splunk HEC</option>
+                  <option value="datadog">Datadog Logs</option>
+                  <option value="elastic">Elastic ECS</option>
+                </select>
+                <p className="text-xs text-base-muted mt-1.5">All formats include the stable <code className="bg-base-sec px-1 rounded">titan.siem.v1</code> event object.</p>
+              </div>
               <div className="mt-6 flex items-center gap-3 flex-wrap">
                 <SaveButton state={saveState} onClick={save}/>
                 <button type="button" disabled={!settings || alertTest.state === 'sending'} onClick={sendTestAlert}

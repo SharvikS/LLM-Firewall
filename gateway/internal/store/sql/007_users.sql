@@ -9,11 +9,16 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL DEFAULT '',
     role          TEXT NOT NULL DEFAULT 'viewer',
     auth_provider TEXT NOT NULL DEFAULT 'local',
+    external_subject TEXT,
     disabled      BOOL NOT NULL DEFAULT false,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_login    TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS external_subject TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_provider_subject
+    ON users(auth_provider, external_subject)
+    WHERE external_subject IS NOT NULL;
 
 INSERT INTO schema_migrations(version) VALUES(7) ON CONFLICT DO NOTHING;

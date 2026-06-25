@@ -18,11 +18,13 @@ var errSSOEnterprise = errors.New("OIDC single sign-on is a TITAN Enterprise fea
 // OIDCConfig mirrors the enterprise config shape so main.go can build it from
 // env unconditionally.
 type OIDCConfig struct {
-	Issuer       string
-	ClientID     string
-	ClientSecret string
-	RedirectURL  string
-	DefaultRole  Role
+	Issuer               string
+	ClientID             string
+	ClientSecret         string
+	RedirectURL          string
+	DefaultRole          Role
+	RequireVerifiedEmail bool
+	RoleGroups           map[Role][]string
 }
 
 // Enabled always reports false in the community build — SSO is never available.
@@ -30,6 +32,15 @@ func (c OIDCConfig) Enabled() bool { return false }
 
 // OIDCClient is a non-functional stub in the community build.
 type OIDCClient struct{}
+
+// OIDCIdentity mirrors the enterprise identity value.
+type OIDCIdentity struct {
+	Subject       string
+	Email         string
+	EmailVerified bool
+	Groups        []string
+	Role          Role
+}
 
 // NewOIDCClient returns a stub client; it is never constructed in practice
 // because OIDCConfig.Enabled() is always false in the community build.
@@ -41,6 +52,6 @@ func (c *OIDCClient) AuthCodeURL(_ context.Context, _ time.Time) (string, error)
 }
 
 // Exchange reports that SSO requires TITAN Enterprise.
-func (c *OIDCClient) Exchange(_ context.Context, _ string, _ string, _ time.Time) (string, error) {
-	return "", errSSOEnterprise
+func (c *OIDCClient) Exchange(_ context.Context, _ string, _ string, _ time.Time) (*OIDCIdentity, error) {
+	return nil, errSSOEnterprise
 }

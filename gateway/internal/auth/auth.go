@@ -65,7 +65,7 @@ func CheckPassword(hash, plain string) bool {
 
 // Claims is the session token payload.
 type Claims struct {
-	Sub   string `json:"sub"`   // user id
+	Sub   string `json:"sub"` // user id
 	Email string `json:"email"`
 	Role  Role   `json:"role"`
 	Iat   int64  `json:"iat"`

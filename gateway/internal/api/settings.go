@@ -14,7 +14,10 @@ import (
 // Without a tenant query param it operates on the global document; with
 // ?tenant=<uuid> it reads/writes that tenant's sparse override (layered over
 // global at request time).
-type settingsHandler struct{ mgr *settings.Manager }
+type settingsHandler struct {
+	mgr   *settings.Manager
+	audit *auditRecorder
+}
 
 // tenantParam returns the validated tenant UUID string, or "" for the global doc.
 // The bool is false when a tenant param was given but is not a valid UUID.
@@ -89,6 +92,13 @@ func (h *settingsHandler) updateSettings(w http.ResponseWriter, r *http.Request)
 		internalError(w, "update settings", err)
 		return
 	}
+	target := "global"
+	if tenant != "" {
+		target = tenant
+	}
+	h.audit.Record(r, controlAuditEvent{
+		Action: "ADMIN_SETTINGS_UPDATED", TargetType: "settings", TargetID: target, Reason: "runtime settings updated",
+	})
 	writeJSON(w, http.StatusOK, redactSecrets(updated))
 }
 
@@ -107,5 +117,8 @@ func (h *settingsHandler) deleteSettings(w http.ResponseWriter, r *http.Request)
 		internalError(w, "clear tenant settings", err)
 		return
 	}
+	h.audit.Record(r, controlAuditEvent{
+		Action: "ADMIN_SETTINGS_REVERTED", TargetType: "settings", TargetID: tenant, Reason: "tenant settings reverted to global",
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "reverted to global"})
 }

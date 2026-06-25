@@ -1,7 +1,44 @@
 # LLM-Firewall (TITAN Gateway) — Project Status Log
 
 > **Auto-maintained log.** Updated at the end of every major session or when significant changes are made.
-> Last updated: 2026-06-25 (Documentation Freshness Pass)
+> Last updated: 2026-06-25 (Enterprise Auth/Audit + SIEM Export Pass)
+
+---
+
+## 2026-06-25 — Enterprise Auth/Audit + SIEM Export Pass
+
+Implemented the first two "next level" enterprise-readiness items from the
+roadmap: hardened OIDC/SSO plus audit logging, then a stable SIEM/webhook event
+contract.
+
+**OIDC/SSO hardening** — Enterprise OIDC now validates `id_token` signatures via
+provider JWKS (`RS256`), issuer, audience, expiry, state nonce, and verified
+email. First-time SSO users can be assigned roles from IdP groups via
+`OIDC_ADMIN_GROUPS`, `OIDC_SECURITY_GROUPS`, `OIDC_COMPLIANCE_GROUPS`, and
+`OIDC_VIEWER_GROUPS`. OIDC users are linked by provider subject when available,
+not only by email.
+
+**Control-plane audit hardening** — Added audit metadata columns for actor ID,
+actor email, actor role, actor type, target type, target ID, source IP, and user
+agent. Auth success/failure, SSO success/failure, tenant/key/policy/settings/user
+mutations, plan changes, and DLP flag acknowledgements now create durable
+control-plane audit records.
+
+**SIEM/webhook exporter** — Added `internal/siem` with a stable
+`titan.siem.v1` event contract and envelopes for generic JSON/Slack/Teams,
+Splunk HEC, Datadog, and Elastic/ECS. The dashboard Settings → Notifications
+tab now exposes the collector format selector.
+
+**Deployment/docs** — Helm secrets now include `auth-signing-secret` and optional
+`oidc-client-secret`; README/Helm docs describe the new OIDC and SIEM settings.
+
+Verification:
+
+- `cd gateway && go test ./...` passed.
+- `cd gateway && go test -tags enterprise ./...` passed.
+- `cd dashboard && npx tsc --noEmit` passed.
+- `cd dashboard && npm run lint -- --max-warnings=0` still fails on unrelated
+  pre-existing lint issues across older dashboard tabs.
 
 ---
 

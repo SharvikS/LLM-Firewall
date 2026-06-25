@@ -100,11 +100,16 @@ type Config struct {
 	AppEnv               string // "development" | "production"
 
 	// OIDC SSO (optional — disabled unless OIDCIssuer + client creds are set)
-	OIDCIssuer       string
-	OIDCClientID     string
-	OIDCClientSecret string
-	OIDCRedirectURL  string
-	OIDCDefaultRole  string
+	OIDCIssuer               string
+	OIDCClientID             string
+	OIDCClientSecret         string
+	OIDCRedirectURL          string
+	OIDCDefaultRole          string
+	OIDCRequireVerifiedEmail bool
+	OIDCAdminGroups          []string
+	OIDCSecurityGroups       []string
+	OIDCComplianceGroups     []string
+	OIDCViewerGroups         []string
 
 	// DashboardURL is where SSO bounces the browser back after login.
 	DashboardURL string
@@ -193,12 +198,17 @@ func Load() (*Config, error) {
 		DefaultAdminPassword: getEnvWithFile("DEFAULT_ADMIN_PASSWORD", "admin@123"),
 		AppEnv:               getEnv("APP_ENV", "development"),
 
-		OIDCIssuer:       os.Getenv("OIDC_ISSUER"),
-		OIDCClientID:     os.Getenv("OIDC_CLIENT_ID"),
-		OIDCClientSecret: getEnvWithFile("OIDC_CLIENT_SECRET", ""),
-		OIDCRedirectURL:  os.Getenv("OIDC_REDIRECT_URL"),
-		OIDCDefaultRole:  getEnv("OIDC_DEFAULT_ROLE", "viewer"),
-		DashboardURL:     getEnv("DASHBOARD_URL", "http://localhost:3000"),
+		OIDCIssuer:               os.Getenv("OIDC_ISSUER"),
+		OIDCClientID:             os.Getenv("OIDC_CLIENT_ID"),
+		OIDCClientSecret:         getEnvWithFile("OIDC_CLIENT_SECRET", ""),
+		OIDCRedirectURL:          os.Getenv("OIDC_REDIRECT_URL"),
+		OIDCDefaultRole:          getEnv("OIDC_DEFAULT_ROLE", "viewer"),
+		OIDCRequireVerifiedEmail: getEnvBool("OIDC_REQUIRE_VERIFIED_EMAIL", true),
+		OIDCAdminGroups:          splitComma(os.Getenv("OIDC_ADMIN_GROUPS")),
+		OIDCSecurityGroups:       splitComma(os.Getenv("OIDC_SECURITY_GROUPS")),
+		OIDCComplianceGroups:     splitComma(os.Getenv("OIDC_COMPLIANCE_GROUPS")),
+		OIDCViewerGroups:         splitComma(os.Getenv("OIDC_VIEWER_GROUPS")),
+		DashboardURL:             getEnv("DASHBOARD_URL", "http://localhost:3000"),
 
 		SecurityScanReportPath: getEnv("SCAN_REPORT_PATH", "docs/security/scan-report.json"),
 

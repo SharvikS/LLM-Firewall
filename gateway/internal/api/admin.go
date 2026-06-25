@@ -53,14 +53,15 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 	r.Use(chimiddleware.RequestID)
 	r.Use(corsHeaders)
 
-	h := &adminHandler{st: d.Store}
-	sh := &settingsHandler{mgr: d.Settings}
-	uh := &userHandler{st: d.Store}
-	bh := &billingHandler{st: d.Store, meter: d.Meter}
+	audit := newAuditRecorder(d.Store)
+	h := &adminHandler{st: d.Store, audit: audit}
+	sh := &settingsHandler{mgr: d.Settings, audit: audit}
+	uh := &userHandler{st: d.Store, audit: audit}
+	bh := &billingHandler{st: d.Store, meter: d.Meter, audit: audit}
 	sech := &securityHandler{reportPath: d.ScanReportPath}
 	uph := &upstreamHandler{}
 	alh := &alertsHandler{dispatcher: d.Alerts, mgr: d.Settings}
-	dfh := &dlpFlagsHandler{st: d.Store}
+	dfh := &dlpFlagsHandler{st: d.Store, audit: audit}
 	ah := &authHandler{
 		st:           d.Store,
 		issuer:       d.Issuer,
@@ -68,6 +69,7 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 		oidcEnabled:  d.OIDCEnabled,
 		defaultRole:  d.DefaultOIDCRole,
 		dashboardURL: d.DashboardURL,
+		audit:        audit,
 	}
 
 	// ── Public auth endpoints (no session required) ──────────────────────────
@@ -141,7 +143,10 @@ func corsHeaders(next http.Handler) http.Handler {
 	})
 }
 
-type adminHandler struct{ st *store.Store }
+type adminHandler struct {
+	st    *store.Store
+	audit *auditRecorder
+}
 
 // ── Tenants ──────────────────────────────────────────────────────────────────
 
@@ -175,6 +180,10 @@ func (h *adminHandler) createTenant(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "create tenant", err)
 		return
 	}
+	h.audit.Record(r, controlAuditEvent{
+		Action: "ADMIN_TENANT_CREATED", StatusCode: http.StatusCreated,
+		TargetType: "tenant", TargetID: t.ID.String(), Reason: "tenant created",
+	})
 	writeJSON(w, http.StatusCreated, t)
 }
 
@@ -215,6 +224,10 @@ func (h *adminHandler) createKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Raw key is returned ONCE — store it now; it cannot be recovered later.
+	h.audit.Record(r, controlAuditEvent{
+		Action: "ADMIN_API_KEY_CREATED", StatusCode: http.StatusCreated,
+		TargetType: "api_key", TargetID: key.ID.String(), Reason: "api key created",
+	})
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"key":      rawKey, // shown once
 		"metadata": key,
@@ -231,6 +244,9 @@ func (h *adminHandler) revokeKey(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "revoke key", err)
 		return
 	}
+	h.audit.Record(r, controlAuditEvent{
+		Action: "ADMIN_API_KEY_REVOKED", TargetType: "api_key", TargetID: id.String(), Reason: "api key revoked",
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
 }
 
@@ -280,6 +296,10 @@ func (h *adminHandler) createPolicy(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "create policy", err)
 		return
 	}
+	h.audit.Record(r, controlAuditEvent{
+		Action: "ADMIN_POLICY_CREATED", StatusCode: http.StatusCreated,
+		TargetType: "policy", TargetID: p.ID.String(), Reason: "policy created",
+	})
 	writeJSON(w, http.StatusCreated, p)
 }
 
@@ -303,6 +323,9 @@ func (h *adminHandler) updatePolicy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
 		return
 	}
+	h.audit.Record(r, controlAuditEvent{
+		Action: "ADMIN_POLICY_UPDATED", TargetType: "policy", TargetID: p.ID.String(), Reason: "policy updated",
+	})
 	writeJSON(w, http.StatusOK, p)
 }
 
@@ -316,6 +339,9 @@ func (h *adminHandler) deletePolicy(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "delete policy", err)
 		return
 	}
+	h.audit.Record(r, controlAuditEvent{
+		Action: "ADMIN_POLICY_DELETED", TargetType: "policy", TargetID: id.String(), Reason: "policy deleted",
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 

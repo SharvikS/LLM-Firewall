@@ -77,8 +77,8 @@ type browserDLPEvent struct {
 // expose the OS hostname/local IP (privacy), so Name/ID are populated only when an
 // enterprise provisions them via managed extension policy (MDM).
 type device struct {
-	Name      string `json:"name"`     // MDM-provisioned device name, if any
-	ID        string `json:"id"`       // MDM-provisioned device id, if any
+	Name      string `json:"name"` // MDM-provisioned device name, if any
+	ID        string `json:"id"`   // MDM-provisioned device id, if any
 	UserAgent string `json:"user_agent"`
 	Platform  string `json:"platform"` // e.g. "MacIntel", "Win32"
 	OS        string `json:"os"`       // derived: macOS / Windows / Linux / …

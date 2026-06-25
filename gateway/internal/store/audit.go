@@ -24,6 +24,14 @@ type AuditRow struct {
 	StatusCode int
 	Reason     string
 	Region     string
+	ActorID    string
+	ActorEmail string
+	ActorRole  string
+	ActorType  string
+	TargetType string
+	TargetID   string
+	SourceIP   string
+	UserAgent  string
 }
 
 // ListAuditEvents returns paginated audit events newest-first.
@@ -33,17 +41,17 @@ func (s *Store) ListAuditEvents(ctx context.Context, tenantID *uuid.UUID, limit,
 		rows  interface{ Scan(...any) error }
 	)
 
-	const cols = `id,request_id,tenant_id,api_key_id,action,risk_score,path,latency_ms,status_code,reason,region,created_at`
+	const cols = `id,request_id,tenant_id,api_key_id,action,risk_score,path,latency_ms,status_code,reason,region,actor_id,actor_email,actor_role,actor_type,target_type,target_id,source_ip,user_agent,created_at`
 	countQ := `SELECT COUNT(*) FROM audit_events`
-	listQ  := `SELECT ` + cols + ` FROM audit_events`
-	args   := []any{}
+	listQ := `SELECT ` + cols + ` FROM audit_events`
+	args := []any{}
 	if tenantID != nil {
 		countQ += ` WHERE tenant_id=$1`
-		listQ  += ` WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`
-		args    = []any{*tenantID, limit, offset}
+		listQ += ` WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT $2 OFFSET $3`
+		args = []any{*tenantID, limit, offset}
 	} else {
 		listQ += ` ORDER BY created_at DESC LIMIT $1 OFFSET $2`
-		args   = []any{limit, offset}
+		args = []any{limit, offset}
 	}
 
 	// Count
@@ -65,7 +73,8 @@ func (s *Store) ListAuditEvents(ctx context.Context, tenantID *uuid.UUID, limit,
 		err := pgRows.Scan(
 			&e.ID, &e.RequestID, &e.TenantID, &e.APIKeyID, &e.Action,
 			&e.RiskScore, &e.Path, &e.LatencyMs, &e.StatusCode, &e.Reason,
-			&e.Region, &e.CreatedAt,
+			&e.Region, &e.ActorID, &e.ActorEmail, &e.ActorRole, &e.ActorType,
+			&e.TargetType, &e.TargetID, &e.SourceIP, &e.UserAgent, &e.CreatedAt,
 		)
 		if err != nil {
 			return nil, total, err
@@ -88,7 +97,7 @@ type AuditCursor struct {
 // result set is exhausted). Unlike OFFSET pagination this is O(limit) per
 // page regardless of depth, and stable under concurrent inserts.
 func (s *Store) ListAuditEventsCursor(ctx context.Context, tenantID *uuid.UUID, limit int, before *AuditCursor) ([]AuditEventRow, *AuditCursor, error) {
-	const cols = `id,request_id,tenant_id,api_key_id,action,risk_score,path,latency_ms,status_code,reason,region,created_at`
+	const cols = `id,request_id,tenant_id,api_key_id,action,risk_score,path,latency_ms,status_code,reason,region,actor_id,actor_email,actor_role,actor_type,target_type,target_id,source_ip,user_agent,created_at`
 
 	q := `SELECT ` + cols + ` FROM audit_events`
 	var conds []string
@@ -123,7 +132,8 @@ func (s *Store) ListAuditEventsCursor(ctx context.Context, tenantID *uuid.UUID, 
 		if err := pgRows.Scan(
 			&e.ID, &e.RequestID, &e.TenantID, &e.APIKeyID, &e.Action,
 			&e.RiskScore, &e.Path, &e.LatencyMs, &e.StatusCode, &e.Reason,
-			&e.Region, &e.CreatedAt,
+			&e.Region, &e.ActorID, &e.ActorEmail, &e.ActorRole, &e.ActorType,
+			&e.TargetType, &e.TargetID, &e.SourceIP, &e.UserAgent, &e.CreatedAt,
 		); err != nil {
 			return nil, nil, err
 		}
@@ -155,6 +165,14 @@ type AuditEventRow struct {
 	StatusCode *int       `json:"status_code"`
 	Reason     *string    `json:"reason"`
 	Region     string     `json:"region"`
+	ActorID    *string    `json:"actor_id,omitempty"`
+	ActorEmail *string    `json:"actor_email,omitempty"`
+	ActorRole  *string    `json:"actor_role,omitempty"`
+	ActorType  *string    `json:"actor_type,omitempty"`
+	TargetType *string    `json:"target_type,omitempty"`
+	TargetID   *string    `json:"target_id,omitempty"`
+	SourceIP   *string    `json:"source_ip,omitempty"`
+	UserAgent  *string    `json:"user_agent,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
 }
 
@@ -166,8 +184,8 @@ func (s *Store) InsertAuditBatch(ctx context.Context, rows []AuditRow) error {
 		return nil
 	}
 	const q = `INSERT INTO audit_events
-		(event_id,request_id,tenant_id,api_key_id,action,risk_score,path,latency_ms,status_code,reason,region)
-		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		(event_id,request_id,tenant_id,api_key_id,action,risk_score,path,latency_ms,status_code,reason,region,actor_id,actor_email,actor_role,actor_type,target_type,target_id,source_ip,user_agent)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 		ON CONFLICT DO NOTHING`
 
 	batch := &pgx.Batch{}
@@ -183,7 +201,10 @@ func (s *Store) InsertAuditBatch(ctx context.Context, rows []AuditRow) error {
 		}
 		batch.Queue(q,
 			eventID, r.RequestID, r.TenantID, r.APIKeyID, r.Action, r.RiskScore,
-			r.Path, r.LatencyMs, r.StatusCode, r.Reason, region,
+			r.Path, r.LatencyMs, r.StatusCode, r.Reason, region, nullableString(r.ActorID),
+			nullableString(r.ActorEmail), nullableString(r.ActorRole), nullableString(r.ActorType),
+			nullableString(r.TargetType), nullableString(r.TargetID), nullableString(r.SourceIP),
+			nullableString(r.UserAgent),
 		)
 	}
 	results := s.pool.SendBatch(ctx, batch)
@@ -195,4 +216,11 @@ func (s *Store) InsertAuditBatch(ctx context.Context, rows []AuditRow) error {
 		}
 	}
 	return nil
+}
+
+func nullableString(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
 }

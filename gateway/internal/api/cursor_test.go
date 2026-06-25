@@ -41,7 +41,7 @@ func TestAuditCursorNilAndEmpty(t *testing.T) {
 func TestAuditCursorRejectsGarbage(t *testing.T) {
 	for _, bad := range []string{
 		"not-base64!!!",
-		"bm8tcGlwZS1oZXJl",         // base64("no-pipe-here")
+		"bm8tcGlwZS1oZXJl",           // base64("no-pipe-here")
 		"MjAyNi0wMS0wMXxub3QtdXVpZA", // base64("2026-01-01|not-uuid")
 	} {
 		if _, err := decodeAuditCursor(bad); err == nil {

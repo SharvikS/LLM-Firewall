@@ -36,12 +36,13 @@ func identityFrom(ctx context.Context) Identity {
 
 // authHandler serves the public auth endpoints (login, SSO).
 type authHandler struct {
-	st          *store.Store
-	issuer      *auth.Issuer
-	oidc        *auth.OIDCClient
-	oidcEnabled bool
-	defaultRole auth.Role
+	st           *store.Store
+	issuer       *auth.Issuer
+	oidc         *auth.OIDCClient
+	oidcEnabled  bool
+	defaultRole  auth.Role
 	dashboardURL string // where to bounce back after SSO
+	audit        *auditRecorder
 }
 
 // login validates email/password and returns a session JWT.
@@ -69,6 +70,10 @@ func (h *authHandler) login(w http.ResponseWriter, r *http.Request) {
 		auth.CheckPassword("$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinv", body.Password)
 	}
 	if !ok {
+		h.audit.Record(r, controlAuditEvent{
+			Action: "AUTH_LOGIN_FAILED", StatusCode: http.StatusUnauthorized,
+			Reason: "invalid credentials", ActorEmail: body.Email, ActorType: "human",
+		})
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}
@@ -78,6 +83,11 @@ func (h *authHandler) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	go h.st.TouchLastLogin(context.Background(), cred.ID)
+	h.audit.Record(r, controlAuditEvent{
+		Action: "AUTH_LOGIN_SUCCEEDED", ActorEmail: cred.Email, ActorID: cred.ID.String(),
+		ActorRole: cred.Role, ActorType: "human", TargetType: "user", TargetID: cred.ID.String(),
+		Reason: "local login succeeded",
+	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token": token,
 		"user":  map[string]string{"email": cred.Email, "role": cred.Role},
@@ -130,18 +140,35 @@ func (h *authHandler) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing code"})
 		return
 	}
-	email, err := h.oidc.Exchange(r.Context(), code, state, time.Now())
+	identity, err := h.oidc.Exchange(r.Context(), code, state, time.Now())
 	if err != nil {
 		logger.Get().Warn("oidc exchange failed", slog.String("error", err.Error()))
+		h.audit.Record(r, controlAuditEvent{
+			Action: "AUTH_SSO_FAILED", StatusCode: http.StatusUnauthorized,
+			Reason: "SSO sign-in failed: " + err.Error(), ActorType: "human",
+		})
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "SSO sign-in failed"})
 		return
 	}
-	cred, err := h.st.UpsertOIDCUser(r.Context(), strings.ToLower(email), string(h.defaultRole))
+	role := h.defaultRole
+	if identity.Role.Valid() {
+		role = identity.Role
+	}
+	cred, err := h.st.UpsertOIDCUser(r.Context(), identity.Email, identity.Subject, string(role))
 	if err != nil {
+		h.audit.Record(r, controlAuditEvent{
+			Action: "AUTH_SSO_FAILED", StatusCode: http.StatusUnauthorized,
+			Reason: "SSO provisioning failed: " + err.Error(), ActorEmail: identity.Email, ActorType: "human",
+		})
 		internalError(w, "oidc upsert", err)
 		return
 	}
 	if cred.Disabled {
+		h.audit.Record(r, controlAuditEvent{
+			Action: "AUTH_SSO_FAILED", StatusCode: http.StatusForbidden,
+			Reason: "account disabled", ActorEmail: cred.Email, ActorID: cred.ID.String(),
+			ActorRole: cred.Role, ActorType: "human", TargetType: "user", TargetID: cred.ID.String(),
+		})
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "account disabled"})
 		return
 	}
@@ -150,6 +177,12 @@ func (h *authHandler) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "issue token", err)
 		return
 	}
+	go h.st.TouchLastLogin(context.Background(), cred.ID)
+	h.audit.Record(r, controlAuditEvent{
+		Action: "AUTH_SSO_SUCCEEDED", ActorEmail: cred.Email, ActorID: cred.ID.String(),
+		ActorRole: cred.Role, ActorType: "human", TargetType: "user", TargetID: cred.ID.String(),
+		Reason: "OIDC SSO succeeded",
+	})
 	// Hand the token to the dashboard's SSO landing route, which sets the
 	// httpOnly session cookie and redirects into the app.
 	dest := strings.TrimRight(h.dashboardURL, "/") + "/api/auth/sso?token=" + url.QueryEscape(token)
