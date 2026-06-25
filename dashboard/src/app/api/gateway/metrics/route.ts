@@ -1,15 +1,20 @@
 import { NextResponse } from 'next/server';
-import { GATEWAY } from '@/lib/gateway';
+import { GATEWAY, GatewayReadAuthError, gatewayReadHeaders } from '@/lib/gateway';
 
 export async function GET() {
   try {
+    const headers = await gatewayReadHeaders();
     const res = await fetch(`${GATEWAY}/api/metrics`, {
+      headers,
       next: { revalidate: 0 },
       signal: AbortSignal.timeout(3000),
     });
     const data = await res.json();
     return NextResponse.json(data);
-  } catch {
+  } catch (error) {
+    if (error instanceof GatewayReadAuthError) {
+      return NextResponse.json({ error: 'authentication required' }, { status: 401 });
+    }
     // Return zeros so the dashboard renders gracefully when gateway is down.
     return NextResponse.json({
       total_requests: 0, allowed_requests: 0, blocked_requests: 0,

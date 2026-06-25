@@ -7,6 +7,25 @@ import { SESSION_COOKIE } from '@/lib/session';
 export const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL ?? 'http://localhost:8080';
 export const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? 'titan-admin-dev-secret';
 
+export class GatewayReadAuthError extends Error {
+  constructor() {
+    super('gateway read authentication required');
+  }
+}
+
+export async function gatewayReadHeaders(): Promise<HeadersInit> {
+  const token = (await cookies()).get(SESSION_COOKIE)?.value;
+  if (!token) throw new GatewayReadAuthError();
+  const auth = await fetch(`${GATEWAY}/admin/v1/auth/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: 'no-store',
+    signal: AbortSignal.timeout(5000),
+  });
+  if (auth.status === 401 || auth.status === 403) throw new GatewayReadAuthError();
+  if (!auth.ok) throw new Error(`gateway auth check failed: ${auth.status}`);
+  return { 'X-Admin-Token': ADMIN_TOKEN };
+}
+
 // adminFetch calls the gateway admin API as the *currently logged-in user* by
 // forwarding their session JWT, so the gateway enforces per-user RBAC. It falls
 // back to the machine master token only when there is no session (server-to-
