@@ -184,9 +184,78 @@ compliance teams.
 | Settings, Edge Routing | Upstreams, guardrails, alerting, rate limits, per-tenant overrides |
 | Team, API Keys, Billing | RBAC users, tenant keys, usage metering, plans and quotas |
 
+## Product Tour
+
+The screenshots below show the main buyer/operator workflows: executive
+overview, investigation, policy governance, access control, audit, and routing.
+
+### Command Center
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="docs/assets/screenshot_overview.png" width="420" alt="TITAN overview dashboard"/>
+      <br/>
+      <sub><b>Overview</b> — live KPIs, blocked traffic, cache rate, latency, and recent threats.</sub>
+    </td>
+    <td align="center">
+      <img src="docs/assets/screenshot_analytics.png" width="420" alt="TITAN analytics dashboard"/>
+      <br/>
+      <sub><b>Analytics</b> — request volume, risk categories, latency, and model usage.</sub>
+    </td>
+  </tr>
+</table>
+
+### Investigation And Governance
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="docs/assets/screenshot_events.png" width="420" alt="TITAN events feed"/>
+      <br/>
+      <sub><b>Events</b> — real-time blocks, masks, Browser DLP events, and risk reasons.</sub>
+    </td>
+    <td align="center">
+      <img src="docs/assets/screenshot_policy_form.png" width="420" alt="TITAN policy engine"/>
+      <br/>
+      <sub><b>Policy Engine</b> — create and evaluate Cedar policies without redeploying.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/assets/screenshot_audit.png" width="420" alt="TITAN audit logs"/>
+      <br/>
+      <sub><b>Audit Logs</b> — searchable evidence for requests and control-plane actions.</sub>
+    </td>
+    <td align="center">
+      <img src="docs/assets/screenshot_apikeys.png" width="420" alt="TITAN API keys"/>
+      <br/>
+      <sub><b>API Keys</b> — generate, copy, monitor, and revoke tenant-scoped keys.</sub>
+    </td>
+  </tr>
+</table>
+
+### Operations
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="docs/assets/screenshot_edge_routing.png" width="420" alt="TITAN edge routing"/>
+      <br/>
+      <sub><b>Edge Routing</b> — switch upstream providers and test gateway reachability.</sub>
+    </td>
+    <td align="center">
+      <img src="docs/assets/screenshot_settings.png" width="420" alt="TITAN settings"/>
+      <br/>
+      <sub><b>Settings</b> — guardrails, alerting, security defaults, and tenant overrides.</sub>
+    </td>
+  </tr>
+</table>
+
 <p align="center">
-  <img src="docs/assets/screenshot_events.png" width="420" alt="TITAN events feed"/>
-  <img src="docs/assets/screenshot_policy_form.png" width="420" alt="TITAN policy engine"/>
+  <img src="docs/assets/screenshot_analytics_light.png" width="860" alt="TITAN analytics light theme"/>
+  <br/>
+  <sub><b>Light theme</b> — same operational surface for customer demos and stakeholder reviews.</sub>
 </p>
 
 ---

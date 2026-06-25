@@ -16,10 +16,12 @@ map, readiness, and editions.
 The README now links to deeper docs for the implementation, security packet,
 threat model, production deployment, demo runbooks, provider reference, and
 testing guide instead of embedding large configuration/API/code sections inline.
+It keeps the product screenshots in a structured Product Tour grouped by command
+center, investigation/governance, and operations workflows.
 
 Verification:
 
-- `README.md` reduced from 1,045 lines to 330 lines.
+- `README.md` reduced from 1,045 lines while preserving the core dashboard screenshots.
 - Referenced local docs and directories were checked for existence.
 - `git diff --check` passed.
 
