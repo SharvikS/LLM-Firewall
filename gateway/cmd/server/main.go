@@ -351,6 +351,9 @@ func main() {
 		})
 	})
 
+	// Prometheus scrape endpoint. Dashboard JSON remains at /api/metrics.
+	r.Get("/metrics", prometheusHandler)
+
 	// Dashboard read API (no auth — metrics are not sensitive)
 	r.Route("/api", func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
@@ -402,7 +405,7 @@ func main() {
 
 	// LLM proxy — all /v1/* routes require a valid API key (fail-closed)
 	r.Group(func(r chi.Router) {
-		r.Use(gatewaymw.APIKeyAuth(st))
+		r.Use(gatewaymw.APIKeyAuthWithCache(st, time.Duration(cfg.AuthCacheTTLSec)*time.Second))
 
 		// Batch API — specific routes must be registered before the proxy
 		// wildcard so chi matches them first.
@@ -474,6 +477,11 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 		"uptime_seconds":   int64(time.Since(metrics.StartTime).Seconds()),
 		"traffic_chart":    snap.TrafficChart,
 	})
+}
+
+func prometheusHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	w.Write([]byte(metrics.PrometheusText(r.Context()))) //nolint:errcheck
 }
 
 func eventsHandler(w http.ResponseWriter, r *http.Request) {

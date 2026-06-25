@@ -33,8 +33,8 @@ type Config struct {
 	CacheTTLSec int
 
 	// ML Engine (Python gRPC)
-	AnalyzerAddr        string
-	AnalyzerTimeoutMs   int
+	AnalyzerAddr          string
+	AnalyzerTimeoutMs     int
 	AnalyzerTLSEnabled    bool   // set ANALYZER_TLS_ENABLED=true to encrypt the gRPC channel
 	AnalyzerTLSCertFile   string // CA cert (or server cert) for client-side verification
 	AnalyzerTLSClientCert string // client cert for mutual TLS (optional)
@@ -94,6 +94,7 @@ type Config struct {
 	// Auth / RBAC (dashboard control plane)
 	AuthSigningSecret    string // HMAC secret for session JWTs
 	AuthSessionTTLHours  int
+	AuthCacheTTLSec      int    // positive API-key auth cache TTL; 0 disables
 	DefaultAdminEmail    string // bootstrapped on first boot if no users exist
 	DefaultAdminPassword string
 	AppEnv               string // "development" | "production"
@@ -149,8 +150,8 @@ func Load() (*Config, error) {
 
 		CacheTTLSec: getEnvInt("CACHE_TTL_SEC", 3600),
 
-		AnalyzerAddr:        getEnv("ANALYZER_ADDR", "localhost:50051"),
-		AnalyzerTimeoutMs:   getEnvInt("ANALYZER_TIMEOUT_MS", 150),
+		AnalyzerAddr:          getEnv("ANALYZER_ADDR", "localhost:50051"),
+		AnalyzerTimeoutMs:     getEnvInt("ANALYZER_TIMEOUT_MS", 150),
 		AnalyzerTLSEnabled:    getEnvBool("ANALYZER_TLS_ENABLED", false),
 		AnalyzerTLSCertFile:   getEnv("ANALYZER_TLS_CERT_FILE", "/etc/certs/ca.crt"),
 		AnalyzerTLSClientCert: getEnv("ANALYZER_TLS_CLIENT_CERT", ""),
@@ -187,6 +188,7 @@ func Load() (*Config, error) {
 
 		AuthSigningSecret:    getEnvWithFile("AUTH_SIGNING_SECRET", "titan-dev-signing-secret-change-me"),
 		AuthSessionTTLHours:  getEnvInt("AUTH_SESSION_TTL_HOURS", 12),
+		AuthCacheTTLSec:      getEnvInt("AUTH_CACHE_TTL_SEC", 15),
 		DefaultAdminEmail:    getEnv("DEFAULT_ADMIN_EMAIL", "admin@titan.local"),
 		DefaultAdminPassword: getEnvWithFile("DEFAULT_ADMIN_PASSWORD", "admin@123"),
 		AppEnv:               getEnv("APP_ENV", "development"),

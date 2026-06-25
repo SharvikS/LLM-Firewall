@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -17,6 +19,12 @@ type contextKey string
 
 const AuthCtxKey contextKey = "titan_auth"
 
+type APIKeyAuthStore interface {
+	GetAPIKeyByHash(ctx context.Context, hash string) (*store.APIKey, error)
+	GetTenantByID(ctx context.Context, id uuid.UUID) (*store.Tenant, error)
+	TouchAPIKey(keyID uuid.UUID)
+}
+
 // AuthContext carries the resolved identity for a request.
 // Set by APIKeyAuth and consumed by the proxy and audit layer.
 type AuthContext struct {
@@ -27,9 +35,64 @@ type AuthContext struct {
 	RateLimitRPM int
 }
 
+type authCacheEntry struct {
+	auth      AuthContext
+	expiresAt time.Time
+}
+
+type authCache struct {
+	ttl     time.Duration
+	mu      sync.Mutex
+	entries map[string]authCacheEntry
+}
+
+func newAuthCache(ttl time.Duration) *authCache {
+	if ttl <= 0 {
+		return nil
+	}
+	return &authCache{
+		ttl:     ttl,
+		entries: make(map[string]authCacheEntry),
+	}
+}
+
+func (c *authCache) get(hash string) (AuthContext, bool) {
+	if c == nil {
+		return AuthContext{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry, ok := c.entries[hash]
+	if !ok {
+		return AuthContext{}, false
+	}
+	if !entry.expiresAt.After(time.Now()) {
+		delete(c.entries, hash)
+		return AuthContext{}, false
+	}
+	return entry.auth, true
+}
+
+func (c *authCache) set(hash string, auth AuthContext) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.entries[hash] = authCacheEntry{auth: auth, expiresAt: time.Now().Add(c.ttl)}
+}
+
 // APIKeyAuth is a Chi middleware that validates the incoming Bearer token
 // against the api_keys table (fail-closed: no key = 401, invalid key = 401).
-func APIKeyAuth(st *store.Store) func(http.Handler) http.Handler {
+func APIKeyAuth(st APIKeyAuthStore) func(http.Handler) http.Handler {
+	return APIKeyAuthWithCache(st, 0)
+}
+
+// APIKeyAuthWithCache validates Bearer tokens and caches successful key+tenant
+// resolutions for ttl. It never caches misses or DB errors, so invalid keys
+// remain fail-closed and new keys become usable immediately.
+func APIKeyAuthWithCache(st APIKeyAuthStore, ttl time.Duration) func(http.Handler) http.Handler {
+	cache := newAuthCache(ttl)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			raw := extractBearer(r)
@@ -39,6 +102,12 @@ func APIKeyAuth(st *store.Store) func(http.Handler) http.Handler {
 			}
 
 			hash := store.HashKey(raw)
+			if authCtx, ok := cache.get(hash); ok {
+				go st.TouchAPIKey(authCtx.APIKeyID)
+				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), AuthCtxKey, authCtx)))
+				return
+			}
+
 			apiKey, err := st.GetAPIKeyByHash(r.Context(), hash)
 			if err != nil {
 				logger.Get().Error("auth: DB lookup failed",
@@ -64,13 +133,15 @@ func APIKeyAuth(st *store.Store) func(http.Handler) http.Handler {
 			// Fire-and-forget: update last_used, increment request count.
 			go st.TouchAPIKey(apiKey.ID)
 
-			ctx := context.WithValue(r.Context(), AuthCtxKey, AuthContext{
+			authCtx := AuthContext{
 				TenantID:     tenant.ID,
 				TenantName:   tenant.Name,
 				Tier:         tenant.Tier,
 				APIKeyID:     apiKey.ID,
 				RateLimitRPM: tenant.RateLimitRPM,
-			})
+			}
+			cache.set(hash, authCtx)
+			ctx := context.WithValue(r.Context(), AuthCtxKey, authCtx)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
