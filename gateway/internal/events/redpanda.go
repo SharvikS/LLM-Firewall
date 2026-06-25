@@ -59,12 +59,23 @@ func NewProducer(brokers []string) (*EventProducer, error) {
 // EmitAudit publishes an AuditEvent asynchronously. The fire-and-forget
 // callback pattern keeps zero latency impact on the request path.
 func (p *EventProducer) EmitAudit(ctx context.Context, event AuditEvent) {
+	p.EmitAuditWithFallback(ctx, event, nil)
+}
+
+// EmitAuditWithFallback publishes an AuditEvent asynchronously and invokes
+// onFailure from the produce callback when Kafka rejects the record. Callers use
+// this for bounded durability fallback, while the producer remains independent
+// of the database package.
+func (p *EventProducer) EmitAuditWithFallback(ctx context.Context, event AuditEvent, onFailure func(error)) {
 	b, err := json.Marshal(event)
 	if err != nil {
 		logger.Get().Error("failed to marshal audit event",
 			slog.String("error", err.Error()),
 			slog.String("event_id", event.EventID),
 		)
+		if onFailure != nil {
+			onFailure(err)
+		}
 		return
 	}
 
@@ -75,6 +86,9 @@ func (p *EventProducer) EmitAudit(ctx context.Context, event AuditEvent) {
 				slog.String("error", err.Error()),
 				slog.String("event_id", event.EventID),
 			)
+			if onFailure != nil {
+				onFailure(err)
+			}
 		} else {
 			logger.Get().Debug("audit event published",
 				slog.String("event_id", event.EventID),

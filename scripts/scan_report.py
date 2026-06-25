@@ -59,6 +59,8 @@ def main():
     ap.add_argument("--go", required=True)
     ap.add_argument("--py", required=True)
     ap.add_argument("--js", required=True)
+    ap.add_argument("--js-browser", default="")
+    ap.add_argument("--js-landing", default="")
     ap.add_argument("--out", required=True)
     ap.add_argument("--timestamp", default="")
     args = ap.parse_args()
@@ -68,6 +70,18 @@ def main():
         {"name": "ml_engine (Python)", "scanner": "pip-audit", "findings": parse_py(args.py)},
         {"name": "dashboard (Node)", "scanner": "npm audit", "findings": parse_js(args.js)},
     ]
+    if args.js_browser:
+        comps.append({
+            "name": "browser-extension (Node)",
+            "scanner": "npm audit",
+            "findings": parse_js(args.js_browser),
+        })
+    if args.js_landing:
+        comps.append({
+            "name": "landing (Node)",
+            "scanner": "npm audit",
+            "findings": parse_js(args.js_landing),
+        })
     has_findings = any(c["findings"] > 0 for c in comps)
     report = {
         "generated_at": args.timestamp or "unknown",

@@ -43,10 +43,25 @@ else
   echo "not-installed" > "$TMP/js.json"; echo "  npm not installed — skipped"
 fi
 
+echo "── Node (browser-extension) — npm audit ─────────────────────"
+if command -v npm >/dev/null 2>&1; then
+  (cd "$ROOT/browser-extension" && npm audit --json > "$TMP/js-browser.json" 2>/dev/null) || true
+else
+  echo "not-installed" > "$TMP/js-browser.json"; echo "  npm not installed — skipped"
+fi
+
+echo "── Node (landing) — npm audit ───────────────────────────────"
+if command -v npm >/dev/null 2>&1; then
+  (cd "$ROOT/landing" && npm audit --json > "$TMP/js-landing.json" 2>/dev/null) || true
+else
+  echo "not-installed" > "$TMP/js-landing.json"; echo "  npm not installed — skipped"
+fi
+
 # Robust parsing + report generation in Python (grep on these JSON/text formats
 # is fragile — govulncheck streams the whole OSV DB, npm nests counts by severity).
 "$PYBIN" "$ROOT/scripts/scan_report.py" \
   --go "$TMP/go.txt" --py "$TMP/py.json" --js "$TMP/js.json" \
+  --js-browser "$TMP/js-browser.json" --js-landing "$TMP/js-landing.json" \
   --out "$OUT_DIR/scan-report.json" \
   --timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 rc=$?

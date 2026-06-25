@@ -31,6 +31,10 @@ is the product overview; everything here is the deeper detail.
 - [testing.md](reference/testing.md) — testing guide
 
 ## security/
+- [BUYER_SECURITY_PACKET.md](security/BUYER_SECURITY_PACKET.md) — buyer-facing security, compliance, deployment, and pentest packet
+- [THREAT_MODEL.md](security/THREAT_MODEL.md) — repository threat model and severity calibration
+- [DEPENDENCY_TRIAGE.md](security/DEPENDENCY_TRIAGE.md) — dependency vulnerability triage and release policy
+- [LOAD_SLO_REPORT.md](security/LOAD_SLO_REPORT.md) — load-test/SLO evidence checklist and report template
 - [RED_TEAM_REVIEW_Phase4.md](security/RED_TEAM_REVIEW_Phase4.md)
 - [scan-report.json](security/scan-report.json) — latest CVE scan (rendered in the dashboard)
 

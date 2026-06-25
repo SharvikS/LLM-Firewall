@@ -1,7 +1,45 @@
 # LLM-Firewall (TITAN Gateway) — Project Status Log
 
 > **Auto-maintained log.** Updated at the end of every major session or when significant changes are made.
-> Last updated: 2026-06-25 (Enterprise Sellability Pass)
+> Last updated: 2026-06-25 (Enterprise Proof Pass)
+
+---
+
+## 2026-06-25 — Enterprise Proof Pass
+
+Added the highest-impact enterprise readiness items that do not require local
+tool installation or Docker runtime.
+
+**Release gates** — Added `.github/workflows/release-gates.yml` covering Go,
+enterprise build-tag Go tests, dashboard lint/typecheck/build, ML pytest,
+Browser DLP lint/test/package, Helm lint/template, and load-test harness compile.
+Expanded dependency-scan CI to cover dashboard, browser extension, and landing
+Node surfaces.
+
+**Audit durability** — Data-plane and Browser DLP audit events now prefer Kafka
+but fall back to direct database persistence if the Kafka producer is unavailable
+or a produce callback fails. The fallback uses the same event ID as the Kafka
+path, preserving idempotent inserts.
+
+**Buyer security packet** — Added current buyer-facing security/compliance docs:
+`docs/security/BUYER_SECURITY_PACKET.md`, `THREAT_MODEL.md`,
+`DEPENDENCY_TRIAGE.md`, and `LOAD_SLO_REPORT.md`.
+
+Verification:
+
+- `cd gateway && go test ./...` passed.
+- `cd gateway && go test -tags enterprise ./...` passed.
+- `cd dashboard && npm run lint -- --max-warnings=0 && npx tsc --noEmit && npm run build` passed.
+- `cd browser-extension && npm run lint && npm test && npm run build && npm run build:firefox` passed.
+- `cd ml_engine && ../ml_engine/venv/bin/python -m pytest` passed: 71 passed, 3 skipped.
+- `cd loadtest && go test ./... && go build -o /tmp/titan-loadtest .` passed.
+- `cd dashboard && npm audit --audit-level=high` passed.
+- `cd browser-extension && npm audit --audit-level=high` passed.
+- `cd landing && npm audit --audit-level=high` passed.
+- Workflow YAML parsed successfully with Ruby/Psych.
+- `git diff --check` passed.
+- `govulncheck` and `pip-audit` were not installed locally; CI now runs them.
+- Docker was not started and no tools were installed.
 
 ---
 

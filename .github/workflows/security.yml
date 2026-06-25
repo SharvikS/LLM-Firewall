@@ -36,7 +36,7 @@ jobs:
       - run: pip-audit -r requirements.txt --ignore-vuln CVE-2025-3000
         working-directory: ml_engine
 
-  npm-audit:
+  npm-audit-dashboard:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,3 +48,27 @@ jobs:
       # Fail only on high+ severity so moderate advisories don't block merges.
       - run: npm audit --audit-level=high
         working-directory: dashboard
+
+  npm-audit-browser-extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+        working-directory: browser-extension
+      - run: npm audit --audit-level=high
+        working-directory: browser-extension
+
+  npm-audit-landing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+        working-directory: landing
+      - run: npm audit --audit-level=high
+        working-directory: landing

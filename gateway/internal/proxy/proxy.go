@@ -332,7 +332,7 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	isStream := cache.IsStreaming(body)
 	cacheKey := p.cache.Key(tenantID.String(), r.URL.Path, body)
 	model := provider.ExtractModel(prov, r.URL.Path, body) // real requested model for audit attribution
-	originalBody := body      // pre-mask copy: plugins inspect what the user actually sent
+	originalBody := body                                   // pre-mask copy: plugins inspect what the user actually sent
 
 	// Resolve request region from Cloudflare or a custom header early so every
 	// audit event carries it regardless of where in the pipeline the request exits.
@@ -720,10 +720,10 @@ func (p *LLMProxy) pushEvent(reqID, tenantName, action string, risk float64, pat
 	})
 }
 
-// emitKafka is the single write path for audit events. It replaces the old
-// enqueueAudit + emitKafka pair: the Kafka consumer owns the DB write, so the
-// request path only needs to fire-and-forget to Kafka. tenantID and apiKeyID
-// are the real UUIDs (not display names), fixing the prior tenantName bug.
+// emitKafka is the single write path for data-plane audit events. Kafka remains
+// the preferred at-least-once path, but a bounded direct DB fallback preserves
+// audit evidence when Kafka is unavailable or a produce callback fails. tenantID
+// and apiKeyID are the real UUIDs, not display names.
 func (p *LLMProxy) emitKafka(
 	reqID string,
 	tenantID, apiKeyID uuid.UUID,
@@ -734,9 +734,6 @@ func (p *LLMProxy) emitKafka(
 	latencyMs int64,
 	reason, region, model string,
 ) {
-	if p.producer == nil {
-		return
-	}
 	apiKeyStr := ""
 	if apiKeyID != uuid.Nil {
 		apiKeyStr = apiKeyID.String()
@@ -761,9 +758,43 @@ func (p *LLMProxy) emitKafka(
 		Region:     region,
 		Timestamp:  time.Now().UTC(),
 	}
+	if p.producer == nil {
+		p.persistAuditFallback(event, "kafka producer unavailable", nil)
+		return
+	}
 	// Pass context.Background() so the async Kafka produce callback is not
 	// aborted when this function returns.
-	p.producer.EmitAudit(context.Background(), event)
+	p.producer.EmitAuditWithFallback(context.Background(), event, func(err error) {
+		p.persistAuditFallback(event, "kafka produce failed", err)
+	})
+}
+
+func (p *LLMProxy) persistAuditFallback(event events.AuditEvent, reason string, cause error) {
+	if p.st == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := p.st.InsertAuditBatch(ctx, []store.AuditRow{events.AuditEventToRow(event)}); err != nil {
+			attrs := []slog.Attr{
+				slog.String("reason", reason),
+				slog.String("event_id", event.EventID),
+				slog.String("action", event.Action),
+				slog.String("error", err.Error()),
+			}
+			if cause != nil {
+				attrs = append(attrs, slog.String("cause", cause.Error()))
+			}
+			logger.Get().LogAttrs(context.Background(), slog.LevelError, "audit fallback insert failed", attrs...)
+			return
+		}
+		logger.Get().Warn("audit event persisted through db fallback",
+			slog.String("reason", reason),
+			slog.String("event_id", event.EventID),
+			slog.String("action", event.Action),
+		)
+	}()
 }
 
 // serveCachedEntry writes a cached response to the client and records metrics/audit.

@@ -65,7 +65,7 @@ func (c *EventConsumer) Start(ctx context.Context) {
 				)
 				return
 			}
-			rows = append(rows, auditEventToRow(evt))
+			rows = append(rows, AuditEventToRow(evt))
 			records = append(records, r)
 		})
 
@@ -100,9 +100,9 @@ func (c *EventConsumer) Close() {
 	}
 }
 
-// auditEventToRow converts a Kafka AuditEvent into a store.AuditRow for DB insertion.
+// AuditEventToRow converts a Kafka AuditEvent into a store.AuditRow for DB insertion.
 // UUID strings that fail to parse (or are empty) are mapped to nil pointers.
-func auditEventToRow(e AuditEvent) store.AuditRow {
+func AuditEventToRow(e AuditEvent) store.AuditRow {
 	row := store.AuditRow{
 		EventID:    e.EventID,
 		RequestID:  e.RequestID,
@@ -129,4 +129,9 @@ func auditEventToRow(e AuditEvent) store.AuditRow {
 		row.APIKeyID = &id
 	}
 	return row
+}
+
+// auditEventToRow is kept for package-local tests and older internal call sites.
+func auditEventToRow(e AuditEvent) store.AuditRow {
+	return AuditEventToRow(e)
 }

@@ -1,0 +1,126 @@
+name: release-gates
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gateway:
+    name: Gateway Go tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: gateway/go.mod
+          cache-dependency-path: gateway/go.sum
+      - name: Unit and integration tests
+        run: go test ./...
+        working-directory: gateway
+
+  gateway-enterprise:
+    name: Gateway enterprise build-tag tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: gateway/go.mod
+          cache-dependency-path: gateway/go.sum
+      - name: Enterprise feature tests
+        run: go test -tags enterprise ./...
+        working-directory: gateway
+
+  dashboard:
+    name: Dashboard lint, typecheck, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: npm ci
+        working-directory: dashboard
+      - name: Lint
+        run: npm run lint -- --max-warnings=0
+        working-directory: dashboard
+      - name: Typecheck
+        run: npx tsc --noEmit
+        working-directory: dashboard
+      - name: Production build
+        run: npm run build
+        working-directory: dashboard
+
+  ml-engine:
+    name: ML engine pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: ml_engine/requirements.txt
+      - name: Install ML dependencies
+        run: python -m pip install pytest -r requirements.txt
+        working-directory: ml_engine
+      - name: Pytest
+        run: python -m pytest
+        working-directory: ml_engine
+
+  browser-extension:
+    name: Browser extension lint, test, package
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: browser-extension
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: browser-extension/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run icons
+      - run: npm run build
+      - run: npm run build:firefox
+      - run: node scripts/zip.js
+      - run: test -f chrome-extension.zip && test -f firefox-extension.zip
+
+  helm:
+    name: Helm chart validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Lint chart
+        run: helm lint ./helm/titan
+      - name: Render default chart
+        run: helm template titan ./helm/titan --namespace titan
+      - name: Render regional charts
+        run: |
+          helm template titan-us ./helm/titan --namespace titan -f ./helm/titan/regions/us-east.yaml
+          helm template titan-eu ./helm/titan --namespace titan -f ./helm/titan/regions/eu-west.yaml
+
+  loadtest-harness:
+    name: Load-test harness compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: loadtest/go.mod
+          cache-dependency-path: loadtest/go.mod
+      - name: Compile load-test harness
+        run: go test ./... && go build -o /tmp/titan-loadtest .
+        working-directory: loadtest

@@ -141,23 +141,21 @@ func (h *BrowserDLPHandler) Report(w http.ResponseWriter, r *http.Request) {
 		metrics.HourlyTraffic.Record(false)
 	}
 
-	// 3) Durable audit (Kafka → ClickHouse / Postgres) for compliance & analytics.
-	if h.producer != nil {
-		h.producer.EmitAudit(context.Background(), events.AuditEvent{
-			EventID:    eventID,
-			RequestID:  eventID,
-			TenantID:   "", // no tenant: browser-side, maps to NULL in the consumer
-			Action:     action,
-			RiskScore:  ev.Risk,
-			Provider:   site,
-			Model:      "web-ui",
-			Prompt:     "[REDACTED]",
-			StatusCode: browserStatusCode(blocked),
-			Path:       "/web/" + site,
-			Reason:     reason,
-			Timestamp:  time.Now().UTC(),
-		})
-	}
+	// 3) Durable audit (Kafka preferred, direct DB fallback) for compliance & analytics.
+	h.emitAuditEvent(events.AuditEvent{
+		EventID:    eventID,
+		RequestID:  eventID,
+		TenantID:   "", // no tenant: browser-side, maps to NULL in the consumer
+		Action:     action,
+		RiskScore:  ev.Risk,
+		Provider:   site,
+		Model:      "web-ui",
+		Prompt:     "[REDACTED]",
+		StatusCode: browserStatusCode(blocked),
+		Path:       "/web/" + site,
+		Reason:     reason,
+		Timestamp:  time.Now().UTC(),
+	})
 
 	// 4) Real-time SOC alert — only for genuine blocks/redactions, never the
 	//    clean/cancelled noise. The dispatcher applies its own min-risk +
@@ -252,21 +250,52 @@ func (h *BrowserDLPHandler) raiseFlagSignals(f store.DLPFlag) {
 		})
 	}
 
-	if h.producer != nil {
-		h.producer.EmitAudit(context.Background(), events.AuditEvent{
-			EventID:    f.ID.String(),
-			RequestID:  f.ID.String(),
-			Action:     "DLP_FLAG_RAISED",
-			RiskScore:  f.MaxRisk,
-			Provider:   f.LastSite,
-			Model:      "web-ui",
-			Prompt:     "[REDACTED]",
-			StatusCode: http.StatusForbidden,
-			Path:       "/web/" + f.LastSite,
-			Reason:     reason,
-			Timestamp:  time.Now().UTC(),
-		})
+	h.emitAuditEvent(events.AuditEvent{
+		EventID:    f.ID.String(),
+		RequestID:  f.ID.String(),
+		Action:     "DLP_FLAG_RAISED",
+		RiskScore:  f.MaxRisk,
+		Provider:   f.LastSite,
+		Model:      "web-ui",
+		Prompt:     "[REDACTED]",
+		StatusCode: http.StatusForbidden,
+		Path:       "/web/" + f.LastSite,
+		Reason:     reason,
+		Timestamp:  time.Now().UTC(),
+	})
+}
+
+func (h *BrowserDLPHandler) emitAuditEvent(event events.AuditEvent) {
+	if h == nil {
+		return
 	}
+	if h.producer == nil {
+		h.persistAuditFallback(event, "kafka producer unavailable", nil)
+		return
+	}
+	h.producer.EmitAuditWithFallback(context.Background(), event, func(err error) {
+		h.persistAuditFallback(event, "kafka produce failed", err)
+	})
+}
+
+func (h *BrowserDLPHandler) persistAuditFallback(event events.AuditEvent, reason string, cause error) {
+	if h == nil || h.store == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := h.store.InsertAuditBatch(ctx, []store.AuditRow{events.AuditEventToRow(event)}); err != nil {
+			msg := "browser dlp audit fallback insert failed"
+			if cause != nil {
+				msg += ": " + cause.Error()
+			}
+			logger.Get().Error(msg, "reason", reason, "event_id", event.EventID, "action", event.Action, "error", err.Error())
+			return
+		}
+		logger.Get().Warn("browser dlp audit event persisted through db fallback",
+			"reason", reason, "event_id", event.EventID, "action", event.Action)
+	}()
 }
 
 // itoaSmall stringifies a small non-negative count for alert text.
