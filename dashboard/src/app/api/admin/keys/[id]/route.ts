@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { adminFetch } from '@/lib/gateway';
 
-export async function DELETE(_req: Request, ctx: RouteContext<'/api/admin/keys/[id]'>) {
+export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await ctx.params;
     const res = await adminFetch(`/keys/${id}`, { method: 'DELETE' });
@@ -12,7 +12,7 @@ export async function DELETE(_req: Request, ctx: RouteContext<'/api/admin/keys/[
   }
 }
 
-export async function PUT(req: Request, ctx: RouteContext<'/api/admin/keys/[id]'>) {
+export async function PUT(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await ctx.params;
     const body = await req.json();
