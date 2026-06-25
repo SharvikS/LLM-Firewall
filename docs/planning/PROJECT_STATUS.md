@@ -1,7 +1,27 @@
 # LLM-Firewall (TITAN Gateway) — Project Status Log
 
 > **Auto-maintained log.** Updated at the end of every major session or when significant changes are made.
-> Last updated: 2026-06-25 (Enterprise Proof Pass)
+> Last updated: 2026-06-25 (README Restructure)
+
+---
+
+## 2026-06-25 — README Restructure
+
+Reworked the root `README.md` from a long all-in-one manual into a sharper
+project front door. The new version is shorter, easier to scan, and organized
+around buyer/operator questions: why TITAN exists, what it does, architecture,
+quick start, dashboard, security posture, Browser DLP, operations, repository
+map, readiness, and editions.
+
+The README now links to deeper docs for the implementation, security packet,
+threat model, production deployment, demo runbooks, provider reference, and
+testing guide instead of embedding large configuration/API/code sections inline.
+
+Verification:
+
+- `README.md` reduced from 1,045 lines to 330 lines.
+- Referenced local docs and directories were checked for existence.
+- `git diff --check` passed.
 
 ---
 
