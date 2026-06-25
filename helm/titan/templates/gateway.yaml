@@ -21,6 +21,7 @@ spec:
       annotations:
         sidecar.istio.io/inject: {{ .Values.gateway.istioInject | quote }}
     spec:
+      terminationGracePeriodSeconds: 30
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets: {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -99,13 +100,17 @@ spec:
               value: {{ $v | quote }}
             {{- end }}
           readinessProbe:
-            httpGet: {path: /health, port: 8080}
+            httpGet: {path: /ready, port: 8080}
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
           livenessProbe:
             httpGet: {path: /health, port: 8080}
             initialDelaySeconds: 15
             periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
           resources: {{- toYaml .Values.gateway.resources | nindent 12 }}
 ---
 apiVersion: v1
