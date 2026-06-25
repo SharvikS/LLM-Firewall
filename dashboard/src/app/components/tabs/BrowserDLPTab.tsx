@@ -1,13 +1,13 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import {
   Globe, ShieldCheck, Ban, Eye, AlertTriangle, MonitorSmartphone,
   Flag, Wifi, WifiOff, CircleDot, FileText, Image as ImageIcon, MessageSquare,
 } from 'lucide-react';
 
-const KIND_META: Record<string, { label: string; icon: React.ReactNode }> = {
+const KIND_META: Record<string, { label: string; icon: ReactNode }> = {
   text:  { label: 'Prompt', icon: <MessageSquare size={11} /> },
   file:  { label: 'File',   icon: <FileText size={11} /> },
   image: { label: 'Image',  icon: <ImageIcon size={11} /> },
@@ -46,6 +46,17 @@ const rel = (iso: string) => {
   if (s < 86400) return `${Math.round(s/3600)}h ago`; return `${Math.round(s/86400)}d ago`;
 };
 
+function Stat({ icon, label, value, tone = 'text-base-text' }: {
+  icon: ReactNode; label: string; value: number | string; tone?: string;
+}) {
+  return (
+    <div className="border border-base-border rounded-xl px-4 py-3 bg-base-sec/40">
+      <div className="flex items-center gap-2 text-base-muted mb-1">{icon}<span className="text-[11px] uppercase tracking-widest">{label}</span></div>
+      <div className={`text-2xl font-semibold ${tone}`}>{value}</div>
+    </div>
+  );
+}
+
 export default function BrowserDLPTab() {
   const [ov, setOv] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
@@ -58,19 +69,15 @@ export default function BrowserDLPTab() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { load(); const id = setInterval(load, 4000); return () => clearInterval(id); }, [load]);
+  useEffect(() => {
+    queueMicrotask(() => { void load(); });
+    const id = setInterval(() => { void load(); }, 4000);
+    return () => clearInterval(id);
+  }, [load]);
 
   const o = ov;
   const maxSeries = Math.max(1, ...(o?.series_24h ?? []).map(b => b.count));
   const siteTotal = Math.max(1, (o?.by_site ?? []).reduce((a, b) => a + b.count, 0));
-
-  const Stat = ({ icon, label, value, tone = 'text-base-text' }:
-    { icon: React.ReactNode; label: string; value: number | string; tone?: string }) => (
-    <div className="border border-base-border rounded-xl px-4 py-3 bg-base-sec/40">
-      <div className="flex items-center gap-2 text-base-muted mb-1">{icon}<span className="text-[11px] uppercase tracking-widest">{label}</span></div>
-      <div className={`text-2xl font-semibold ${tone}`}>{value}</div>
-    </div>
-  );
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">

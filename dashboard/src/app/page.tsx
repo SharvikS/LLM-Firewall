@@ -139,15 +139,16 @@ const PALETTE_ACTIONS: PaletteAction[] = [
   { label: 'View Active Sandboxes', icon: <Cpu size={13}/>,  tab: 'Sandboxes', hint: 'Action', keywords: 'firecracker vm' },
 ];
 
-function CommandPalette({ open, onClose, onNavigate, entries }: {
+type CommandPaletteProps = {
   open: boolean; onClose: () => void; onNavigate: (t: TabKey) => void; entries: NavEntry[];
-}) {
+};
+
+type CommandPaletteContentProps = Omit<CommandPaletteProps, 'open'>;
+
+function CommandPaletteContent({ onClose, onNavigate, entries }: CommandPaletteContentProps) {
   const [query, setQuery] = useState('');
   const [index, setIndex] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
-
-  // Reset on open
-  useEffect(() => { if (open) { setQuery(''); setIndex(0); } }, [open]);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -160,95 +161,100 @@ function CommandPalette({ open, onClose, onNavigate, entries }: {
     return [...navMatches, ...actionMatches];
   }, [query, entries]);
 
-  // Clamp selection when results shrink
-  useEffect(() => { setIndex(i => Math.min(i, Math.max(0, results.length - 1))); }, [results.length]);
+  const activeIndex = Math.min(index, Math.max(0, results.length - 1));
 
   // Keep the active row in view
   useEffect(() => {
-    listRef.current?.querySelector<HTMLElement>(`[data-idx="${index}"]`)
+    listRef.current?.querySelector<HTMLElement>(`[data-idx="${activeIndex}"]`)
       ?.scrollIntoView({ block: 'nearest' });
-  }, [index]);
+  }, [activeIndex]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'ArrowDown') { e.preventDefault(); setIndex(i => Math.min(i + 1, results.length - 1)); }
+    if (e.key === 'ArrowDown') { e.preventDefault(); setIndex(i => results.length ? Math.min(i + 1, results.length - 1) : 0); }
     if (e.key === 'ArrowUp')   { e.preventDefault(); setIndex(i => Math.max(i - 1, 0)); }
-    if (e.key === 'Enter' && results[index]) { e.preventDefault(); onNavigate(results[index].tab); }
+    if (e.key === 'Enter' && results[activeIndex]) { e.preventDefault(); onNavigate(results[activeIndex].tab); }
   };
 
   return (
+    <>
+      <motion.div
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        transition={{ duration: 0.12 }}
+        className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
+        onClick={onClose}
+      />
+      <motion.div
+        initial={{ opacity: 0, scale: 0.98, y: -12, x: '-50%' }}
+        animate={{ opacity: 1, scale: 1,    y: 0,   x: '-50%' }}
+        exit={{   opacity: 0, scale: 0.98, y: -12, x: '-50%' }}
+        transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+        className="fixed top-[14%] left-1/2 z-50 w-[min(580px,92vw)] rounded-2xl overflow-hidden flex flex-col"
+        style={{
+          background: 'var(--bg-card)',
+          border: '1px solid var(--border-color)',
+          boxShadow: '0 32px 80px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04)',
+        }}
+      >
+        <div className="flex items-center px-4 py-3 gap-3" style={{ borderBottom: '1px solid var(--border-color)' }}>
+          <Search size={14} className="text-base-muted shrink-0"/>
+          <input autoFocus type="text" placeholder="Jump to a page or action…"
+            value={query}
+            onChange={e => { setQuery(e.target.value); setIndex(0); }}
+            onKeyDown={onKeyDown}
+            className="bg-transparent flex-1 text-sm outline-none placeholder:text-base-muted/50"
+            style={{ color: 'var(--text-main)' }}
+          />
+          <kbd className="text-[10px] px-1.5 py-0.5 rounded-md font-mono shrink-0"
+            style={{ background: 'var(--bg-sec)', border: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
+            ESC
+          </kbd>
+        </div>
+
+        <div ref={listRef} className="p-1.5 max-h-[320px] overflow-y-auto scrollbar-thin">
+          {results.length === 0 && (
+            <div className="py-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+              No results for “{query}”
+            </div>
+          )}
+          {results.map((r, i) => (
+            <div key={`${r.kind}-${r.label}`} data-idx={i}
+              onMouseEnter={() => setIndex(i)}
+              onClick={() => onNavigate(r.tab)}
+              className="flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer text-sm transition-colors"
+              style={i === activeIndex ? { background: 'var(--bg-sec)' } : undefined}
+            >
+              <div className="flex items-center gap-3"
+                style={{ color: i === activeIndex ? 'var(--text-main)' : 'var(--text-muted)' }}>
+                {r.icon}
+                <span>{r.label}</span>
+                {r.kind === 'action' && (
+                  <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
+                    style={{ background: 'color-mix(in srgb, var(--accent) 10%, transparent)', color: 'var(--text-muted)' }}>
+                    Action
+                  </span>
+                )}
+              </div>
+              {i === activeIndex && <CornerDownLeft size={12} style={{ color: 'var(--text-muted)' }}/>}
+            </div>
+          ))}
+        </div>
+
+        <div className="px-4 py-2 flex items-center gap-4 text-[10px]"
+          style={{ borderTop: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
+          <span className="flex items-center gap-1"><kbd>↑↓</kbd> navigate</span>
+          <span className="flex items-center gap-1"><kbd>↵</kbd> open</span>
+          <span className="flex items-center gap-1"><kbd>esc</kbd> close</span>
+        </div>
+      </motion.div>
+    </>
+  );
+}
+
+function CommandPalette({ open, onClose, onNavigate, entries }: CommandPaletteProps) {
+  return (
     <AnimatePresence>
       {open && (
-        <>
-          <motion.div
-            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-            transition={{ duration: 0.12 }}
-            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
-            onClick={onClose}
-          />
-          <motion.div
-            initial={{ opacity: 0, scale: 0.98, y: -12, x: '-50%' }}
-            animate={{ opacity: 1, scale: 1,    y: 0,   x: '-50%' }}
-            exit={{   opacity: 0, scale: 0.98, y: -12, x: '-50%' }}
-            transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-            className="fixed top-[14%] left-1/2 z-50 w-[min(580px,92vw)] rounded-2xl overflow-hidden flex flex-col"
-            style={{
-              background: 'var(--bg-card)',
-              border: '1px solid var(--border-color)',
-              boxShadow: '0 32px 80px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04)',
-            }}
-          >
-            <div className="flex items-center px-4 py-3 gap-3" style={{ borderBottom: '1px solid var(--border-color)' }}>
-              <Search size={14} className="text-base-muted shrink-0"/>
-              <input autoFocus type="text" placeholder="Jump to a page or action…"
-                value={query}
-                onChange={e => { setQuery(e.target.value); setIndex(0); }}
-                onKeyDown={onKeyDown}
-                className="bg-transparent flex-1 text-sm outline-none placeholder:text-base-muted/50"
-                style={{ color: 'var(--text-main)' }}
-              />
-              <kbd className="text-[10px] px-1.5 py-0.5 rounded-md font-mono shrink-0"
-                style={{ background: 'var(--bg-sec)', border: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
-                ESC
-              </kbd>
-            </div>
-
-            <div ref={listRef} className="p-1.5 max-h-[320px] overflow-y-auto scrollbar-thin">
-              {results.length === 0 && (
-                <div className="py-10 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-                  No results for “{query}”
-                </div>
-              )}
-              {results.map((r, i) => (
-                <div key={`${r.kind}-${r.label}`} data-idx={i}
-                  onMouseEnter={() => setIndex(i)}
-                  onClick={() => onNavigate(r.tab)}
-                  className="flex items-center justify-between px-3 py-2 rounded-lg cursor-pointer text-sm transition-colors"
-                  style={i === index ? { background: 'var(--bg-sec)' } : undefined}
-                >
-                  <div className="flex items-center gap-3"
-                    style={{ color: i === index ? 'var(--text-main)' : 'var(--text-muted)' }}>
-                    {r.icon}
-                    <span>{r.label}</span>
-                    {r.kind === 'action' && (
-                      <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded"
-                        style={{ background: 'color-mix(in srgb, var(--accent) 10%, transparent)', color: 'var(--text-muted)' }}>
-                        Action
-                      </span>
-                    )}
-                  </div>
-                  {i === index && <CornerDownLeft size={12} style={{ color: 'var(--text-muted)' }}/>}
-                </div>
-              ))}
-            </div>
-
-            <div className="px-4 py-2 flex items-center gap-4 text-[10px]"
-              style={{ borderTop: '1px solid var(--border-color)', color: 'var(--text-muted)' }}>
-              <span className="flex items-center gap-1"><kbd>↑↓</kbd> navigate</span>
-              <span className="flex items-center gap-1"><kbd>↵</kbd> open</span>
-              <span className="flex items-center gap-1"><kbd>esc</kbd> close</span>
-            </div>
-          </motion.div>
-        </>
+        <CommandPaletteContent onClose={onClose} onNavigate={onNavigate} entries={entries}/>
       )}
     </AnimatePresence>
   );
@@ -300,9 +306,11 @@ export default function Dashboard() {
   // Restore persisted UI state (theme class itself is applied pre-paint by
   // the boot script in layout.tsx — here we only sync React state).
   useEffect(() => {
-    const t = localStorage.getItem('titan-theme');
-    if (t) setThemeState(t);
-    setRail(localStorage.getItem('titan-sidebar') === 'rail');
+    queueMicrotask(() => {
+      const t = localStorage.getItem('titan-theme');
+      if (t) setThemeState(t);
+      setRail(localStorage.getItem('titan-sidebar') === 'rail');
+    });
   }, []);
 
   const setTheme = useCallback((t: string) => {

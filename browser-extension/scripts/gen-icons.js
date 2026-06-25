@@ -122,7 +122,6 @@ function renderIcon(size) {
   // Map the 24×24 mark into the centred 60% box of the tile.
   const markScale = (S * 0.6) / 24;
   const markOffset = S * 0.2;
-  const halfStroke = (STROKE_W / 2) * markScale;
 
   for (let y = 0; y < S; y++) {
     for (let x = 0; x < S; x++) {

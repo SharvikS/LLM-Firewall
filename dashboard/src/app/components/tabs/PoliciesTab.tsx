@@ -10,6 +10,16 @@ interface Policy {
   created_at: string;
 }
 
+type PolicyForm = Pick<Policy, 'name' | 'description' | 'effect' | 'principal' | 'action' | 'condition'>;
+type PolicyTextField = Exclude<keyof PolicyForm, 'description' | 'effect'>;
+
+const POLICY_TEXT_FIELDS: [string, PolicyTextField, string][] = [
+  ['Policy Name', 'name', 'e.g. Block EU requests'],
+  ['Principal', 'principal', 'e.g. tenant_*, !admin'],
+  ['Action', 'action', 'e.g. InvokeLLM'],
+  ['Condition', 'condition', 'e.g. risk_score > 70'],
+];
+
 function Toggle({ on, onChange }: { on: boolean; onChange: () => void }) {
   return (
     <button onClick={onChange} className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ${on ? 'bg-base-accent' : 'bg-base-border'}`}>
@@ -25,8 +35,8 @@ export default function PoliciesTab() {
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving]     = useState(false);
   const [saved, setSaved]       = useState<string | null>(null);
-  const [form, setForm]         = useState({
-    name: '', description: '', effect: 'DENY' as 'ALLOW' | 'DENY',
+  const [form, setForm]         = useState<PolicyForm>({
+    name: '', description: '', effect: 'DENY',
     principal: '*', action: 'InvokeLLM', condition: '',
   });
 
@@ -39,7 +49,9 @@ export default function PoliciesTab() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { fetchPolicies(); }, [fetchPolicies]);
+  useEffect(() => {
+    queueMicrotask(() => { void fetchPolicies(); });
+  }, [fetchPolicies]);
 
   const toggle = async (p: Policy) => {
     const res = await fetch(`/api/admin/policies/${p.id}`, {
@@ -84,7 +96,7 @@ export default function PoliciesTab() {
           <h1 className="text-2xl font-semibold tracking-tight">Policy Engine</h1>
           <p className="text-sm text-base-muted mt-1">
             {offline
-              ? <span className="text-yellow-500 font-medium">Gateway offline — changes won't be saved</span>
+              ? <span className="text-yellow-500 font-medium">Gateway offline — changes won&apos;t be saved</span>
               : `${policies.length} Cedar ABAC policies — changes take effect on next 30s refresh`
             }
           </p>
@@ -104,15 +116,10 @@ export default function PoliciesTab() {
             className="border border-base-border bg-base-card rounded-xl p-6 shadow-sm space-y-4">
             <h3 className="text-sm font-semibold">New Cedar Policy</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {([
-                ['Policy Name', 'name', 'e.g. Block EU requests'],
-                ['Principal', 'principal', 'e.g. tenant_*, !admin'],
-                ['Action', 'action', 'e.g. InvokeLLM'],
-                ['Condition', 'condition', 'e.g. risk_score > 70'],
-              ] as [string, string, string][]).map(([label, key, placeholder]) => (
+              {POLICY_TEXT_FIELDS.map(([label, key, placeholder]) => (
                 <div key={key}>
                   <label className="text-xs font-medium text-base-muted block mb-1.5">{label}</label>
-                  <input value={(form as any)[key]}
+                  <input value={form[key]}
                     onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
                     placeholder={placeholder}
                     className="w-full px-3 py-2 bg-base-sec border border-base-border rounded-lg text-sm outline-none focus:border-base-muted/60 transition-colors"/>

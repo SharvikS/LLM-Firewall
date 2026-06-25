@@ -49,7 +49,11 @@ export default function FlagsTab() {
     setLoading(false);
   }, [filter]);
 
-  useEffect(() => { load(); const id = setInterval(load, 5000); return () => clearInterval(id); }, [load]);
+  useEffect(() => {
+    queueMicrotask(() => { void load(); });
+    const id = setInterval(() => { void load(); }, 5000);
+    return () => clearInterval(id);
+  }, [load]);
 
   const toggle = async (subject: string) => {
     if (expanded === subject) { setExpanded(null); return; }
@@ -63,7 +67,7 @@ export default function FlagsTab() {
 
   const ack = async (id: string) => {
     await fetch(`/api/admin/dlp/flags/${id}/ack`, { method: 'POST' }).catch(() => null);
-    load();
+    void load();
   };
 
   const stat = (label: string, value: number | string, tone = 'text-base-text') => (

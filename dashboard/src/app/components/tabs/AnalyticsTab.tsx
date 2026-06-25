@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, LineChart, Line, AreaChart, Area,
+  PieChart, Pie, Cell, LineChart, Line,
 } from 'recharts';
 
 // ─── Live data (ClickHouse via gateway /api/analytics/*) ─────────────────────
@@ -31,6 +31,14 @@ const THREAT_LABELS: Record<string, string> = {
   PII_MASKED: 'PII Masked',
   HALLUCINATION_FLAGGED: 'Hallucination',
 };
+
+const subscribeToClient = () => () => {};
+const clientSnapshot = () => true;
+const serverSnapshot = () => false;
+
+function useIsClient() {
+  return useSyncExternalStore(subscribeToClient, clientSnapshot, serverSnapshot);
+}
 
 // ─── Static demo data ─────────────────────────────────────────────────────────
 
@@ -62,9 +70,24 @@ const MODEL_USAGE = [
   { model: 'claude-haiku',  tokens:   620_000, cost: 1.2,  color: '#fb923c' },
 ];
 
+type ChartPayloadEntry = {
+  name?: string;
+  dataKey?: string | number;
+  value?: string | number;
+  stroke?: string;
+  fill?: string;
+  color?: string;
+};
+
+type ChartTipProps = {
+  active?: boolean;
+  payload?: ChartPayloadEntry[];
+  label?: string | number;
+};
+
 // ─── Custom Tooltip ───────────────────────────────────────────────────────────
 
-function ChartTip({ active, payload, label }: any) {
+function ChartTip({ active, payload, label }: ChartTipProps) {
   if (!active || !payload?.length) return null;
   return (
     <div className="rounded-xl shadow-2xl overflow-hidden text-xs"
@@ -76,8 +99,8 @@ function ChartTip({ active, payload, label }: any) {
         </div>
       )}
       <div className="px-3 py-2.5 space-y-1.5">
-        {payload.map((entry: any, i: number) => (
-          <div key={i} className="flex justify-between items-center gap-5">
+        {payload.map((entry, i) => (
+          <div key={`${entry.dataKey ?? entry.name ?? 'entry'}-${i}`} className="flex justify-between items-center gap-5">
             <div className="flex items-center gap-1.5">
               <div className="w-2 h-2 rounded-full" style={{ background: entry.stroke ?? entry.fill ?? entry.color }}/>
               <span style={{ color: 'var(--text-muted)' }}>{entry.name ?? entry.dataKey}</span>
@@ -99,7 +122,7 @@ function ChartTip({ active, payload, label }: any) {
 // ─── Card wrapper ─────────────────────────────────────────────────────────────
 
 function AnalyticsCard({ title, sub, accentColor, demo, children }: {
-  title: string; sub?: string; accentColor?: string; demo?: boolean; children: React.ReactNode;
+  title: string; sub?: string; accentColor?: string; demo?: boolean; children: ReactNode;
 }) {
   const color = accentColor ?? 'var(--accent)';
   return (
@@ -137,6 +160,7 @@ function AnalyticsCard({ title, sub, accentColor, demo, children }: {
 export default function AnalyticsTab() {
   const [range, setRange] = useState('24h');
   const [data, setData] = useState<LiveAnalytics | null>(null);
+  const isClient = useIsClient();
 
   useEffect(() => {
     let cancelled = false;
@@ -215,18 +239,20 @@ export default function AnalyticsTab() {
           sub={isLive ? 'Requests and blocked per hour (ClickHouse)' : 'Requests, blocked, and cached per hour'}
           accentColor="var(--accent)">
           <div className="h-48">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={hourData} margin={{ left: -18, bottom: 0 }} barSize={5} barGap={2}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} opacity={0.5}/>
-                <XAxis dataKey="hour" stroke="var(--text-muted)" fontSize={9} tickLine={false} axisLine={false} minTickGap={24}/>
-                <YAxis stroke="var(--text-muted)" fontSize={9} tickLine={false} axisLine={false}
-                  tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : `${v}`}/>
-                <Tooltip content={<ChartTip/>} cursor={{ fill: 'var(--bg-sec)', opacity: 0.6 }}/>
-                <Bar dataKey="requests" name="Requests" fill="var(--accent)" opacity={0.85} radius={[2,2,0,0]}/>
-                <Bar dataKey="blocked"  name="Blocked"  fill="#f87171"       opacity={0.85} radius={[2,2,0,0]}/>
-                {!isLive && <Bar dataKey="cached" name="Cached" fill="#a78bfa" opacity={0.85} radius={[2,2,0,0]}/>}
-              </BarChart>
-            </ResponsiveContainer>
+            {isClient && (
+              <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
+                <BarChart data={hourData} margin={{ left: -18, bottom: 0 }} barSize={5} barGap={2}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} opacity={0.5}/>
+                  <XAxis dataKey="hour" stroke="var(--text-muted)" fontSize={9} tickLine={false} axisLine={false} minTickGap={24}/>
+                  <YAxis stroke="var(--text-muted)" fontSize={9} tickLine={false} axisLine={false}
+                    tickFormatter={v => v >= 1000 ? `${(v/1000).toFixed(0)}k` : `${v}`}/>
+                  <Tooltip content={<ChartTip/>} cursor={{ fill: 'var(--bg-sec)', opacity: 0.6 }}/>
+                  <Bar dataKey="requests" name="Requests" fill="var(--accent)" opacity={0.85} radius={[2,2,0,0]}/>
+                  <Bar dataKey="blocked"  name="Blocked"  fill="#f87171"       opacity={0.85} radius={[2,2,0,0]}/>
+                  {!isLive && <Bar dataKey="cached" name="Cached" fill="#a78bfa" opacity={0.85} radius={[2,2,0,0]}/>}
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
           <div className="flex gap-4 mt-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
             {(isLive
@@ -245,15 +271,17 @@ export default function AnalyticsTab() {
         <AnalyticsCard title="Threat Category Breakdown" sub="Distribution of blocked request types" accentColor="#f87171">
           <div className="flex items-center gap-2">
             <div className="h-48 w-44 shrink-0">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={threatPie} cx="50%" cy="50%" innerRadius={42} outerRadius={68}
-                    dataKey="value" paddingAngle={4} strokeWidth={0}>
-                    {threatPie.map((entry, i) => <Cell key={i} fill={entry.color} opacity={0.9}/>)}
-                  </Pie>
-                  <Tooltip content={<ChartTip/>}/>
-                </PieChart>
-              </ResponsiveContainer>
+              {isClient && (
+                <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
+                  <PieChart>
+                    <Pie data={threatPie} cx="50%" cy="50%" innerRadius={42} outerRadius={68}
+                      dataKey="value" paddingAngle={4} strokeWidth={0}>
+                      {threatPie.map((entry, i) => <Cell key={i} fill={entry.color} opacity={0.9}/>)}
+                    </Pie>
+                    <Tooltip content={<ChartTip/>}/>
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
             </div>
             <div className="flex-1 space-y-2.5">
               {threatPie.map(({ name, value, color }) => (
@@ -280,17 +308,19 @@ export default function AnalyticsTab() {
         {/* Latency Percentiles */}
         <AnalyticsCard title="Latency Percentiles" sub="P50 / P95 / P99 over the last 30 minutes" accentColor="#34d399" demo>
           <div className="h-48">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={LATENCY_DATA} margin={{ left: -18, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} opacity={0.5}/>
-                <XAxis dataKey="min" stroke="var(--text-muted)" fontSize={9} tickLine={false} axisLine={false} minTickGap={24}/>
-                <YAxis stroke="var(--text-muted)" fontSize={9} tickLine={false} axisLine={false} tickFormatter={v => `${v}ms`}/>
-                <Tooltip content={<ChartTip/>} cursor={{ stroke: 'var(--text-muted)', strokeWidth: 1, strokeDasharray: '4 3', opacity: 0.4 }}/>
-                <Line dataKey="p50" name="P50" stroke="#34d399" strokeWidth={1.5} dot={false}/>
-                <Line dataKey="p95" name="P95" stroke="#fb923c" strokeWidth={1.5} dot={false}/>
-                <Line dataKey="p99" name="P99" stroke="#f87171" strokeWidth={1.5} dot={false}/>
-              </LineChart>
-            </ResponsiveContainer>
+            {isClient && (
+              <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
+                <LineChart data={LATENCY_DATA} margin={{ left: -18, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} opacity={0.5}/>
+                  <XAxis dataKey="min" stroke="var(--text-muted)" fontSize={9} tickLine={false} axisLine={false} minTickGap={24}/>
+                  <YAxis stroke="var(--text-muted)" fontSize={9} tickLine={false} axisLine={false} tickFormatter={v => `${v}ms`}/>
+                  <Tooltip content={<ChartTip/>} cursor={{ stroke: 'var(--text-muted)', strokeWidth: 1, strokeDasharray: '4 3', opacity: 0.4 }}/>
+                  <Line dataKey="p50" name="P50" stroke="#34d399" strokeWidth={1.5} dot={false}/>
+                  <Line dataKey="p95" name="P95" stroke="#fb923c" strokeWidth={1.5} dot={false}/>
+                  <Line dataKey="p99" name="P99" stroke="#f87171" strokeWidth={1.5} dot={false}/>
+                </LineChart>
+              </ResponsiveContainer>
+            )}
           </div>
           <div className="flex gap-4 mt-3 text-[11px]" style={{ color: 'var(--text-muted)' }}>
             {[['P50','#34d399'],['P95','#fb923c'],['P99','#f87171']].map(([label, c]) => (
