@@ -62,6 +62,8 @@ TITAN turns LLM usage into a governed security control:
 - Default-deny Cedar policy engine.
 - Dashboard-managed no-code guardrails.
 - Sandboxed WASM custom detectors in Enterprise builds.
+- ASR-backed agent tool sandbox with Firecracker/Docker/simulated runtime
+  selection, cancellation, and audit evidence.
 
 **Enterprise control plane**
 
@@ -89,6 +91,7 @@ Apps / SDKs / Browser DLP
         v
 TITAN Go Gateway  ->  ML Engine  ->  Upstream LLMs
         |
+        +--> ASR: isolated agent tool execution
         +--> Redis: rate limits, cache, usage
         +--> CockroachDB: tenants, keys, policies, audit, settings
         +--> Kafka/Redpanda + ClickHouse: audit stream and analytics
@@ -181,6 +184,7 @@ compliance teams.
 | Policy Engine | Cedar policies, playground evaluation, version history |
 | Browser DLP, DLP Flags | Endpoint-side web UI blocks, redactions, repeat offenders |
 | Audit Logs, Coverage | Audit search/export and OWASP/NIST coverage evidence |
+| Sandboxes | ASR tool execution ledger, launch/cancel controls, backend/risk output |
 | Settings, Edge Routing | Upstreams, guardrails, alerting, rate limits, per-tenant overrides |
 | Team, API Keys, Billing | RBAC users, tenant keys, usage metering, plans and quotas |
 
@@ -269,6 +273,8 @@ TITAN is designed around these invariants:
 - Detected PII/secrets are masked before provider calls and failover retries.
 - Raw prompts are not persisted in audit logs.
 - Control-plane mutations are RBAC-gated and audit-recorded.
+- Agent tool execution can be routed through ASR and recorded with backend,
+  status, risk score, operator, and reason.
 - Kafka is the preferred audit path; DB fallback preserves audit events when
   Kafka is unavailable or produce fails.
 - Browser DLP reports metadata only, never prompt/file contents.

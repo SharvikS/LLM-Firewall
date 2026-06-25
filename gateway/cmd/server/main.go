@@ -35,6 +35,7 @@ import (
 	"github.com/sharvik/llm-firewall/gateway/internal/policy"
 	"github.com/sharvik/llm-firewall/gateway/internal/proxy"
 	"github.com/sharvik/llm-firewall/gateway/internal/ratelimit"
+	"github.com/sharvik/llm-firewall/gateway/internal/sandbox"
 	"github.com/sharvik/llm-firewall/gateway/internal/settings"
 	"github.com/sharvik/llm-firewall/gateway/internal/store"
 	"github.com/sharvik/llm-firewall/gateway/internal/telemetry"
@@ -265,6 +266,14 @@ func main() {
 	}
 	batchMgr := batch.NewManager(batchRedis, mlClient, cfg.TargetURL, cfg.APIKey)
 
+	// ── Agent Security Runtime (sandbox executions) ──────────────────────────
+	sandboxMgr := sandbox.NewManager(cfg.ASRURL, time.Duration(cfg.ASRTimeoutMs)*time.Millisecond)
+	if sandboxMgr.Configured() {
+		log.Info("ASR sandbox execution enabled", slog.String("url", cfg.ASRURL))
+	} else {
+		log.Info("ASR sandbox execution disabled — set ASR_URL to enable")
+	}
+
 	// ── ClickHouse analytics (optional OLAP read path) ────────────────────────
 	chClient := analytics.New(cfg.ClickHouseURL, cfg.ClickHouseUser, cfg.ClickHousePassword, cfg.ClickHouseDatabase)
 	if chClient.Enabled() {
@@ -409,6 +418,7 @@ func main() {
 		DefaultOIDCRole: auth.Role(cfg.OIDCDefaultRole),
 		DashboardURL:    cfg.DashboardURL,
 		PolicyEngine:    policyEngine,
+		Sandbox:         sandboxMgr,
 	}))
 
 	// LLM proxy — all /v1/* routes require a valid API key (fail-closed)

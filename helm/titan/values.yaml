@@ -30,6 +30,7 @@ gateway:
     CACHE_TTL_SEC: "3600"
     SEMANTIC_CACHE_THRESHOLD: "0.95"
     ANALYZER_TIMEOUT_MS: "150"
+    ASR_TIMEOUT_MS: "30000"
   # Distributed tracing — set to an OTLP collector endpoint to enable.
   otlpEndpoint: ""
   istioInject: true
@@ -66,6 +67,7 @@ externalServices:
   kafkaBrokers: "redpanda.platform.svc.cluster.local:9092"
   qdrantURL: "http://qdrant.platform.svc.cluster.local:6333"
   clickhouseURL: "http://clickhouse.platform.svc.cluster.local:8123"
+  asrURL: ""
   targetURL: "https://api.groq.com/openai"
   fallbackTargetURL: ""
 

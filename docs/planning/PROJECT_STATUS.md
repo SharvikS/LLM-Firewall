@@ -1,7 +1,31 @@
 # LLM-Firewall (TITAN Gateway) — Project Status Log
 
 > **Auto-maintained log.** Updated at the end of every major session or when significant changes are made.
-> Last updated: 2026-06-25 (README Restructure)
+> Last updated: 2026-06-25 (Sandbox Control Plane)
+
+---
+
+## 2026-06-25 — Sandbox Control Plane
+
+Turned the dashboard Sandboxes tab from a static preview into a live
+ASR-backed control-plane feature.
+
+**Gateway API** — Added `/admin/v1/sandboxes`, `/admin/v1/sandboxes/execute`,
+and `/admin/v1/sandboxes/{id}` with RBAC (`viewer` read, `security` execute and
+cancel). The gateway keeps a bounded in-memory execution ledger, proxies tool
+execution requests to ASR when `ASR_URL` is configured, records unavailable ASR
+as an explicit error result, and writes completion outcomes into durable audit
+storage.
+
+**ASR contract** — ASR execution responses now include `sandbox_backend`, so the
+control plane can distinguish Firecracker, hardened Docker, simulated fallback,
+and safe allowlist decisions.
+
+**Dashboard** — The Sandboxes tab now loads live executions, launches a tool
+execution, cancels running executions, and displays status, backend, risk,
+runtime, output/reason, gateway-offline, and ASR-not-configured states.
+
+Verification is tracked in the commit for this entry.
 
 ---
 
@@ -250,10 +274,9 @@ client loads it; streaming masker tests pass (incl. cross-chunk SSN/card);
 efficacy benchmark runs both configs and writes reports; gateway build + full Go
 suite green.
 
-**Honest gaps remaining for full GA:** true mTLS (client certs), the 4 "Preview"
-tabs (Team is now live; Billing/Vulnerabilities/Sandboxes still need backends),
-published load/SLO numbers, third-party pentest + SOC2 certification of the
-product itself.
+**Honest gaps remaining for full GA:** true mTLS (client certs), any remaining
+preview-only dashboard surfaces, published load/SLO numbers, third-party pentest
+and SOC 2 certification of the product itself.
 
 ## 2026-06-14 — Investor-Demo Readiness Session
 

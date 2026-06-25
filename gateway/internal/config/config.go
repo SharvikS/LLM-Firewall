@@ -87,6 +87,11 @@ type Config struct {
 	// Empty (default) leaves the endpoint open for localhost dev.
 	BrowserEventToken string
 
+	// Agent Security Runtime (ASR) — optional sandbox execution service.
+	// When empty, sandbox Admin APIs stay available but report ASR unavailable.
+	ASRURL       string
+	ASRTimeoutMs int
+
 	// DLPFlagThreshold — a subject is flagged as a repeat offender once their
 	// violation count EXCEEDS this (default 3 → flagged on the 4th violation).
 	DLPFlagThreshold int
@@ -189,6 +194,8 @@ func Load() (*Config, error) {
 		AdminToken: getEnvWithFile("ADMIN_TOKEN", "titan-admin-dev-secret"),
 
 		BrowserEventToken: getEnvWithFile("BROWSER_EVENT_TOKEN", ""),
+		ASRURL:            getEnv("ASR_URL", ""),
+		ASRTimeoutMs:      getEnvInt("ASR_TIMEOUT_MS", 30000),
 		DLPFlagThreshold:  getEnvInt("DLP_FLAG_THRESHOLD", 3),
 
 		AuthSigningSecret:    getEnvWithFile("AUTH_SIGNING_SECRET", "titan-dev-signing-secret-change-me"),

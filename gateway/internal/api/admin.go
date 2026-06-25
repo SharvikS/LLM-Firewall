@@ -22,6 +22,7 @@ import (
 	"github.com/sharvik/llm-firewall/gateway/internal/billing"
 	"github.com/sharvik/llm-firewall/gateway/internal/logger"
 	"github.com/sharvik/llm-firewall/gateway/internal/policy"
+	sandboxrt "github.com/sharvik/llm-firewall/gateway/internal/sandbox"
 	"github.com/sharvik/llm-firewall/gateway/internal/settings"
 	"github.com/sharvik/llm-firewall/gateway/internal/store"
 )
@@ -40,6 +41,7 @@ type AdminDeps struct {
 	DefaultOIDCRole auth.Role
 	DashboardURL    string // SSO bounce-back target
 	PolicyEngine    *policy.Engine
+	Sandbox         *sandboxrt.Manager
 }
 
 // NewAdminRouter builds the /admin/v1 Chi sub-router with authentication and
@@ -64,6 +66,7 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 	uph := &upstreamHandler{}
 	alh := &alertsHandler{dispatcher: d.Alerts, mgr: d.Settings}
 	dfh := &dlpFlagsHandler{st: d.Store, audit: audit}
+	sbh := &sandboxHandler{mgr: d.Sandbox, st: d.Store}
 	ah := &authHandler{
 		st:           d.Store,
 		issuer:       d.Issuer,
@@ -97,6 +100,7 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 		r.With(requireRole(auth.RoleViewer)).Get("/billing/usage", bh.listUsage)
 		r.With(requireRole(auth.RoleViewer)).Get("/billing/plans", bh.listPlans)
 		r.With(requireRole(auth.RoleViewer)).Get("/security/vulnerabilities", sech.scanReport)
+		r.With(requireRole(auth.RoleViewer)).Get("/sandboxes", sbh.list)
 
 		// DLP repeat-offender flags (endpoint-side) — viewer reads, security acks.
 		r.With(requireRole(auth.RoleViewer)).Get("/dlp/flags", dfh.listFlags)
@@ -115,6 +119,8 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 		r.With(requireRole(auth.RoleSecurity)).Post("/upstream/test", uph.test)
 		r.With(requireRole(auth.RoleSecurity)).Post("/alerts/test", alh.sendTest)
 		r.With(requireRole(auth.RoleSecurity)).Post("/dlp/flags/{id}/ack", dfh.ackFlag)
+		r.With(requireRole(auth.RoleSecurity)).Post("/sandboxes/execute", sbh.execute)
+		r.With(requireRole(auth.RoleSecurity)).Delete("/sandboxes/{id}", sbh.cancel)
 		r.With(requireRole(auth.RoleSecurity)).Post("/tenants", h.createTenant)
 		r.With(requireRole(auth.RoleSecurity)).Post("/policies/evaluate", h.evaluatePolicy)
 		r.With(requireRole(auth.RoleSecurity)).Post("/policies", h.createPolicy)

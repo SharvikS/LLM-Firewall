@@ -55,6 +55,8 @@ spec:
               value: {{ .Values.externalServices.qdrantURL | quote }}
             - name: CLICKHOUSE_URL
               value: {{ .Values.externalServices.clickhouseURL | quote }}
+            - name: ASR_URL
+              value: {{ .Values.externalServices.asrURL | quote }}
             - name: ANALYZER_ADDR
               value: "{{ include "titan.fullname" . }}-ml:50051"
             - name: EMBEDDING_URL

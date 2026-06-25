@@ -37,6 +37,8 @@ Set these gateway environment values:
 | `CLICKHOUSE_URL` | Required for analytics dashboards |
 | `KAFKA_BROKERS` | Regional Redpanda/Kafka brokers |
 | `DB_CONN_STRING` | CockroachDB regional endpoint with TLS |
+| `ASR_URL` | Optional but required for live sandbox execution from the dashboard |
+| `ASR_TIMEOUT_MS` | Sandbox execution request timeout; default `30000` |
 
 ## Preflight Checklist
 
@@ -47,8 +49,10 @@ Set these gateway environment values:
 5. Verify `/admin/v1/audit` contains request and control-plane events.
 6. Verify the SIEM collector receives `titan.siem.v1` events.
 7. Run `scripts/redteam-eval.py --gateway https://<gateway> --api-key <tenant-key>`.
-8. Export compliance coverage from `/admin/v1/compliance/coverage`.
-9. Run a backup and restore drill using `docs/operations/DR_RUNBOOK.md`.
+8. If ASR is enabled, launch one `run_bash` sandbox execution and confirm the
+   result appears in `/admin/v1/sandboxes` and audit logs.
+9. Export compliance coverage from `/admin/v1/compliance/coverage`.
+10. Run a backup and restore drill using `docs/operations/DR_RUNBOOK.md`.
 
 ## Runtime SLOs
 
@@ -74,6 +78,7 @@ Document this per customer:
 | Redis rate limit/cache | Degrade/fail open |
 | ML analyzer | Fail open on transport error |
 | Output scanning | Fail open on transport error |
+| ASR sandbox execution | Fail closed for unknown tools; dashboard reports unavailable without `ASR_URL` |
 | Browser DLP strict mode | Operator configurable |
 | SIEM webhook | Fail open; delivery errors logged |
 

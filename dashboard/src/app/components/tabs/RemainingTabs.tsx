@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Cpu, Globe, Plus, Trash2, Loader2, Check, AlertTriangle, X,
+  Cpu, Globe, Plus, Trash2, Loader2, Check, AlertTriangle, X, Play, Square, Terminal,
 } from 'lucide-react';
 import { fetchSettings, saveSettings, type GatewaySettings } from '@/lib/settings';
 import { ROLE_LABEL, type Role } from '@/lib/me';
@@ -590,26 +590,144 @@ export function DataPrivacyTab() {
   );
 }
 
-// ─── Sandboxes (preview) ─────────────────────────────────────────────────────
+// ─── Sandboxes (live — ASR-backed execution control plane) ──────────────────
 
-const SANDBOXES = [
-  { id: 'sb-001', agent: 'DevOps-Agent-3',  tool: 'run_bash', status: 'running', cpu: '12%', mem: '48MB', started: '2m ago', riskScore: 4.2 },
-  { id: 'sb-002', agent: 'SupportBot-7',    tool: 'read_file', status: 'running', cpu: '3%',  mem: '22MB', started: '8m ago', riskScore: 1.8 },
-  { id: 'sb-003', agent: 'DataAgent-Prod',  tool: 'write_file',status: 'paused',  cpu: '0%',  mem: '36MB', started: '15m ago',riskScore: 5.1 },
-  { id: 'sb-004', agent: 'Scraper-Legacy',  tool: 'send_email',status: 'running', cpu: '7%',  mem: '31MB', started: '1h ago', riskScore: 3.4 },
-];
+interface SandboxExecution {
+  id: string;
+  agent_id: string;
+  tool_name: string;
+  command?: string;
+  status: 'running' | 'allowed' | 'blocked' | 'approval_required' | 'cancelled' | 'error' | string;
+  backend?: string;
+  allowed: boolean;
+  human_approval_required: boolean;
+  risk_scores?: Record<string, number>;
+  output?: string;
+  reason?: string;
+  error?: string;
+  started_at: string;
+  completed_at?: string;
+  elapsed_ms?: number;
+}
+
+function sandboxRiskScore(e: SandboxExecution) {
+  const scores = e.risk_scores ?? {};
+  if (typeof scores.overall_risk === 'number') return scores.overall_risk;
+  return Object.values(scores).reduce((max, score) => Math.max(max, score), 0);
+}
+
+function sandboxStatusColor(status: string) {
+  if (status === 'allowed') return 'bg-green-400/10 text-green-400';
+  if (status === 'running') return 'bg-blue-400/10 text-blue-300';
+  if (status === 'approval_required') return 'bg-yellow-400/10 text-yellow-400';
+  if (status === 'blocked' || status === 'error') return 'bg-red-400/10 text-red-400';
+  return 'bg-base-sec text-base-muted';
+}
+
+function formatSandboxTime(value?: string) {
+  if (!value) return 'pending';
+  const ms = Date.now() - new Date(value).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return 'just now';
+  const minutes = Math.floor(ms / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.floor(minutes / 60)}h ago`;
+}
 
 export function SandboxesTab() {
-  const [sandboxes, setSandboxes] = useState(SANDBOXES);
-  const kill = (id: string) => setSandboxes(ss => ss.filter(s => s.id !== id));
+  const [executions, setExecutions] = useState<SandboxExecution[]>([]);
+  const [configured, setConfigured] = useState(false);
+  const [state, setState] = useState<'loading' | 'ready' | 'offline'>('loading');
+  const [submitting, setSubmitting] = useState(false);
+  const [opError, setOpError] = useState('');
+  const [form, setForm] = useState({
+    agent_id: 'dashboard-agent',
+    tool_name: 'run_bash',
+    command: 'echo titan-sandbox-ok',
+    timeout_sec: 10,
+  });
+
+  const loadSandboxes = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/sandboxes', { cache: 'no-store' });
+      const data = await res.json();
+      if (!res.ok || data?._offline) {
+        setState('offline');
+        return;
+      }
+      setExecutions(data.executions ?? []);
+      setConfigured(!!data.configured);
+      setState('ready');
+    } catch {
+      setState('offline');
+    }
+  }, []);
+
+  useEffect(() => {
+    const initial = setTimeout(loadSandboxes, 0);
+    const timer = setInterval(loadSandboxes, 4000);
+    return () => {
+      clearTimeout(initial);
+      clearInterval(timer);
+    };
+  }, [loadSandboxes]);
+
+  const startExecution = async () => {
+    setSubmitting(true);
+    setOpError('');
+    try {
+      const res = await fetch('/api/admin/sandboxes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setOpError(data?.error ?? 'Sandbox execution failed');
+        return;
+      }
+      if (data?.execution) setExecutions(prev => [data.execution, ...prev.filter(e => e.id !== data.execution.id)]);
+      setConfigured(!!data.configured);
+      setTimeout(loadSandboxes, 1200);
+    } catch {
+      setState('offline');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const cancelExecution = async (id: string) => {
+    setOpError('');
+    try {
+      const res = await fetch(`/api/admin/sandboxes/${id}`, { method: 'DELETE' });
+      const data = await res.json();
+      if (!res.ok) {
+        setOpError(data?.error ?? 'Cancel failed');
+        return;
+      }
+      setTimeout(loadSandboxes, 600);
+    } catch {
+      setState('offline');
+    }
+  };
+
+  const active = executions.filter(e => e.status === 'running').length;
+  const blocked = executions.filter(e => e.status === 'blocked' || e.status === 'approval_required' || e.status === 'error').length;
+  const avgRisk = executions.length ? (executions.reduce((sum, e) => sum + sandboxRiskScore(e), 0) / executions.length).toFixed(1) : '0.0';
+
   return (
     <div className="max-w-4xl mx-auto">
-      <PageHeader title="Sandboxes" sub="Active Firecracker/Docker sandbox environments for agent tool execution." badge="Preview"/>
+      <PageHeader
+        title="Sandboxes"
+        sub="ASR-backed isolated tool execution with operator cancellation and audit trail."
+        badge={state === 'offline' ? 'Gateway offline' : configured ? 'Live' : 'Needs ASR_URL'}
+        badgeColor={state !== 'offline' && configured ? 'green' : 'yellow'}
+      />
       <div className="grid grid-cols-3 gap-4 mb-6">
         {[
-          { label: 'Active',  value: sandboxes.filter(s => s.status === 'running').length, color: 'text-green-400' },
-          { label: 'Paused',  value: sandboxes.filter(s => s.status === 'paused').length,  color: 'text-yellow-400' },
-          { label: 'Avg Risk',value: (sandboxes.reduce((a, b) => a + b.riskScore, 0) / sandboxes.length).toFixed(1), color: 'text-base-text' },
+          { label: 'Active', value: active, color: 'text-blue-300' },
+          { label: 'Blocked', value: blocked, color: 'text-red-400' },
+          { label: 'Avg Risk', value: avgRisk, color: 'text-base-text' },
         ].map(({ label, value, color }) => (
           <Card key={label} className="text-center">
             <div className="text-xs text-base-muted uppercase tracking-widest mb-1">{label}</div>
@@ -617,27 +735,110 @@ export function SandboxesTab() {
           </Card>
         ))}
       </div>
+      <Card className="mb-6">
+        <div className="grid gap-3 md:grid-cols-[1fr_160px_120px_auto]">
+          <label className="text-xs text-base-muted">
+            <span className="block mb-1">Command</span>
+            <div className="flex items-center gap-2 rounded-lg border border-base-border bg-base-sec/30 px-3 py-2">
+              <Terminal size={14} className="text-base-muted shrink-0"/>
+              <input
+                value={form.command}
+                onChange={e => setForm(f => ({ ...f, command: e.target.value }))}
+                className="min-w-0 flex-1 bg-transparent text-sm text-base-text outline-none"
+              />
+            </div>
+          </label>
+          <label className="text-xs text-base-muted">
+            <span className="block mb-1">Tool</span>
+            <select
+              value={form.tool_name}
+              onChange={e => setForm(f => ({ ...f, tool_name: e.target.value }))}
+              className="w-full rounded-lg border border-base-border bg-base-sec/30 px-3 py-2 text-sm text-base-text outline-none"
+            >
+              <option value="run_bash">run_bash</option>
+              <option value="python3">python3</option>
+              <option value="read_file">read_file</option>
+            </select>
+          </label>
+          <label className="text-xs text-base-muted">
+            <span className="block mb-1">Timeout</span>
+            <input
+              type="number"
+              min={1}
+              max={120}
+              value={form.timeout_sec}
+              onChange={e => setForm(f => ({ ...f, timeout_sec: Number(e.target.value) || 10 }))}
+              className="w-full rounded-lg border border-base-border bg-base-sec/30 px-3 py-2 text-sm text-base-text outline-none"
+            />
+          </label>
+          <button
+            onClick={startExecution}
+            disabled={submitting || !form.tool_name}
+            className="self-end inline-flex h-[38px] items-center justify-center gap-2 rounded-lg border border-base-accent/40 bg-base-accent/15 px-4 text-sm font-semibold text-base-accent transition-colors hover:bg-base-accent/25 disabled:opacity-50"
+          >
+            {submitting ? <Loader2 size={14} className="animate-spin"/> : <Play size={14}/>}
+            Run
+          </button>
+        </div>
+        {opError && <div className="mt-3 text-xs text-red-400">{opError}</div>}
+        {!configured && state === 'ready' && (
+          <div className="mt-3 text-xs text-yellow-500">Gateway is reachable, but ASR_URL is not configured. Runs are recorded as unavailable until the ASR service URL is set.</div>
+        )}
+      </Card>
       <Card>
         <div className="space-y-3">
-          {sandboxes.map(s => (
-            <div key={s.id} className="flex items-center gap-4 px-4 py-3 border border-base-border/60 rounded-lg">
-              <div className={`w-2 h-2 rounded-full shrink-0 ${s.status === 'running' ? 'bg-green-400 animate-pulse' : 'bg-yellow-400'}`}/>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-medium text-base-text">{s.agent}</div>
-                <div className="text-xs text-base-muted"><code className="font-mono">{s.tool}</code> · started {s.started}</div>
-              </div>
-              <div className="hidden md:flex gap-4 text-xs text-base-muted">
-                <span>CPU {s.cpu}</span>
-                <span>MEM {s.mem}</span>
-                <span className={`font-semibold ${s.riskScore >= 5 ? 'text-orange-400' : 'text-green-400'}`}>Risk {s.riskScore}</span>
-              </div>
-              <button onClick={() => kill(s.id)} className="px-3 py-1 text-xs text-red-400 border border-red-400/30 bg-red-400/5 rounded-md hover:bg-red-400/10 transition-colors font-medium">Kill</button>
+          {state === 'loading' && (
+            <div className="py-10 text-center text-base-muted">
+              <Loader2 size={24} className="mx-auto mb-2 animate-spin opacity-50"/>
+              <p className="text-sm">Loading sandbox ledger.</p>
             </div>
-          ))}
-          {sandboxes.length === 0 && (
+          )}
+          {state === 'offline' && (
+            <div className="py-10 text-center text-yellow-500">
+              <AlertTriangle size={24} className="mx-auto mb-2 opacity-70"/>
+              <p className="text-sm">Gateway offline — sandbox controls unavailable.</p>
+            </div>
+          )}
+          {state === 'ready' && executions.map(s => {
+            const risk = sandboxRiskScore(s);
+            return (
+              <div key={s.id} className="grid gap-3 rounded-lg border border-base-border/60 px-4 py-3 md:grid-cols-[1fr_auto_auto] md:items-center">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className={`h-2 w-2 rounded-full shrink-0 ${s.status === 'running' ? 'bg-blue-300 animate-pulse' : s.allowed ? 'bg-green-400' : 'bg-red-400'}`}/>
+                    <span className="text-sm font-medium text-base-text">{s.agent_id}</span>
+                    <Tag label={s.status.replaceAll('_', ' ')} color={sandboxStatusColor(s.status)}/>
+                    {s.backend && <Tag label={s.backend} color="bg-base-sec text-base-muted"/>}
+                  </div>
+                  <div className="mt-1 text-xs text-base-muted">
+                    <code className="font-mono">{s.tool_name}</code>
+                    {s.command && <> · <code className="font-mono">{s.command}</code></>}
+                    {' '}· started {formatSandboxTime(s.started_at)}
+                    {s.elapsed_ms ? ` · ${s.elapsed_ms}ms` : ''}
+                  </div>
+                  {(s.output || s.reason || s.error) && (
+                    <div className="mt-2 line-clamp-2 rounded-md bg-base-sec/45 px-3 py-2 text-xs text-base-muted">
+                      {s.output || s.reason || s.error}
+                    </div>
+                  )}
+                </div>
+                <div className={`text-xs font-semibold ${risk >= 5 ? 'text-yellow-400' : 'text-green-400'}`}>
+                  Risk {risk.toFixed(1)}
+                </div>
+                {s.status === 'running' ? (
+                  <button onClick={() => cancelExecution(s.id)} className="inline-flex items-center justify-center gap-2 rounded-md border border-red-400/30 bg-red-400/5 px-3 py-1.5 text-xs font-medium text-red-400 transition-colors hover:bg-red-400/10">
+                    <Square size={12}/> Stop
+                  </button>
+                ) : (
+                  <span className="hidden md:block text-xs text-base-muted">{s.completed_at ? formatSandboxTime(s.completed_at) : 'pending'}</span>
+                )}
+              </div>
+            );
+          })}
+          {state === 'ready' && executions.length === 0 && (
             <div className="py-10 text-center text-base-muted">
               <Cpu size={24} className="mx-auto mb-2 opacity-30"/>
-              <p className="text-sm">No active sandboxes.</p>
+              <p className="text-sm">No sandbox executions recorded yet.</p>
             </div>
           )}
         </div>

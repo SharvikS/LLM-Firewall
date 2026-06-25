@@ -235,6 +235,8 @@ services:
       CLICKHOUSE_URL: "http://clickhouse:8123"
       CLICKHOUSE_USER: "default"
       CLICKHOUSE_DATABASE: "titan"
+      ASR_URL: "${ASR_URL:-}"
+      ASR_TIMEOUT_MS: "${ASR_TIMEOUT_MS:-30000}"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
       OTEL_SERVICE_NAME: "titan-gateway"
       # WASM custom-rule plugins baked into the image at /plugins (sample:

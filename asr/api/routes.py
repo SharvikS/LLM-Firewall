@@ -42,6 +42,7 @@ class ExecutionResponse(BaseModel):
     allowed: bool
     risk_scores: Dict[str, float]
     sandbox_output: Optional[str] = None
+    sandbox_backend: Optional[str] = None
     human_approval_required: bool = False
     reason: str
 
@@ -76,17 +77,20 @@ async def evaluate_and_execute(req: ToolExecutionRequest):
         if sandbox_res["status"] == "error":
             return ExecutionResponse(
                 allowed=False, risk_scores=risk,
+                sandbox_backend=sandbox_res.get("sandbox"),
                 reason=f"Sandbox Error: {sandbox_res.get('error')}",
             )
         return ExecutionResponse(
             allowed=True, risk_scores=risk,
             sandbox_output=sandbox_res["output"],
+            sandbox_backend=sandbox_res.get("sandbox"),
             reason="Executed inside sandbox.",
         )
 
     if req.tool_name in _KNOWN_SAFE_TOOLS:
         return ExecutionResponse(
             allowed=True, risk_scores=risk,
+            sandbox_backend="direct-allowlist",
             reason="Tool is in known-safe allowlist.",
         )
 

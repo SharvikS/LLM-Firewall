@@ -15,6 +15,7 @@
     { "name": "API Keys", "description": "Tenant-scoped API key issuance and revocation" },
     { "name": "Policies", "description": "ABAC policy CRUD" },
     { "name": "Audit", "description": "Audit log query" },
+    { "name": "Sandboxes", "description": "ASR-backed agent tool execution control plane" },
     { "name": "Metrics", "description": "Aggregate gateway metrics and threat feed" },
     { "name": "Proxy", "description": "LLM data-plane proxy" },
     { "name": "Batch", "description": "Asynchronous bulk-prompt processing" }
@@ -123,6 +124,31 @@
           { "name": "offset", "in": "query", "schema": { "type": "integer", "default": 0 } }
         ],
         "responses": { "200": { "description": "Audit events", "content": { "application/json": { "schema": { "type": "object", "properties": { "events": { "type": "array", "items": { "$ref": "#/components/schemas/AuditEvent" } }, "total": { "type": "integer" }, "limit": { "type": "integer" }, "offset": { "type": "integer" } } } } } }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/admin/v1/sandboxes": {
+      "get": {
+        "tags": ["Sandboxes"],
+        "summary": "List sandbox executions",
+        "description": "Returns the bounded in-memory ASR execution ledger. Viewer role or higher.",
+        "responses": { "200": { "description": "Sandbox execution ledger", "content": { "application/json": { "schema": { "type": "object", "properties": { "configured": { "type": "boolean" }, "executions": { "type": "array", "items": { "$ref": "#/components/schemas/SandboxExecution" } }, "count": { "type": "integer" } } } } } }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/admin/v1/sandboxes/execute": {
+      "post": {
+        "tags": ["Sandboxes"],
+        "summary": "Start a sandbox execution",
+        "description": "Starts an ASR-backed agent tool execution. Security role or higher. Completion is audit-recorded.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SandboxExecuteRequest" } } } },
+        "responses": { "202": { "description": "Execution accepted", "content": { "application/json": { "schema": { "type": "object", "properties": { "configured": { "type": "boolean" }, "execution": { "$ref": "#/components/schemas/SandboxExecution" } } } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/admin/v1/sandboxes/{id}": {
+      "delete": {
+        "tags": ["Sandboxes"],
+        "summary": "Cancel a running sandbox execution",
+        "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } } ],
+        "responses": { "200": { "description": "Cancellation requested", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "example": "cancelling" }, "execution": { "$ref": "#/components/schemas/SandboxExecution" } } } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" } }
       }
     },
     "/v1/batch": {
@@ -251,6 +277,37 @@
           "reason": { "type": "string", "nullable": true },
           "region": { "type": "string" },
           "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "SandboxExecuteRequest": {
+        "type": "object",
+        "required": ["tool_name"],
+        "properties": {
+          "agent_id": { "type": "string", "default": "dashboard" },
+          "tool_name": { "type": "string", "example": "run_bash" },
+          "command": { "type": "string", "example": "echo titan-sandbox-ok" },
+          "arguments": { "type": "object", "additionalProperties": true },
+          "timeout_sec": { "type": "integer", "default": 30 }
+        }
+      },
+      "SandboxExecution": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "agent_id": { "type": "string" },
+          "tool_name": { "type": "string" },
+          "command": { "type": "string" },
+          "status": { "type": "string", "enum": ["running", "allowed", "blocked", "approval_required", "cancelled", "error"] },
+          "backend": { "type": "string", "nullable": true },
+          "allowed": { "type": "boolean" },
+          "human_approval_required": { "type": "boolean" },
+          "risk_scores": { "type": "object", "additionalProperties": { "type": "number" } },
+          "output": { "type": "string", "nullable": true },
+          "reason": { "type": "string", "nullable": true },
+          "error": { "type": "string", "nullable": true },
+          "started_at": { "type": "string", "format": "date-time" },
+          "completed_at": { "type": "string", "format": "date-time", "nullable": true },
+          "elapsed_ms": { "type": "integer", "format": "int64" }
         }
       },
       "Metrics": {
