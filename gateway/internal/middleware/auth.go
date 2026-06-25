@@ -33,6 +33,7 @@ type AuthContext struct {
 	Tier         string // plan tier — drives billing quota enforcement
 	APIKeyID     uuid.UUID
 	RateLimitRPM int
+	Sandbox      store.APISandbox
 }
 
 type authCacheEntry struct {
@@ -139,6 +140,7 @@ func APIKeyAuthWithCache(st APIKeyAuthStore, ttl time.Duration) func(http.Handle
 				Tier:         tenant.Tier,
 				APIKeyID:     apiKey.ID,
 				RateLimitRPM: tenant.RateLimitRPM,
+				Sandbox:      apiKey.Sandbox,
 			}
 			cache.set(hash, authCtx)
 			ctx := context.WithValue(r.Context(), AuthCtxKey, authCtx)

@@ -5,8 +5,10 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,14 +26,28 @@ type APIKey struct {
 	KeyPrefix  string     `json:"key_prefix"`
 	Active     bool       `json:"active"`
 	Requests   int64      `json:"requests"`
+	Sandbox    APISandbox `json:"sandbox"`
 	LastUsedAt *time.Time `json:"last_used_at"`
 	CreatedAt  time.Time  `json:"created_at"`
+}
+
+// APISandbox is the per-firewall-key request sandbox. It constrains what a
+// client can do after pointing its SDK at TITAN with this API key.
+type APISandbox struct {
+	Enabled              bool     `json:"enabled"`
+	AllowedModels        []string `json:"allowed_models,omitempty"`
+	BlockedModels        []string `json:"blocked_models,omitempty"`
+	AllowedPaths         []string `json:"allowed_paths,omitempty"`
+	MaxRequestsPerMinute int      `json:"max_requests_per_minute,omitempty"`
+	MaxTokensPerMinute   int      `json:"max_tokens_per_minute,omitempty"`
+	RequirePIIRedaction  bool     `json:"require_pii_redaction,omitempty"`
+	RequireOutputScan    bool     `json:"require_output_scan,omitempty"`
 }
 
 // GetByHash looks up a key by SHA-256(rawKey).  Returns nil, nil on miss.
 func (s *Store) GetAPIKeyByHash(ctx context.Context, hash string) (*APIKey, error) {
 	row := s.pool.QueryRow(ctx,
-		`SELECT id,tenant_id,name,key_hash,key_prefix,active,requests,last_used_at,created_at
+		`SELECT id,tenant_id,name,key_hash,key_prefix,active,requests,sandbox,last_used_at,created_at
 		   FROM api_keys WHERE key_hash=$1 AND active=true`,
 		hash,
 	)
@@ -46,11 +62,11 @@ func (s *Store) ListAPIKeys(ctx context.Context, tenantID uuid.UUID) ([]APIKey, 
 	)
 	if tenantID == uuid.Nil {
 		rows, err = s.pool.Query(ctx,
-			`SELECT id,tenant_id,name,key_hash,key_prefix,active,requests,last_used_at,created_at
+			`SELECT id,tenant_id,name,key_hash,key_prefix,active,requests,sandbox,last_used_at,created_at
 			   FROM api_keys ORDER BY created_at DESC`)
 	} else {
 		rows, err = s.pool.Query(ctx,
-			`SELECT id,tenant_id,name,key_hash,key_prefix,active,requests,last_used_at,created_at
+			`SELECT id,tenant_id,name,key_hash,key_prefix,active,requests,sandbox,last_used_at,created_at
 			   FROM api_keys WHERE tenant_id=$1 ORDER BY created_at DESC`, tenantID)
 	}
 	if err != nil {
@@ -82,14 +98,29 @@ func (s *Store) GenerateAPIKey(ctx context.Context, tenantID uuid.UUID, name str
 	// "titan_" + 8 hex chars = 4 billion unique prefixes while remaining readable.
 	prefix := raw[:14]
 
-	k := &APIKey{}
-	err = s.pool.QueryRow(ctx,
+	row := s.pool.QueryRow(ctx,
 		`INSERT INTO api_keys(tenant_id,name,key_hash,key_prefix)
 		 VALUES($1,$2,$3,$4)
-		 RETURNING id,tenant_id,name,key_hash,key_prefix,active,requests,last_used_at,created_at`,
+		 RETURNING id,tenant_id,name,key_hash,key_prefix,active,requests,sandbox,last_used_at,created_at`,
 		tenantID, name, hash, prefix,
-	).Scan(&k.ID, &k.TenantID, &k.Name, &k.KeyHash, &k.KeyPrefix, &k.Active, &k.Requests, &k.LastUsedAt, &k.CreatedAt)
+	)
+	k, err := scanAPIKey(row)
 	return raw, k, err
+}
+
+// UpdateAPIKeySandbox replaces the sandbox profile attached to an API key.
+func (s *Store) UpdateAPIKeySandbox(ctx context.Context, id uuid.UUID, sandbox APISandbox) (*APIKey, error) {
+	normalized := normalizeSandbox(sandbox)
+	raw, err := json.Marshal(normalized)
+	if err != nil {
+		return nil, fmt.Errorf("marshal sandbox: %w", err)
+	}
+	row := s.pool.QueryRow(ctx,
+		`UPDATE api_keys SET sandbox=$2 WHERE id=$1
+		 RETURNING id,tenant_id,name,key_hash,key_prefix,active,requests,sandbox,last_used_at,created_at`,
+		id, raw,
+	)
+	return scanAPIKey(row)
 }
 
 // RevokeAPIKey soft-deletes a key (sets active=false).
@@ -179,10 +210,55 @@ func generateRawKey() (string, error) {
 
 func scanAPIKey(row interface{ Scan(dest ...any) error }) (*APIKey, error) {
 	var k APIKey
+	var sandboxRaw []byte
 	err := row.Scan(&k.ID, &k.TenantID, &k.Name, &k.KeyHash, &k.KeyPrefix,
-		&k.Active, &k.Requests, &k.LastUsedAt, &k.CreatedAt)
+		&k.Active, &k.Requests, &sandboxRaw, &k.LastUsedAt, &k.CreatedAt)
 	if err == pgx.ErrNoRows {
 		return nil, nil
 	}
+	if err != nil {
+		return nil, err
+	}
+	k.Sandbox = defaultSandbox()
+	if len(sandboxRaw) > 0 {
+		_ = json.Unmarshal(sandboxRaw, &k.Sandbox)
+		k.Sandbox = normalizeSandbox(k.Sandbox)
+	}
 	return &k, err
+}
+
+func defaultSandbox() APISandbox {
+	return APISandbox{
+		AllowedPaths: []string{"/v1/chat/completions", "/v1/completions", "/v1/embeddings"},
+	}
+}
+
+func normalizeSandbox(s APISandbox) APISandbox {
+	s.AllowedModels = cleanStringList(s.AllowedModels)
+	s.BlockedModels = cleanStringList(s.BlockedModels)
+	s.AllowedPaths = cleanStringList(s.AllowedPaths)
+	if len(s.AllowedPaths) == 0 {
+		s.AllowedPaths = defaultSandbox().AllowedPaths
+	}
+	if s.MaxRequestsPerMinute < 0 {
+		s.MaxRequestsPerMinute = 0
+	}
+	if s.MaxTokensPerMinute < 0 {
+		s.MaxTokensPerMinute = 0
+	}
+	return s
+}
+
+func cleanStringList(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		v = strings.TrimSpace(v)
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
 }

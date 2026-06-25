@@ -1,7 +1,33 @@
 # LLM-Firewall (TITAN Gateway) — Project Status Log
 
 > **Auto-maintained log.** Updated at the end of every major session or when significant changes are made.
-> Last updated: 2026-06-25 (Sandbox Control Plane)
+> Last updated: 2026-06-25 (API-Key Sandboxes)
+
+---
+
+## 2026-06-25 — API-Key Sandboxes
+
+Added the model-endpoint sandbox the product needs for customer apps: sandbox
+restrictions are now attached directly to firewall API keys and enforced before
+any upstream provider routing.
+
+Each key can now define allowed models, blocked models, allowed `/v1/*` paths,
+per-key RPM/TPM limits, and required privacy controls such as PII redaction and
+output scanning. The dashboard API Keys tab exposes an inline sandbox editor, and
+the gateway records sandbox blocks/rate-limit outcomes as audit events.
+
+This is separate from the ASR execution sandbox: API-key sandboxes constrain LLM
+model access for normal SDK traffic, while ASR sandboxes isolate agent tool/code
+execution.
+
+Verification:
+
+- `cd gateway && go test ./...` passed.
+- `cd gateway && go test -tags enterprise ./...` passed.
+- `cd dashboard && npm run lint -- --max-warnings=0` passed.
+- `cd dashboard && npx tsc --noEmit` passed.
+- `cd dashboard && npm run build` passed.
+- OpenAPI JSON parse and `git diff --check` passed.
 
 ---
 

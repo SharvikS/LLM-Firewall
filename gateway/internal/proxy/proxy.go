@@ -301,6 +301,68 @@ func (p *LLMProxy) firstGuardrailHit(rules []settings.Guardrail, body []byte) (s
 	return "", false
 }
 
+func (p *LLMProxy) checkKeySandbox(s store.APISandbox, path, model string, set settings.Settings) (bool, string) {
+	if !s.Enabled {
+		return false, ""
+	}
+	if len(s.AllowedPaths) > 0 && !matchesAny(path, s.AllowedPaths) {
+		return true, fmt.Sprintf("API key sandbox blocks path %q", path)
+	}
+	if len(s.BlockedModels) > 0 && matchesAny(model, s.BlockedModels) {
+		return true, fmt.Sprintf("API key sandbox blocks model %q", model)
+	}
+	if len(s.AllowedModels) > 0 && !matchesAny(model, s.AllowedModels) {
+		return true, fmt.Sprintf("API key sandbox allows only approved models; %q is not allowed", model)
+	}
+	if s.RequirePIIRedaction && !set.PIIRedactionEnabled {
+		return true, "API key sandbox requires PII redaction to be enabled"
+	}
+	if s.RequireOutputScan && !set.OutputScanEnabled {
+		return true, "API key sandbox requires output response scanning to be enabled"
+	}
+	return false, ""
+}
+
+func matchesAny(value string, patterns []string) bool {
+	value = strings.ToLower(strings.TrimSpace(value))
+	for _, pattern := range patterns {
+		pattern = strings.ToLower(strings.TrimSpace(pattern))
+		if pattern == "" {
+			continue
+		}
+		if wildcardMatch(pattern, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func wildcardMatch(pattern, value string) bool {
+	if pattern == "*" || pattern == value {
+		return true
+	}
+	parts := strings.Split(pattern, "*")
+	if len(parts) == 1 {
+		return pattern == value
+	}
+	if !strings.HasPrefix(value, parts[0]) {
+		return false
+	}
+	pos := len(parts[0])
+	for _, part := range parts[1 : len(parts)-1] {
+		if part == "" {
+			continue
+		}
+		idx := strings.Index(value[pos:], part)
+		if idx < 0 {
+			return false
+		}
+		pos += idx + len(part)
+	}
+	last := parts[len(parts)-1]
+	return last == "" || strings.HasSuffix(value, last)
+}
+
 func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	reqID := chimiddleware.GetReqID(r.Context())
@@ -346,6 +408,59 @@ func (p *LLMProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	metrics.Global.TotalRequests.Add(1)
 	metrics.HourlyTraffic.Record(false)
+
+	// Stage 2b: API-key sandbox. This is the per-key boundary configured in the
+	// dashboard: model/path allowlists, model denylists, per-key RPM/TPM caps,
+	// and mandatory privacy/output controls.
+	if denied, reason := p.checkKeySandbox(auth.Sandbox, r.URL.Path, model, set); denied {
+		metrics.Global.BlockedRequests.Add(1)
+		metrics.HourlyTraffic.Record(true)
+		p.alerts.Emit(alerts.Event{Action: "API_KEY_SANDBOX_BLOCKED", Tenant: tenantName, Reason: reason,
+			RequestID: reqID, Path: r.URL.Path, Risk: 100})
+		p.pushEvent(reqID, tenantName, "API_KEY_SANDBOX_BLOCKED", 100, r.URL.Path, reason)
+		w.Header().Set("X-Titan-Decision", "BLOCK")
+		p.writeError(w, http.StatusForbidden, "policy_violation", reason)
+		p.emitKafka(reqID, tenantID, apiKeyID, "API_KEY_SANDBOX_BLOCKED", 100, r.URL.Path,
+			http.StatusForbidden, time.Since(start).Milliseconds(), reason, region, model)
+		return
+	}
+	if auth.Sandbox.Enabled && auth.Sandbox.MaxRequestsPerMinute > 0 {
+		keyScope := "apikey:" + apiKeyID.String()
+		rl, rlErr := p.limiter.AllowWithLimit(r.Context(), keyScope, int64(auth.Sandbox.MaxRequestsPerMinute))
+		if rlErr == nil && !rl.Allowed {
+			reason := fmt.Sprintf("API key sandbox RPM limit of %d exceeded", rl.Limit)
+			metrics.Global.RateLimited.Add(1)
+			metrics.Global.BlockedRequests.Add(1)
+			metrics.HourlyTraffic.Record(true)
+			p.pushEvent(reqID, tenantName, "API_KEY_SANDBOX_RATE_LIMITED", 0, r.URL.Path, reason)
+			p.writeError(w, http.StatusTooManyRequests, "rate_limit_exceeded", reason)
+			p.emitKafka(reqID, tenantID, apiKeyID, "API_KEY_SANDBOX_RATE_LIMITED", 0, r.URL.Path,
+				http.StatusTooManyRequests, time.Since(start).Milliseconds(), reason, region, model)
+			return
+		}
+		if rlErr == nil {
+			w.Header().Set("X-Titan-Key-RateLimit-Remaining", fmt.Sprintf("%d", rl.Remaining))
+		}
+	}
+	if auth.Sandbox.Enabled && auth.Sandbox.MaxTokensPerMinute > 0 {
+		tokenCount := estimateTokens(prov, body)
+		keyScope := "apikey:" + apiKeyID.String()
+		tpm, tpmErr := p.limiter.AllowTokensWithLimit(r.Context(), keyScope, tokenCount, int64(auth.Sandbox.MaxTokensPerMinute))
+		if tpmErr == nil && !tpm.Allowed {
+			reason := fmt.Sprintf("API key sandbox TPM limit of %d exceeded", tpm.Limit)
+			metrics.Global.RateLimited.Add(1)
+			metrics.Global.BlockedRequests.Add(1)
+			metrics.HourlyTraffic.Record(true)
+			p.pushEvent(reqID, tenantName, "API_KEY_SANDBOX_RATE_LIMITED", 0, r.URL.Path, reason)
+			p.writeError(w, http.StatusTooManyRequests, "rate_limit_exceeded", reason)
+			p.emitKafka(reqID, tenantID, apiKeyID, "API_KEY_SANDBOX_RATE_LIMITED", 0, r.URL.Path,
+				http.StatusTooManyRequests, time.Since(start).Milliseconds(), reason, region, model)
+			return
+		}
+		if tpmErr == nil {
+			w.Header().Set("X-Titan-Key-Tokens-Remaining", fmt.Sprintf("%d", tpm.Remaining))
+		}
+	}
 
 	// Stage 3: Rate limiting — RPM (sliding window) then TPM (tumbling bucket).
 	// Limits are per-tenant (from the effective settings), not a single global.

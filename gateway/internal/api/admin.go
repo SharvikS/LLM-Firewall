@@ -130,6 +130,7 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 
 		// admin only : credentials and user management
 		r.With(requireRole(auth.RoleAdmin)).Post("/keys", h.createKey)
+		r.With(requireRole(auth.RoleAdmin)).Put("/keys/{id}/sandbox", h.updateKeySandbox)
 		r.With(requireRole(auth.RoleAdmin)).Delete("/keys/{id}", h.revokeKey)
 		r.With(requireRole(auth.RoleAdmin)).Get("/users", uh.listUsers)
 		r.With(requireRole(auth.RoleAdmin)).Post("/users", uh.createUser)
@@ -260,6 +261,32 @@ func (h *adminHandler) revokeKey(w http.ResponseWriter, r *http.Request) {
 		Action: "ADMIN_API_KEY_REVOKED", TargetType: "api_key", TargetID: id.String(), Reason: "api key revoked",
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "revoked"})
+}
+
+func (h *adminHandler) updateKeySandbox(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid key ID"})
+		return
+	}
+	var body store.APISandbox
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	key, err := h.st.UpdateAPIKeySandbox(r.Context(), id, body)
+	if err != nil {
+		internalError(w, "update key sandbox", err)
+		return
+	}
+	if key == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
+		return
+	}
+	h.audit.Record(r, controlAuditEvent{
+		Action: "ADMIN_API_KEY_SANDBOX_UPDATED", TargetType: "api_key", TargetID: id.String(), Reason: "api key sandbox updated",
+	})
+	writeJSON(w, http.StatusOK, key)
 }
 
 // ── Policies ─────────────────────────────────────────────────────────────────

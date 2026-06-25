@@ -87,6 +87,16 @@
         "responses": { "200": { "description": "Revoked", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "example": "revoked" } } } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" } }
       }
     },
+    "/admin/v1/keys/{id}/sandbox": {
+      "put": {
+        "tags": ["API Keys"],
+        "summary": "Update an API key sandbox profile",
+        "description": "Configures per-firewall-key model/path/rate/privacy restrictions enforced before upstream provider routing.",
+        "parameters": [ { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } } ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/APISandbox" } } } },
+        "responses": { "200": { "description": "Updated API key", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/APIKey" } } } }, "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
     "/admin/v1/policies": {
       "get": {
         "tags": ["Policies"],
@@ -227,8 +237,22 @@
           "key_prefix": { "type": "string" },
           "active": { "type": "boolean" },
           "requests": { "type": "integer", "format": "int64" },
+          "sandbox": { "$ref": "#/components/schemas/APISandbox" },
           "last_used_at": { "type": "string", "format": "date-time", "nullable": true },
           "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "APISandbox": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "allowed_models": { "type": "array", "items": { "type": "string" }, "description": "Exact model names or simple * wildcards." },
+          "blocked_models": { "type": "array", "items": { "type": "string" }, "description": "Exact model names or simple * wildcards. Deny wins." },
+          "allowed_paths": { "type": "array", "items": { "type": "string" }, "example": ["/v1/chat/completions"] },
+          "max_requests_per_minute": { "type": "integer", "description": "Per-key RPM cap. 0 disables." },
+          "max_tokens_per_minute": { "type": "integer", "description": "Per-key TPM cap. 0 disables." },
+          "require_pii_redaction": { "type": "boolean" },
+          "require_output_scan": { "type": "boolean" }
         }
       },
       "Policy": {

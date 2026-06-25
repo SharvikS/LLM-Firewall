@@ -2,12 +2,24 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Copy, Trash2, EyeOff, Key, Check, RefreshCw, AlertTriangle } from 'lucide-react';
+import { Plus, Copy, Trash2, EyeOff, Key, Check, RefreshCw, AlertTriangle, Shield, Save } from 'lucide-react';
+
+interface APISandbox {
+  enabled: boolean;
+  allowed_models?: string[];
+  blocked_models?: string[];
+  allowed_paths?: string[];
+  max_requests_per_minute?: number;
+  max_tokens_per_minute?: number;
+  require_pii_redaction?: boolean;
+  require_output_scan?: boolean;
+}
 
 interface APIKey {
   id: string; tenant_id: string; name: string;
   key_hash: string; key_prefix: string;
   active: boolean; requests: number;
+  sandbox: APISandbox;
   last_used_at: string | null; created_at: string;
 }
 
@@ -17,6 +29,34 @@ function kfmt(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000)     return `${(n / 1_000).toFixed(1)}k`;
   return String(n);
+}
+
+const DEFAULT_SANDBOX: APISandbox = {
+  enabled: false,
+  allowed_models: [],
+  blocked_models: [],
+  allowed_paths: ['/v1/chat/completions', '/v1/completions', '/v1/embeddings'],
+  max_requests_per_minute: 0,
+  max_tokens_per_minute: 0,
+  require_pii_redaction: false,
+  require_output_scan: false,
+};
+
+function csv(values?: string[]) {
+  return (values ?? []).join(', ');
+}
+
+function parseCSV(value: string) {
+  return value.split(',').map(v => v.trim()).filter(Boolean);
+}
+
+function sandboxLabel(s?: APISandbox) {
+  if (!s?.enabled) return 'off';
+  const parts = [];
+  if (s.allowed_models?.length) parts.push(`${s.allowed_models.length} model${s.allowed_models.length === 1 ? '' : 's'}`);
+  if (s.max_requests_per_minute) parts.push(`${s.max_requests_per_minute} rpm`);
+  if (s.max_tokens_per_minute) parts.push(`${s.max_tokens_per_minute} tpm`);
+  return parts.length ? parts.join(' · ') : 'enabled';
 }
 
 export default function ApiKeysTab() {
@@ -30,6 +70,9 @@ export default function ApiKeysTab() {
   const [newKey, setNewKey]       = useState<{ raw: string; id: string } | null>(null);
   const [form, setForm]           = useState({ name: '', tenant_id: '' });
   const [saving, setSaving]       = useState(false);
+  const [editing, setEditing]     = useState<string | null>(null);
+  const [draft, setDraft]         = useState<APISandbox>(DEFAULT_SANDBOX);
+  const [savingSandbox, setSavingSandbox] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     const [kRes, tRes] = await Promise.all([
@@ -78,6 +121,26 @@ export default function ApiKeysTab() {
     if (!confirm('Revoke this API key? Any client using it will be denied immediately and this cannot be undone.')) return;
     const res = await fetch(`/api/admin/keys/${id}`, { method: 'DELETE' });
     if (res.ok) setKeys(ks => ks.map(k => k.id === id ? { ...k, active: false } : k));
+  };
+
+  const editSandbox = (k: APIKey) => {
+    setEditing(k.id);
+    setDraft({ ...DEFAULT_SANDBOX, ...(k.sandbox ?? {}) });
+  };
+
+  const saveSandbox = async (id: string) => {
+    setSavingSandbox(id);
+    const res = await fetch(`/api/admin/keys/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(draft),
+    });
+    if (res.ok) {
+      const updated = await res.json();
+      setKeys(ks => ks.map(k => k.id === id ? updated : k));
+      setEditing(null);
+    }
+    setSavingSandbox(null);
   };
 
   const copy = (text: string, id: string) => {
@@ -163,13 +226,13 @@ export default function ApiKeysTab() {
 
       {/* Keys table */}
       <div className="border border-base-border rounded-xl overflow-hidden shadow-sm">
-        <div className="grid grid-cols-[1fr_160px_100px_100px_80px] text-[11px] font-semibold text-base-muted uppercase tracking-widest bg-base-sec/50 border-b border-base-border">
-          {['Key', 'Tenant / Created', 'Requests', 'Status', ''].map(h => <div key={h} className="px-5 py-3">{h}</div>)}
+        <div className="grid grid-cols-[1fr_160px_120px_100px_100px_80px] text-[11px] font-semibold text-base-muted uppercase tracking-widest bg-base-sec/50 border-b border-base-border">
+          {['Key', 'Tenant / Created', 'Sandbox', 'Requests', 'Status', ''].map(h => <div key={h} className="px-5 py-3">{h}</div>)}
         </div>
         {loading ? (
           Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="grid grid-cols-[1fr_160px_100px_100px_80px] border-b border-base-border/40 animate-pulse p-4 gap-4">
-              {Array.from({ length: 5 }).map((_, j) => <div key={j} className="h-5 bg-base-sec rounded"/>)}
+            <div key={i} className="grid grid-cols-[1fr_160px_120px_100px_100px_80px] border-b border-base-border/40 animate-pulse p-4 gap-4">
+              {Array.from({ length: 6 }).map((_, j) => <div key={j} className="h-5 bg-base-sec rounded"/>)}
             </div>
           ))
         ) : keys.length === 0 ? (
@@ -180,8 +243,9 @@ export default function ApiKeysTab() {
         ) : (
           <AnimatePresence>
             {keys.map(k => (
+              <div key={k.id}>
               <motion.div key={k.id} layout initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                className={`grid grid-cols-[1fr_160px_100px_100px_80px] border-b border-base-border/40 transition-opacity ${!k.active ? 'opacity-40' : ''}`}
+                className={`grid grid-cols-[1fr_160px_120px_100px_100px_80px] border-b border-base-border/40 transition-opacity ${!k.active ? 'opacity-40' : ''}`}
               >
                 <div className="px-5 py-4">
                   <div className="text-sm font-medium text-base-text mb-1">{k.name}</div>
@@ -202,6 +266,12 @@ export default function ApiKeysTab() {
                   <div className="text-xs font-mono text-base-text">{tenants.find(t => t.id === k.tenant_id)?.name ?? k.tenant_id.slice(0, 8)}</div>
                   <div className="text-[11px] text-base-muted mt-0.5">{new Date(k.created_at).toLocaleDateString()}</div>
                 </div>
+                <div className="px-5 py-4">
+                  <button onClick={() => editSandbox(k)}
+                    className={`inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-semibold transition-colors ${k.sandbox?.enabled ? 'bg-base-accent/10 text-base-accent hover:bg-base-accent/15' : 'bg-base-sec text-base-muted hover:text-base-text'}`}>
+                    <Shield size={11}/>{sandboxLabel(k.sandbox)}
+                  </button>
+                </div>
                 <div className="px-5 py-4 text-sm text-base-text">{kfmt(k.requests)}</div>
                 <div className="px-5 py-4">
                   <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-md ${k.active ? 'bg-green-400/10 text-green-400' : 'bg-base-sec text-base-muted'}`}>
@@ -214,6 +284,73 @@ export default function ApiKeysTab() {
                   )}
                 </div>
               </motion.div>
+              {editing === k.id && (
+                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+                  className="border-b border-base-border/40 bg-base-sec/20 px-5 py-5">
+                  <div className="mb-4 flex items-center justify-between">
+                    <div>
+                      <div className="text-sm font-semibold text-base-text">API key sandbox</div>
+                      <div className="text-xs text-base-muted mt-0.5">Restrictions enforced whenever this firewall key is used against the TITAN model endpoint.</div>
+                    </div>
+                    <label className="inline-flex items-center gap-2 text-xs text-base-muted">
+                      <input type="checkbox" checked={!!draft.enabled} onChange={e => setDraft(d => ({ ...d, enabled: e.target.checked }))}
+                        className="h-4 w-4 accent-[var(--accent)]"/>
+                      Enabled
+                    </label>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <label className="text-xs text-base-muted">
+                      <span className="mb-1.5 block font-medium">Allowed models</span>
+                      <input value={csv(draft.allowed_models)} onChange={e => setDraft(d => ({ ...d, allowed_models: parseCSV(e.target.value) }))}
+                        placeholder="llama-3*, gpt-4o-mini"
+                        className="w-full rounded-lg border border-base-border bg-base-card px-3 py-2 text-sm text-base-text outline-none"/>
+                    </label>
+                    <label className="text-xs text-base-muted">
+                      <span className="mb-1.5 block font-medium">Blocked models</span>
+                      <input value={csv(draft.blocked_models)} onChange={e => setDraft(d => ({ ...d, blocked_models: parseCSV(e.target.value) }))}
+                        placeholder="gpt-4o, claude-opus*"
+                        className="w-full rounded-lg border border-base-border bg-base-card px-3 py-2 text-sm text-base-text outline-none"/>
+                    </label>
+                    <label className="text-xs text-base-muted">
+                      <span className="mb-1.5 block font-medium">Allowed API paths</span>
+                      <input value={csv(draft.allowed_paths)} onChange={e => setDraft(d => ({ ...d, allowed_paths: parseCSV(e.target.value) }))}
+                        className="w-full rounded-lg border border-base-border bg-base-card px-3 py-2 text-sm text-base-text outline-none"/>
+                    </label>
+                    <div className="grid grid-cols-2 gap-3">
+                      <label className="text-xs text-base-muted">
+                        <span className="mb-1.5 block font-medium">Key RPM</span>
+                        <input type="number" min={0} value={draft.max_requests_per_minute ?? 0}
+                          onChange={e => setDraft(d => ({ ...d, max_requests_per_minute: Number(e.target.value) || 0 }))}
+                          className="w-full rounded-lg border border-base-border bg-base-card px-3 py-2 text-sm text-base-text outline-none"/>
+                      </label>
+                      <label className="text-xs text-base-muted">
+                        <span className="mb-1.5 block font-medium">Key TPM</span>
+                        <input type="number" min={0} value={draft.max_tokens_per_minute ?? 0}
+                          onChange={e => setDraft(d => ({ ...d, max_tokens_per_minute: Number(e.target.value) || 0 }))}
+                          className="w-full rounded-lg border border-base-border bg-base-card px-3 py-2 text-sm text-base-text outline-none"/>
+                      </label>
+                    </div>
+                    <label className="inline-flex items-center gap-2 text-xs text-base-muted">
+                      <input type="checkbox" checked={!!draft.require_pii_redaction} onChange={e => setDraft(d => ({ ...d, require_pii_redaction: e.target.checked }))}
+                        className="h-4 w-4 accent-[var(--accent)]"/>
+                      Require PII redaction
+                    </label>
+                    <label className="inline-flex items-center gap-2 text-xs text-base-muted">
+                      <input type="checkbox" checked={!!draft.require_output_scan} onChange={e => setDraft(d => ({ ...d, require_output_scan: e.target.checked }))}
+                        className="h-4 w-4 accent-[var(--accent)]"/>
+                      Require output scanning
+                    </label>
+                  </div>
+                  <div className="mt-5 flex justify-end gap-2">
+                    <button onClick={() => setEditing(null)} className="rounded-lg border border-base-border px-4 py-2 text-sm text-base-muted hover:text-base-text">Cancel</button>
+                    <button onClick={() => saveSandbox(k.id)} disabled={savingSandbox === k.id}
+                      className="inline-flex items-center gap-2 rounded-lg bg-base-text px-4 py-2 text-sm font-medium text-base-main disabled:opacity-50">
+                      <Save size={13}/>{savingSandbox === k.id ? 'Saving…' : 'Save sandbox'}
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+              </div>
             ))}
           </AnimatePresence>
         )}

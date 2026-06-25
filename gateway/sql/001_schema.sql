@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     key_prefix    TEXT        NOT NULL,
     active        BOOLEAN     NOT NULL DEFAULT true,
     requests      BIGINT      NOT NULL DEFAULT 0,
+    sandbox       JSONB       NOT NULL DEFAULT '{"enabled":false,"allowed_paths":["/v1/chat/completions","/v1/completions","/v1/embeddings"]}'::jsonb,
     last_used_at  TIMESTAMPTZ,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );

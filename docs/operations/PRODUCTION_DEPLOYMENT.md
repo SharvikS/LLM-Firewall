@@ -47,12 +47,14 @@ Set these gateway environment values:
 3. Confirm SSO login and role mapping with a non-admin test user.
 4. Send one benign, one prompt-injection, and one PII request through the gateway.
 5. Verify `/admin/v1/audit` contains request and control-plane events.
-6. Verify the SIEM collector receives `titan.siem.v1` events.
-7. Run `scripts/redteam-eval.py --gateway https://<gateway> --api-key <tenant-key>`.
-8. If ASR is enabled, launch one `run_bash` sandbox execution and confirm the
+6. Configure one API-key sandbox profile and verify a disallowed model is blocked
+   before reaching the upstream provider.
+7. Verify the SIEM collector receives `titan.siem.v1` events.
+8. Run `scripts/redteam-eval.py --gateway https://<gateway> --api-key <tenant-key>`.
+9. If ASR is enabled, launch one `run_bash` sandbox execution and confirm the
    result appears in `/admin/v1/sandboxes` and audit logs.
-9. Export compliance coverage from `/admin/v1/compliance/coverage`.
-10. Run a backup and restore drill using `docs/operations/DR_RUNBOOK.md`.
+10. Export compliance coverage from `/admin/v1/compliance/coverage`.
+11. Run a backup and restore drill using `docs/operations/DR_RUNBOOK.md`.
 
 ## Runtime SLOs
 
@@ -73,6 +75,7 @@ Document this per customer:
 | Component | Default |
 |---|---|
 | API key auth | Fail closed |
+| API-key sandbox restrictions | Fail closed |
 | Payload size guard | Fail closed |
 | Cedar policy compile/eval | Fail closed |
 | Redis rate limit/cache | Degrade/fail open |

@@ -51,6 +51,9 @@ TITAN turns LLM usage into a governed security control:
   LM Studio, vLLM, and other compatible providers.
 - Existing SDKs keep working. Change `base_url` and API key.
 - Provider failover replays the masked request body, not raw sensitive content.
+- Firewall API keys can carry sandbox restrictions, so one app key can be
+  limited to approved models, API paths, per-key RPM/TPM caps, and required
+  privacy controls.
 
 **Security enforcement**
 
@@ -61,6 +64,7 @@ TITAN turns LLM usage into a governed security control:
 - Response-side output scanning, including streaming responses.
 - Default-deny Cedar policy engine.
 - Dashboard-managed no-code guardrails.
+- API-key sandbox profiles for model/path/rate/privacy restrictions.
 - Sandboxed WASM custom detectors in Enterprise builds.
 - ASR-backed agent tool sandbox with Firecracker/Docker/simulated runtime
   selection, cancellation, and audit evidence.
@@ -186,7 +190,7 @@ compliance teams.
 | Audit Logs, Coverage | Audit search/export and OWASP/NIST coverage evidence |
 | Sandboxes | ASR tool execution ledger, launch/cancel controls, backend/risk output |
 | Settings, Edge Routing | Upstreams, guardrails, alerting, rate limits, per-tenant overrides |
-| Team, API Keys, Billing | RBAC users, tenant keys, usage metering, plans and quotas |
+| Team, API Keys, Billing | RBAC users, tenant keys, sandbox profiles, usage metering, plans and quotas |
 
 ## Product Tour
 
@@ -269,6 +273,7 @@ overview, investigation, policy governance, access control, audit, and routing.
 TITAN is designed around these invariants:
 
 - Invalid or missing API keys never reach an upstream model.
+- API-key sandbox restrictions are enforced before provider routing.
 - Policy is default-deny; explicit denies win.
 - Detected PII/secrets are masked before provider calls and failover retries.
 - Raw prompts are not persisted in audit logs.

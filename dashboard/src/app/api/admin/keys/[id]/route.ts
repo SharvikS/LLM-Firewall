@@ -11,3 +11,18 @@ export async function DELETE(_req: Request, ctx: RouteContext<'/api/admin/keys/[
     return NextResponse.json({ error: 'gateway unavailable' }, { status: 502 });
   }
 }
+
+export async function PUT(req: Request, ctx: RouteContext<'/api/admin/keys/[id]'>) {
+  try {
+    const { id } = await ctx.params;
+    const body = await req.json();
+    const res = await adminFetch(`/keys/${id}/sandbox`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    return NextResponse.json(data, { status: res.status });
+  } catch {
+    return NextResponse.json({ error: 'gateway unavailable' }, { status: 502 });
+  }
+}
