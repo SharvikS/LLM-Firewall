@@ -53,6 +53,15 @@ type Settings struct {
 	AlertMinRisk    float64 `json:"alert_min_risk"`
 	AlertFormat     string  `json:"alert_format"`
 
+	// ── Browser DLP fleet baseline ────────────────────────────────────────────
+	BrowserDLPEnabled   bool            `json:"browser_dlp_enabled"`
+	BrowserDLPMode      string          `json:"browser_dlp_mode"` // block_redact | auto_redact | warn
+	BrowserDLPStrict    bool            `json:"browser_dlp_strict"`
+	BrowserDLPScanPaste bool            `json:"browser_dlp_scan_paste"`
+	BrowserDLPScanFiles bool            `json:"browser_dlp_scan_files"`
+	BrowserDLPMaxFileMB int             `json:"browser_dlp_max_file_mb"`
+	BrowserDLPSites     map[string]bool `json:"browser_dlp_sites"`
+
 	// ── Custom guardrails (no-code deny rules, applied in-proxy) ──────────────
 	// Operator-defined regex/keyword rules that block matching prompts before they
 	// reach the model — layered on top of the ML detectors. Per-tenant capable.
@@ -140,6 +149,19 @@ func DefaultsFromConfig(cfg *config.Config) Settings {
 		AlertMinRisk:  90,
 		AlertFormat:   "generic",
 
+		BrowserDLPEnabled:   true,
+		BrowserDLPMode:      "block_redact",
+		BrowserDLPStrict:    false,
+		BrowserDLPScanPaste: true,
+		BrowserDLPScanFiles: true,
+		BrowserDLPMaxFileMB: 10,
+		BrowserDLPSites: map[string]bool{
+			"chatgpt":    true,
+			"claude":     true,
+			"gemini":     true,
+			"perplexity": true,
+		},
+
 		PIIRedactionEnabled:         true,
 		ToxicityEnabled:             cfg.ToxicityEnabled,
 		ToxicityBlockThreshold:      cfg.ToxicityBlockThreshold,
@@ -201,6 +223,11 @@ func (m *Manager) Get() Settings {
 		ents[k] = v
 	}
 	s.PIIEntities = ents
+	sites := make(map[string]bool, len(s.BrowserDLPSites))
+	for k, v := range s.BrowserDLPSites {
+		sites[k] = v
+	}
+	s.BrowserDLPSites = sites
 	return s
 }
 
@@ -267,6 +294,11 @@ func (m *Manager) GetForTenant(tenantID string) Settings {
 		ents[k] = v
 	}
 	eff.PIIEntities = ents
+	sites := make(map[string]bool, len(eff.BrowserDLPSites))
+	for k, v := range eff.BrowserDLPSites {
+		sites[k] = v
+	}
+	eff.BrowserDLPSites = sites
 
 	if ok && patch != nil {
 		_ = json.Unmarshal(patch, &eff)
@@ -348,6 +380,20 @@ func (s *Settings) clamp() {
 	}
 	if s.PIIEntities == nil {
 		s.PIIEntities = DefaultPIIEntities()
+	}
+	if s.BrowserDLPSites == nil {
+		s.BrowserDLPSites = map[string]bool{"chatgpt": true, "claude": true, "gemini": true, "perplexity": true}
+	}
+	switch s.BrowserDLPMode {
+	case "block_redact", "auto_redact", "warn":
+	default:
+		s.BrowserDLPMode = "block_redact"
+	}
+	if s.BrowserDLPMaxFileMB < 1 {
+		s.BrowserDLPMaxFileMB = 1
+	}
+	if s.BrowserDLPMaxFileMB > 100 {
+		s.BrowserDLPMaxFileMB = 100
 	}
 	// Normalise the provider selector so the proxy and ML engine always receive
 	// a canonical value ("openai" | "anthropic" | "google").

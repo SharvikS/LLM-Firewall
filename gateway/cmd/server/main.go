@@ -408,6 +408,7 @@ func main() {
 		OIDCEnabled:     oidcCfg.Enabled(),
 		DefaultOIDCRole: auth.Role(cfg.OIDCDefaultRole),
 		DashboardURL:    cfg.DashboardURL,
+		PolicyEngine:    policyEngine,
 	}))
 
 	// LLM proxy — all /v1/* routes require a valid API key (fail-closed)

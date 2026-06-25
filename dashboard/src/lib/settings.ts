@@ -17,6 +17,13 @@ export interface GatewaySettings {
   alert_webhook_url: string; // write-only; always returned blank
   alert_min_risk: number;
   alert_format: 'generic' | 'splunk_hec' | 'datadog' | 'elastic';
+  browser_dlp_enabled: boolean;
+  browser_dlp_mode: 'block_redact' | 'auto_redact' | 'warn';
+  browser_dlp_strict: boolean;
+  browser_dlp_scan_paste: boolean;
+  browser_dlp_scan_files: boolean;
+  browser_dlp_max_file_mb: number;
+  browser_dlp_sites: Record<string, boolean>;
   rate_limit_rpm: number;
   rate_limit_tpm: number;
   cache_ttl_sec: number;

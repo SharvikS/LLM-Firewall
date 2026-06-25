@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Trash2, Shield, RefreshCw, Check } from 'lucide-react';
+import { Plus, Trash2, Shield, RefreshCw, Check, PlayCircle, History, Loader2 } from 'lucide-react';
 
 interface Policy {
   id: string; name: string; description: string; effect: 'ALLOW' | 'DENY';
-  principal: string; action: string; condition: string; enabled: boolean;
+  principal: string; action: string; condition: string; enabled: boolean; tenant_id?: string | null;
   created_at: string;
 }
 
@@ -19,6 +19,12 @@ const POLICY_TEXT_FIELDS: [string, PolicyTextField, string][] = [
   ['Action', 'action', 'e.g. InvokeLLM'],
   ['Condition', 'condition', 'e.g. risk_score > 70'],
 ];
+
+interface Tenant { id: string; name: string; tier: string; }
+interface PolicyVersion {
+  id: string; version: number; change_type: string; actor_email?: string; created_at: string;
+  snapshot: Policy;
+}
 
 function Toggle({ on, onChange }: { on: boolean; onChange: () => void }) {
   return (
@@ -35,6 +41,16 @@ export default function PoliciesTab() {
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving]     = useState(false);
   const [saved, setSaved]       = useState<string | null>(null);
+  const [tenants, setTenants]   = useState<Tenant[]>([]);
+  const [playground, setPlayground] = useState({
+    tenant_id: '', action: 'InvokeLLM', resource: 'llm',
+    context: '{\n  "risk_score": 42,\n  "region": "US",\n  "model": "llama-3.1-8b-instant"\n}',
+  });
+  const [playResult, setPlayResult] = useState<{ decision: string; reason: string } | null>(null);
+  const [playErr, setPlayErr] = useState('');
+  const [playBusy, setPlayBusy] = useState(false);
+  const [historyFor, setHistoryFor] = useState<Policy | null>(null);
+  const [versions, setVersions] = useState<PolicyVersion[]>([]);
   const [form, setForm]         = useState<PolicyForm>({
     name: '', description: '', effect: 'DENY',
     principal: '*', action: 'InvokeLLM', condition: '',
@@ -52,6 +68,19 @@ export default function PoliciesTab() {
   useEffect(() => {
     queueMicrotask(() => { void fetchPolicies(); });
   }, [fetchPolicies]);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      fetch('/api/admin/tenants', { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          const next = data?.tenants ?? [];
+          setTenants(next);
+          if (next[0]?.id) setPlayground(p => ({ ...p, tenant_id: p.tenant_id || next[0].id }));
+        })
+        .catch(() => {});
+    });
+  }, []);
 
   const toggle = async (p: Policy) => {
     const res = await fetch(`/api/admin/policies/${p.id}`, {
@@ -87,6 +116,34 @@ export default function PoliciesTab() {
       setShowForm(false);
     }
     setSaving(false);
+  };
+
+  const evaluate = async () => {
+    setPlayBusy(true); setPlayErr(''); setPlayResult(null);
+    try {
+      const context = JSON.parse(playground.context);
+      const res = await fetch('/api/admin/policies/evaluate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...playground, context }),
+      });
+      const data = await res.json();
+      if (!res.ok) setPlayErr(data.error ?? 'Evaluation failed');
+      else setPlayResult({ decision: data.decision, reason: data.reason });
+    } catch {
+      setPlayErr('Context must be valid JSON');
+    } finally {
+      setPlayBusy(false);
+    }
+  };
+
+  const loadHistory = async (p: Policy) => {
+    setHistoryFor(p);
+    setVersions([]);
+    const res = await fetch(`/api/admin/policies/${p.id}/versions`).catch(() => null);
+    if (!res?.ok) return;
+    const data = await res.json();
+    setVersions(data.versions ?? []);
   };
 
   return (
@@ -151,6 +208,40 @@ export default function PoliciesTab() {
         )}
       </AnimatePresence>
 
+      <div className="border border-base-border bg-base-card rounded-xl p-5 shadow-sm">
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <div>
+            <h3 className="text-sm font-semibold">Policy Playground</h3>
+            <p className="text-xs text-base-muted mt-1">Evaluate a tenant/action/context against the active Cedar policy cache before publishing app changes.</p>
+          </div>
+          {playResult && (
+            <span className={`text-[10px] font-bold px-2 py-1 rounded ${playResult.decision === 'ALLOW' ? 'bg-green-400/10 text-green-400' : 'bg-red-400/10 text-red-400'}`}>
+              {playResult.decision}
+            </span>
+          )}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <select value={playground.tenant_id} onChange={e => setPlayground(p => ({ ...p, tenant_id: e.target.value }))}
+            className="px-3 py-2 bg-base-sec border border-base-border rounded-lg text-sm outline-none">
+            {tenants.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+          <input value={playground.action} onChange={e => setPlayground(p => ({ ...p, action: e.target.value }))}
+            className="px-3 py-2 bg-base-sec border border-base-border rounded-lg text-sm outline-none" placeholder="Action"/>
+          <input value={playground.resource} onChange={e => setPlayground(p => ({ ...p, resource: e.target.value }))}
+            className="px-3 py-2 bg-base-sec border border-base-border rounded-lg text-sm outline-none" placeholder="Resource"/>
+        </div>
+        <textarea value={playground.context} onChange={e => setPlayground(p => ({ ...p, context: e.target.value }))} rows={5}
+          className="mt-3 w-full px-3 py-2 bg-base-sec border border-base-border rounded-lg text-xs font-mono outline-none resize-none"/>
+        <div className="mt-3 flex items-center gap-3">
+          <button onClick={evaluate} disabled={playBusy || !playground.tenant_id}
+            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium bg-base-text text-base-main disabled:opacity-50">
+            {playBusy ? <Loader2 size={14} className="animate-spin"/> : <PlayCircle size={14}/>} Evaluate
+          </button>
+          {playErr && <span className="text-xs text-red-400">{playErr}</span>}
+          {playResult && <span className="text-xs text-base-muted">{playResult.reason}</span>}
+        </div>
+      </div>
+
       {loading ? (
         Array.from({ length: 3 }).map((_, i) => (
           <div key={i} className="border border-base-border rounded-xl p-5 animate-pulse">
@@ -188,6 +279,7 @@ export default function PoliciesTab() {
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
                     <Toggle on={p.enabled} onChange={() => toggle(p)}/>
+                    <button onClick={() => loadHistory(p)} className="p-1.5 rounded-md text-base-muted hover:text-base-text hover:bg-base-sec transition-colors"><History size={13}/></button>
                     <button onClick={() => remove(p.id)} className="p-1.5 rounded-md text-base-muted hover:text-red-400 hover:bg-red-400/10 transition-colors"><Trash2 size={13}/></button>
                   </div>
                 </div>
@@ -202,6 +294,40 @@ export default function PoliciesTab() {
           )}
         </div>
       )}
+
+      <AnimatePresence>
+        {historyFor && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => setHistoryFor(null)}>
+            <motion.div initial={{ y: 12, scale: 0.98 }} animate={{ y: 0, scale: 1 }} exit={{ y: 12, scale: 0.98 }}
+              className="w-full max-w-2xl rounded-xl border border-base-border bg-base-card p-5 shadow-xl"
+              onClick={e => e.stopPropagation()}>
+              <div className="flex items-start justify-between mb-4">
+                <div>
+                  <h3 className="text-sm font-semibold">{historyFor.name} history</h3>
+                  <p className="text-xs text-base-muted mt-1">Immutable policy snapshots retained for review and rollback planning.</p>
+                </div>
+                <button onClick={() => setHistoryFor(null)} className="p-1.5 rounded-md text-base-muted hover:text-base-text hover:bg-base-sec"><RefreshCw size={13}/></button>
+              </div>
+              <div className="space-y-2 max-h-[420px] overflow-y-auto">
+                {versions.map(v => (
+                  <div key={v.id} className="border border-base-border rounded-lg p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-xs font-semibold">v{v.version}</span>
+                      <span className="text-[10px] uppercase text-base-muted">{v.change_type}</span>
+                      <span className="text-[10px] text-base-muted ml-auto">{new Date(v.created_at).toLocaleString()}</span>
+                    </div>
+                    <div className="text-xs text-base-muted mb-2">{v.actor_email ?? 'unknown actor'}</div>
+                    <pre className="text-[11px] whitespace-pre-wrap bg-base-sec border border-base-border rounded-md p-2 overflow-x-auto">{JSON.stringify(v.snapshot, null, 2)}</pre>
+                  </div>
+                ))}
+                {versions.length === 0 && <div className="text-sm text-base-muted py-8 text-center">No versions recorded yet.</div>}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

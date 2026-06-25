@@ -28,14 +28,14 @@ func MLConfigURLFromEmbedding(embeddingURL string) string {
 
 // mlConfig is the ML-relevant projection of Settings sent to the Python engine.
 type mlConfig struct {
-	PIIRedactionEnabled    bool            `json:"pii_redaction_enabled"`
-	ToxicityEnabled        bool            `json:"toxicity_enabled"`
-	ToxicityBlockThreshold float64         `json:"toxicity_block_threshold"`
-	CodeLeakBlock          bool            `json:"code_leak_block"`
-	HallucinationEnabled        bool       `json:"hallucination_enabled"`
-	HallucinationBlockThreshold float64    `json:"hallucination_block_threshold"`
-	HallucinationBlock          bool       `json:"hallucination_block"`
-	PIIEntities            map[string]bool `json:"pii_entities"`
+	PIIRedactionEnabled         bool            `json:"pii_redaction_enabled"`
+	ToxicityEnabled             bool            `json:"toxicity_enabled"`
+	ToxicityBlockThreshold      float64         `json:"toxicity_block_threshold"`
+	CodeLeakBlock               bool            `json:"code_leak_block"`
+	HallucinationEnabled        bool            `json:"hallucination_enabled"`
+	HallucinationBlockThreshold float64         `json:"hallucination_block_threshold"`
+	HallucinationBlock          bool            `json:"hallucination_block"`
+	PIIEntities                 map[string]bool `json:"pii_entities"`
 }
 
 // NewMLPusher returns an ApplyFunc that POSTs the ML-relevant settings to the
@@ -48,14 +48,14 @@ func NewMLPusher(configURL string) ApplyFunc {
 			return
 		}
 		body, err := json.Marshal(mlConfig{
-			PIIRedactionEnabled:    s.PIIRedactionEnabled,
-			ToxicityEnabled:        s.ToxicityEnabled,
-			ToxicityBlockThreshold: s.ToxicityBlockThreshold,
-			CodeLeakBlock:          s.CodeLeakBlock,
+			PIIRedactionEnabled:         s.PIIRedactionEnabled,
+			ToxicityEnabled:             s.ToxicityEnabled,
+			ToxicityBlockThreshold:      s.ToxicityBlockThreshold,
+			CodeLeakBlock:               s.CodeLeakBlock,
 			HallucinationEnabled:        s.HallucinationEnabled,
 			HallucinationBlockThreshold: s.HallucinationBlockThreshold,
 			HallucinationBlock:          s.HallucinationBlock,
-			PIIEntities:            s.PIIEntities,
+			PIIEntities:                 s.PIIEntities,
 		})
 		if err != nil {
 			return

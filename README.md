@@ -301,7 +301,7 @@ The following security and reliability fixes have been applied since the initial
 
 ## Dashboard
 
-The control plane is a production-grade Next.js 16 single-page application with 16 tabs:
+The control plane is a production-grade Next.js 16 single-page application with 17 tabs:
 
 | Tab | Purpose |
 |-----|---------|
@@ -745,7 +745,9 @@ DELETE /admin/v1/keys/:id            # Revoke key                             (A
 
 ```http
 GET    /admin/v1/policies            # List all policies
+POST   /admin/v1/policies/evaluate   # Evaluate tenant/action/context in the policy playground
 POST   /admin/v1/policies            # Create policy
+GET    /admin/v1/policies/:id/versions # Immutable policy version history
 PUT    /admin/v1/policies/:id        # Update / toggle policy
 DELETE /admin/v1/policies/:id        # Delete policy
 ```
@@ -781,6 +783,7 @@ DELETE /admin/v1/users/:id           # Delete user
 
 ```http
 GET    /admin/v1/compliance/report          # Audit-trail summary report          (Compliance)
+GET    /admin/v1/compliance/coverage        # OWASP/NIST control coverage         (Compliance)
 GET    /admin/v1/compliance/export          # CSV / JSONL audit export            (Compliance)
 GET    /admin/v1/security/vulnerabilities   # Latest dependency CVE scan report   (Viewer)
 ```
@@ -903,7 +906,7 @@ kubectl apply -f k8s/istio-gateway.yaml         # Istio ingress + mTLS policy
 - [x] **Phase 3** — Python ML Analyzer (gRPC): injection detection, PII masking, embedding service
 - [x] **Phase 4** — Apache Kafka audit streaming, CockroachDB integration, DB indexes
 - [x] **Phase 5** — Qdrant semantic caching, Redis metrics reporter, provider failover, gRPC mTLS
-- [x] **Phase 6** — Next.js 16 enterprise dashboard: 16 tabs, Recharts analytics, 4 themes, command palette
+- [x] **Phase 6** — Next.js 16 enterprise dashboard: 17 tabs, Recharts analytics, 4 themes, command palette
 - [x] **Phase 7** — Security hardening: 15 fixes across gateway, ML engine, and analyzer (OOM defense, per-message PII, default-deny policy, fail-closed TLS, sandbox allowlist, Kafka context fix, API key entropy, stats persistence, async auth touch)
 - [x] **Phase 8** — Production UI overhaul: animated count-up cards, gradient accent lines, shimmer skeletons, live-dot indicators, spring-physics nav, staggered threat feed, premium chart tooltips
 - [x] **Feature completion** — Toxicity/sentiment detection, source-code & secret leak prevention, OpenAPI 3.0 + Swagger UI (`/docs`), Python & Node Admin SDKs, async batch API (`/v1/batch`)
@@ -931,6 +934,7 @@ kubectl apply -f k8s/istio-gateway.yaml         # Istio ingress + mTLS policy
 - [x] **ML** — Held-out detection-efficacy benchmarks for injection, toxicity, and PII
 - [x] **Phase 24** — Multi-provider cloud LLM support: front OpenAI, Anthropic Claude, and Google Gemini (provider-aware auth, model extraction, and response masking)
 - [x] **Phase 25** — Browser DLP extension (cross-browser MV3): endpoint-side scanning of prompts, pasted text, **and file/image uploads** (PDF/DOCX/XLSX/CSV/code extraction + OCR), reported into the unified Events feed / audit / SOC alerts with repeat-offender flagging
+- [x] **Phase 26** — Enterprise sellability pass: production deployment guide, policy playground + immutable policy versions, OWASP/NIST coverage tab/API, red-team eval harness, browser DLP fleet baseline controls, enterprise demo script
 
 ### Planned
 

@@ -21,6 +21,7 @@ import (
 	"github.com/sharvik/llm-firewall/gateway/internal/auth"
 	"github.com/sharvik/llm-firewall/gateway/internal/billing"
 	"github.com/sharvik/llm-firewall/gateway/internal/logger"
+	"github.com/sharvik/llm-firewall/gateway/internal/policy"
 	"github.com/sharvik/llm-firewall/gateway/internal/settings"
 	"github.com/sharvik/llm-firewall/gateway/internal/store"
 )
@@ -38,6 +39,7 @@ type AdminDeps struct {
 	OIDCEnabled     bool
 	DefaultOIDCRole auth.Role
 	DashboardURL    string // SSO bounce-back target
+	PolicyEngine    *policy.Engine
 }
 
 // NewAdminRouter builds the /admin/v1 Chi sub-router with authentication and
@@ -54,7 +56,7 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 	r.Use(corsHeaders)
 
 	audit := newAuditRecorder(d.Store)
-	h := &adminHandler{st: d.Store, audit: audit}
+	h := &adminHandler{st: d.Store, policyEngine: d.PolicyEngine, audit: audit}
 	sh := &settingsHandler{mgr: d.Settings, audit: audit}
 	uh := &userHandler{st: d.Store, audit: audit}
 	bh := &billingHandler{st: d.Store, meter: d.Meter, audit: audit}
@@ -104,6 +106,7 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 
 		// compliance+ : audit exports
 		r.With(requireRole(auth.RoleCompliance)).Get("/compliance/report", h.complianceReport)
+		r.With(requireRole(auth.RoleCompliance)).Get("/compliance/coverage", h.complianceCoverage)
 		r.With(requireRole(auth.RoleCompliance)).Get("/compliance/export", h.complianceExport)
 
 		// security+ : edit configuration, policies, tenants
@@ -113,7 +116,9 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 		r.With(requireRole(auth.RoleSecurity)).Post("/alerts/test", alh.sendTest)
 		r.With(requireRole(auth.RoleSecurity)).Post("/dlp/flags/{id}/ack", dfh.ackFlag)
 		r.With(requireRole(auth.RoleSecurity)).Post("/tenants", h.createTenant)
+		r.With(requireRole(auth.RoleSecurity)).Post("/policies/evaluate", h.evaluatePolicy)
 		r.With(requireRole(auth.RoleSecurity)).Post("/policies", h.createPolicy)
+		r.With(requireRole(auth.RoleSecurity)).Get("/policies/{id}/versions", h.listPolicyVersions)
 		r.With(requireRole(auth.RoleSecurity)).Put("/policies/{id}", h.updatePolicy)
 		r.With(requireRole(auth.RoleSecurity)).Delete("/policies/{id}", h.deletePolicy)
 
@@ -144,8 +149,9 @@ func corsHeaders(next http.Handler) http.Handler {
 }
 
 type adminHandler struct {
-	st    *store.Store
-	audit *auditRecorder
+	st           *store.Store
+	policyEngine *policy.Engine
+	audit        *auditRecorder
 }
 
 // ── Tenants ──────────────────────────────────────────────────────────────────
@@ -296,6 +302,7 @@ func (h *adminHandler) createPolicy(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "create policy", err)
 		return
 	}
+	_, _ = h.st.RecordPolicyVersion(r.Context(), *p, "created", identityFrom(r.Context()).Email)
 	h.audit.Record(r, controlAuditEvent{
 		Action: "ADMIN_POLICY_CREATED", StatusCode: http.StatusCreated,
 		TargetType: "policy", TargetID: p.ID.String(), Reason: "policy created",
@@ -323,6 +330,7 @@ func (h *adminHandler) updatePolicy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
 		return
 	}
+	_, _ = h.st.RecordPolicyVersion(r.Context(), *p, "updated", identityFrom(r.Context()).Email)
 	h.audit.Record(r, controlAuditEvent{
 		Action: "ADMIN_POLICY_UPDATED", TargetType: "policy", TargetID: p.ID.String(), Reason: "policy updated",
 	})
@@ -335,6 +343,9 @@ func (h *adminHandler) deletePolicy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid policy ID"})
 		return
 	}
+	if existing, err := h.st.GetPolicy(r.Context(), id); err == nil && existing != nil {
+		_, _ = h.st.RecordPolicyVersion(r.Context(), *existing, "deleted", identityFrom(r.Context()).Email)
+	}
 	if err := h.st.DeletePolicy(r.Context(), id); err != nil {
 		internalError(w, "delete policy", err)
 		return
@@ -343,6 +354,65 @@ func (h *adminHandler) deletePolicy(w http.ResponseWriter, r *http.Request) {
 		Action: "ADMIN_POLICY_DELETED", TargetType: "policy", TargetID: id.String(), Reason: "policy deleted",
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (h *adminHandler) listPolicyVersions(w http.ResponseWriter, r *http.Request) {
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid policy ID"})
+		return
+	}
+	versions, err := h.st.ListPolicyVersions(r.Context(), id, parseQueryInt(r, "limit", 25))
+	if err != nil {
+		internalError(w, "list policy versions", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"versions": versions, "count": len(versions)})
+}
+
+func (h *adminHandler) evaluatePolicy(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		TenantID string         `json:"tenant_id"`
+		Action   string         `json:"action"`
+		Resource string         `json:"resource"`
+		Context  map[string]any `json:"context"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	tid, err := uuid.Parse(body.TenantID)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant_id must be a UUID"})
+		return
+	}
+	if body.Action == "" {
+		body.Action = "InvokeLLM"
+	}
+	if body.Resource == "" {
+		body.Resource = "llm"
+	}
+	if body.Context == nil {
+		body.Context = map[string]any{}
+	}
+	if h.policyEngine == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "policy engine unavailable"})
+		return
+	}
+	allowed, reason := h.policyEngine.Evaluate(r.Context(), tid, body.Action, body.Resource, body.Context)
+	h.audit.Record(r, controlAuditEvent{
+		Action: "ADMIN_POLICY_EVALUATED", TargetType: "tenant", TargetID: tid.String(), Reason: reason,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"allowed": allowed,
+		"decision": func() string {
+			if allowed {
+				return "ALLOW"
+			}
+			return "DENY"
+		}(),
+		"reason": reason,
+	})
 }
 
 // ── Audit Logs ────────────────────────────────────────────────────────────────

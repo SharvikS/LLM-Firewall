@@ -68,6 +68,57 @@ func (h *adminHandler) complianceReport(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+func (h *adminHandler) complianceCoverage(w http.ResponseWriter, r *http.Request) {
+	from, to, tenantID, err := complianceParams(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	summary, err := h.st.GetComplianceSummary(r.Context(), tenantID, from, to)
+	if err != nil {
+		internalError(w, "compliance coverage", err)
+		return
+	}
+	actionCount := func(names ...string) int64 {
+		var total int64
+		for _, name := range names {
+			total += summary.ActionBreakdown[name]
+		}
+		return total
+	}
+	controls := []map[string]any{
+		{"framework": "OWASP LLM Top 10", "control": "LLM01 Prompt Injection", "status": "covered", "evidence": actionCount("ML_BLOCKED", "GUARDRAIL_BLOCKED"), "implementation": "ML injection detector, no-code guardrails, Cedar default-deny"},
+		{"framework": "OWASP LLM Top 10", "control": "LLM02 Sensitive Information Disclosure", "status": "covered", "evidence": actionCount("MASKED", "OUTPUT_MASKED", "BROWSER_REDACT"), "implementation": "Presidio PII masking, secret scanner, output scanning, browser DLP"},
+		{"framework": "OWASP LLM Top 10", "control": "LLM04 Data and Model Poisoning", "status": "partial", "evidence": actionCount("CEDAR_BLOCKED"), "implementation": "Policy allowlists and tenant-scoped controls; training-data governance remains external"},
+		{"framework": "OWASP LLM Top 10", "control": "LLM05 Improper Output Handling", "status": "covered", "evidence": actionCount("OUTPUT_MASKED", "HALLUCINATION_FLAGGED"), "implementation": "Response-side output masking and groundedness gate"},
+		{"framework": "OWASP LLM Top 10", "control": "LLM06 Excessive Agency", "status": "partial", "evidence": actionCount("ASR_BLOCKED"), "implementation": "Agent Security Runtime and sandboxing path for tool execution"},
+		{"framework": "OWASP LLM Top 10", "control": "LLM07 System Prompt Leakage", "status": "covered", "evidence": actionCount("SECRET_MASKED", "GUARDRAIL_BLOCKED"), "implementation": "Secret scanner, source-code leak controls, guardrails"},
+		{"framework": "OWASP LLM Top 10", "control": "LLM10 Unbounded Consumption", "status": "covered", "evidence": actionCount("RATE_LIMITED", "QUOTA_EXCEEDED"), "implementation": "RPM/TPM rate limits and enterprise monthly quotas"},
+		{"framework": "NIST AI RMF / GenAI Profile", "control": "Govern", "status": "covered", "evidence": actionCount("ADMIN_POLICY_CREATED", "ADMIN_POLICY_UPDATED"), "implementation": "RBAC, SSO, policy version history, control-plane audit"},
+		{"framework": "NIST AI RMF / GenAI Profile", "control": "Map", "status": "covered", "evidence": summary.UniqueTenants, "implementation": "Tenant/app inventory through keys, policies, audit, billing, and dashboard"},
+		{"framework": "NIST AI RMF / GenAI Profile", "control": "Measure", "status": "covered", "evidence": summary.TotalEvents, "implementation": "Audit trail, risk scores, analytics, eval harness"},
+		{"framework": "NIST AI RMF / GenAI Profile", "control": "Manage", "status": "covered", "evidence": actionCount("ML_BLOCKED", "CEDAR_BLOCKED", "BROWSER_BLOCK"), "implementation": "Runtime enforcement, SIEM exports, DLP flags, admin acknowledgement"},
+	}
+	covered := 0
+	for _, c := range controls {
+		if c["status"] == "covered" {
+			covered++
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"report_type":  "ai-security-control-coverage",
+		"generated_at": time.Now().UTC().Format(time.RFC3339),
+		"period":       map[string]time.Time{"from": from, "to": to},
+		"summary": map[string]any{
+			"controls": len(controls),
+			"covered":  covered,
+			"partial":  len(controls) - covered,
+			"events":   summary.TotalEvents,
+		},
+		"controls": controls,
+	})
+}
+
 var auditCSVHeader = []string{
 	"id", "created_at", "request_id", "tenant_id", "api_key_id",
 	"action", "risk_score", "path", "latency_ms", "status_code", "reason", "region",

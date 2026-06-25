@@ -20,6 +20,8 @@ is the product overview; everything here is the deeper detail.
 
 ## operations/ — demos, runbooks & disaster recovery
 - [DEMO.md](operations/DEMO.md) · [DEMO_RUNBOOK.md](operations/DEMO_RUNBOOK.md)
+- [ENTERPRISE_DEMO_SCRIPT.md](operations/ENTERPRISE_DEMO_SCRIPT.md) — buyer-demo recording flow
+- [PRODUCTION_DEPLOYMENT.md](operations/PRODUCTION_DEPLOYMENT.md) — enterprise Kubernetes deployment guide
 - [DR_RUNBOOK.md](operations/DR_RUNBOOK.md) — backup/restore, RPO/RTO targets
 - [Runbook_OOM_Redpanda.md](operations/Runbook_OOM_Redpanda.md)
 

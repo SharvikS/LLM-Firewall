@@ -20,7 +20,7 @@ import SettingsTab    from './components/tabs/SettingsTab';
 import ApiKeysTab     from './components/tabs/ApiKeysTab';
 import {
   EdgeRoutingTab, TeamTab, BillingTab, AccessControlTab,
-  DataPrivacyTab, SandboxesTab, VulnerabilitiesTab,
+  DataPrivacyTab, SandboxesTab, VulnerabilitiesTab, ComplianceCoverageTab,
 } from './components/tabs/RemainingTabs';
 import { TitanLogo } from './components/TitanLogo';
 import { fetchMe, logout, hasFeature, ROLE_LABEL, type Me, type Feature } from '@/lib/me';
@@ -31,7 +31,7 @@ import { LogOut } from 'lucide-react';
 type TabKey =
   | 'Overview' | 'Analytics' | 'Edge Routing'
   | 'Events' | 'Browser DLP' | 'Flags' | 'Policies' | 'Sandboxes' | 'Vulnerabilities'
-  | 'Audit Logs' | 'Access Control' | 'Data Privacy'
+  | 'Audit Logs' | 'Coverage' | 'Access Control' | 'Data Privacy'
   | 'Settings' | 'Team' | 'API Keys' | 'Billing';
 
 // `feature` marks an entry as a commercial (TITAN Enterprise) surface; it is
@@ -66,6 +66,7 @@ const NAV: NavGroup[] = [
     section: 'Compliance',
     items: [
       { key: 'Audit Logs',     label: 'Audit Logs',     icon: <ClipboardList size={15}/>, keywords: 'history export csv soc2' },
+      { key: 'Coverage',       label: 'Coverage',       icon: <Lock size={15}/>,          keywords: 'owasp nist controls evidence compliance report', feature: 'compliance' },
       { key: 'Access Control', label: 'Access Control', icon: <Fingerprint size={15}/>,   keywords: 'rbac permissions roles sso', feature: 'sso' },
       { key: 'Data Privacy',   label: 'Data Privacy',   icon: <Eye size={15}/>,           keywords: 'pii masking gdpr presidio' },
     ],
@@ -412,6 +413,7 @@ export default function Dashboard() {
       case 'Sandboxes':      return <SandboxesTab/>;
       case 'Vulnerabilities':return <VulnerabilitiesTab/>;
       case 'Audit Logs':     return <AuditLogsTab/>;
+      case 'Coverage':       return <ComplianceCoverageTab/>;
       case 'Access Control': return <AccessControlTab/>;
       case 'Data Privacy':   return <DataPrivacyTab/>;
       case 'Settings':       return <SettingsTab theme={theme} onThemeChange={setTheme}/>;

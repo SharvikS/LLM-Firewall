@@ -1,7 +1,48 @@
 # LLM-Firewall (TITAN Gateway) — Project Status Log
 
 > **Auto-maintained log.** Updated at the end of every major session or when significant changes are made.
-> Last updated: 2026-06-25 (Enterprise Auth/Audit + SIEM Export Pass)
+> Last updated: 2026-06-25 (Enterprise Sellability Pass)
+
+---
+
+## 2026-06-25 — Enterprise Sellability Pass
+
+Implemented the remaining enterprise roadmap items after SSO/audit and SIEM:
+production deployment guidance, policy playground/versioning, compliance
+coverage, red-team eval, browser DLP fleet controls, and buyer-demo collateral.
+
+**Production deployment** — Added `docs/operations/PRODUCTION_DEPLOYMENT.md`
+with Kubernetes/Helm production prerequisites, required secrets, OIDC/SIEM
+preflight checks, SLOs, fail-open/fail-closed behavior, and operational handoff.
+
+**Policy playground + versioning** — Added immutable `policy_versions` storage.
+Policy create/update/delete records snapshots with actor/change metadata.
+Dashboard Policy Engine now includes a live playground (`/policies/evaluate`)
+and version-history modal (`/policies/{id}/versions`).
+
+**Compliance coverage** — Added enterprise `/admin/v1/compliance/coverage` for
+OWASP LLM Top 10 and NIST GenAI coverage mapped to live audit evidence. Dashboard
+now has a gated Coverage tab under Compliance.
+
+**Red-team eval harness** — Added dependency-free `scripts/redteam-eval.py` for
+live gateway attack-pack checks, producing `docs/security/redteam-eval-report.json`.
+
+**Browser DLP fleet controls** — Added persisted browser fleet baseline settings:
+mode, strict fail-closed, paste/file scanning, max file size, and enabled chat
+sites. Browser DLP dashboard exposes the controls for managed deployments.
+
+**Demo collateral** — Added `docs/operations/ENTERPRISE_DEMO_SCRIPT.md` for a
+recorded buyer demo flow.
+
+Verification:
+
+- `cd gateway && go test ./...` passed.
+- `cd gateway && go test -tags enterprise ./...` passed.
+- `cd dashboard && npx tsc --noEmit` passed.
+- `python3 -m py_compile scripts/redteam-eval.py` passed.
+- `git diff --check` passed.
+- `helm template` was not rerun here because the local environment still lacks
+  the `helm` binary.
 
 ---
 

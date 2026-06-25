@@ -75,6 +75,23 @@ CREATE INDEX IF NOT EXISTS idx_audit_action   ON audit_events(action, created_at
 CREATE INDEX IF NOT EXISTS idx_audit_actor_email_created ON audit_events(actor_email, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_target_created ON audit_events(target_type, target_id, created_at DESC);
 
+-- ── Policy Versions ─────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS policy_versions (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    policy_id     UUID NOT NULL,
+    version       INTEGER NOT NULL,
+    change_type   TEXT NOT NULL CHECK (change_type IN ('created','updated','deleted')),
+    snapshot      JSONB NOT NULL,
+    actor_email   TEXT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_policy_versions_policy_version
+    ON policy_versions(policy_id, version);
+
+CREATE INDEX IF NOT EXISTS idx_policy_versions_policy_created
+    ON policy_versions(policy_id, created_at DESC);
+
 -- ── Schema version tracker ────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version     INTEGER PRIMARY KEY,

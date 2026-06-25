@@ -6,6 +6,7 @@ import {
   Globe, ShieldCheck, Ban, Eye, AlertTriangle, MonitorSmartphone,
   Flag, Wifi, WifiOff, CircleDot, FileText, Image as ImageIcon, MessageSquare,
 } from 'lucide-react';
+import { fetchSettings, saveSettings, type GatewaySettings } from '@/lib/settings';
 
 const KIND_META: Record<string, { label: string; icon: ReactNode }> = {
   text:  { label: 'Prompt', icon: <MessageSquare size={11} /> },
@@ -61,6 +62,8 @@ export default function BrowserDLPTab() {
   const [ov, setOv] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
   const [live, setLive] = useState(false);
+  const [settings, setSettings] = useState<GatewaySettings | null>(null);
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 
   const load = useCallback(async () => {
     const d = await fetch('/api/admin/dlp/overview').then(r => r.json()).catch(() => null);
@@ -74,6 +77,23 @@ export default function BrowserDLPTab() {
     const id = setInterval(() => { void load(); }, 4000);
     return () => clearInterval(id);
   }, [load]);
+
+  useEffect(() => {
+    fetchSettings().then(setSettings);
+  }, []);
+
+  const patchFleet = async (patch: Partial<GatewaySettings>) => {
+    setSettings(s => s ? { ...s, ...patch } : s);
+    setSaveState('saving');
+    const updated = await saveSettings(patch);
+    if (updated) {
+      setSettings(updated);
+      setSaveState('saved');
+      setTimeout(() => setSaveState('idle'), 1500);
+    } else {
+      setSaveState('error');
+    }
+  };
 
   const o = ov;
   const maxSeries = Math.max(1, ...(o?.series_24h ?? []).map(b => b.count));
@@ -104,6 +124,57 @@ export default function BrowserDLPTab() {
         <Stat icon={<AlertTriangle size={13}/>} label="Overrides" value={o?.overrides ?? 0} tone="text-orange-400"/>
         <Stat icon={<MonitorSmartphone size={13}/>} label="Installs" value={o?.active_installs ?? 0} tone="text-blue-400"/>
         <Stat icon={<Flag size={13}/>} label="Open Flags" value={o?.open_flags ?? 0} tone={(o?.open_flags ?? 0) > 0 ? 'text-red-400' : 'text-green-400'}/>
+      </div>
+
+      <div className="border border-base-border rounded-xl p-4 bg-base-sec/30">
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <div>
+            <div className="text-[11px] uppercase tracking-widest text-base-muted">Fleet policy baseline</div>
+            <p className="text-xs text-base-muted mt-1">Managed defaults for browser-extension deployments. Save once, then distribute through MDM or extension policy packaging.</p>
+          </div>
+          <span className={`text-xs ${saveState === 'saved' ? 'text-green-400' : saveState === 'error' ? 'text-red-400' : 'text-base-muted'}`}>
+            {saveState === 'saving' ? 'Saving...' : saveState === 'saved' ? 'Saved' : saveState === 'error' ? 'Save failed' : ''}
+          </span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <label className="text-xs text-base-muted">
+            Mode
+            <select value={settings?.browser_dlp_mode ?? 'block_redact'} disabled={!settings}
+              onChange={e => patchFleet({ browser_dlp_mode: e.target.value as GatewaySettings['browser_dlp_mode'] })}
+              className="mt-1 w-full px-3 py-2 bg-base-main border border-base-border rounded-lg text-sm text-base-text outline-none">
+              <option value="block_redact">Block + redact</option>
+              <option value="auto_redact">Auto-redact</option>
+              <option value="warn">Warn only</option>
+            </select>
+          </label>
+          <label className="text-xs text-base-muted">
+            Max file MB
+            <input type="number" min={1} max={100} value={settings?.browser_dlp_max_file_mb ?? 10} disabled={!settings}
+              onChange={e => patchFleet({ browser_dlp_max_file_mb: Number(e.target.value) })}
+              className="mt-1 w-full px-3 py-2 bg-base-main border border-base-border rounded-lg text-sm text-base-text outline-none"/>
+          </label>
+          {[
+            ['browser_dlp_enabled', 'Enabled'],
+            ['browser_dlp_strict', 'Strict fail-closed'],
+            ['browser_dlp_scan_paste', 'Scan paste'],
+            ['browser_dlp_scan_files', 'Scan files'],
+          ].map(([key, label]) => (
+            <button key={key} disabled={!settings}
+              onClick={() => patchFleet({ [key]: !settings?.[key as keyof GatewaySettings] } as Partial<GatewaySettings>)}
+              className={`px-3 py-2 rounded-lg border text-sm text-left ${settings?.[key as keyof GatewaySettings] ? 'border-green-400/30 bg-green-400/10 text-green-400' : 'border-base-border bg-base-main text-base-muted'} disabled:opacity-50`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {Object.entries(SITE_LABEL).map(([key, label]) => (
+            <button key={key} disabled={!settings}
+              onClick={() => patchFleet({ browser_dlp_sites: { ...(settings?.browser_dlp_sites ?? {}), [key]: !(settings?.browser_dlp_sites ?? {})[key] } })}
+              className={`px-3 py-1.5 rounded-lg border text-xs ${settings?.browser_dlp_sites?.[key] ? 'border-blue-400/30 bg-blue-400/10 text-blue-400' : 'border-base-border text-base-muted'} disabled:opacity-50`}>
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

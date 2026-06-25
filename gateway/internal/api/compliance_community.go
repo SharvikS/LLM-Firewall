@@ -12,6 +12,10 @@ func (h *adminHandler) complianceReport(w http.ResponseWriter, r *http.Request) 
 	complianceUpsell(w)
 }
 
+func (h *adminHandler) complianceCoverage(w http.ResponseWriter, r *http.Request) {
+	complianceUpsell(w)
+}
+
 func (h *adminHandler) complianceExport(w http.ResponseWriter, r *http.Request) {
 	complianceUpsell(w)
 }

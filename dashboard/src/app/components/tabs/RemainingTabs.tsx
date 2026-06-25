@@ -398,6 +398,91 @@ export function BillingTab({ myRole }: { myRole?: Role }) {
   );
 }
 
+// ─── Compliance Coverage (live) ──────────────────────────────────────────────
+
+interface CoverageControl {
+  framework: string;
+  control: string;
+  status: 'covered' | 'partial';
+  evidence: number;
+  implementation: string;
+}
+
+interface CoverageReport {
+  generated_at?: string;
+  summary?: { controls?: number; covered?: number; partial?: number; events?: number };
+  controls?: CoverageControl[];
+  _offline?: boolean;
+  error?: string;
+}
+
+export function ComplianceCoverageTab() {
+  const [report, setReport] = useState<CoverageReport | null>(null);
+  const [state, setState] = useState<'loading' | 'ready' | 'offline' | 'forbidden'>('loading');
+
+  useEffect(() => {
+    fetch('/api/admin/compliance/coverage', { cache: 'no-store' })
+      .then(async res => {
+        const data = await res.json();
+        if (res.status === 402 || res.status === 403) { setReport(data); setState('forbidden'); return; }
+        if (!res.ok || data._offline) { setReport(data); setState('offline'); return; }
+        setReport(data);
+        setState('ready');
+      })
+      .catch(() => setState('offline'));
+  }, []);
+
+  const controls = report?.controls ?? [];
+  const summary = report?.summary ?? {};
+
+  return (
+    <div className="max-w-5xl mx-auto">
+      <PageHeader title="Coverage" sub="OWASP LLM Top 10 and NIST GenAI control evidence from live audit data." badge="Enterprise" badgeColor="green"/>
+      {state === 'forbidden' && (
+        <Card><div className="text-sm text-base-muted">{report?.error ?? 'Compliance coverage requires the compliance feature.'}</div></Card>
+      )}
+      {state === 'offline' && (
+        <Card><div className="flex items-center gap-2 text-sm text-yellow-500"><AlertTriangle size={14}/> Gateway offline — coverage unavailable.</div></Card>
+      )}
+      {(state === 'loading' || state === 'ready') && (
+        <div className="space-y-5">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[
+              ['Controls', summary.controls ?? 0],
+              ['Covered', summary.covered ?? 0],
+              ['Partial', summary.partial ?? 0],
+              ['Audit Events', summary.events ?? 0],
+            ].map(([label, value]) => (
+              <Card key={label as string} className="p-4">
+                <div className="text-xs text-base-muted uppercase tracking-widest">{label}</div>
+                <div className="text-2xl font-semibold mt-1">{String(value)}</div>
+              </Card>
+            ))}
+          </div>
+          <Card>
+            <div className="space-y-2">
+              {state === 'loading' && <div className="py-10 text-center text-xs text-base-muted flex items-center justify-center gap-2"><Loader2 size={12} className="animate-spin"/> Loading coverage…</div>}
+              {controls.map(c => (
+                <div key={`${c.framework}-${c.control}`} className="grid grid-cols-1 md:grid-cols-[180px_1fr_90px] gap-3 px-4 py-3 border border-base-border rounded-lg">
+                  <div className="text-xs text-base-muted">{c.framework}</div>
+                  <div>
+                    <div className="text-sm font-medium text-base-text">{c.control}</div>
+                    <div className="text-xs text-base-muted mt-1">{c.implementation}</div>
+                  </div>
+                  <div className="flex md:flex-col items-start md:items-end gap-2">
+                    <Tag label={c.status} color={c.status === 'covered' ? 'bg-green-400/10 text-green-400' : 'bg-yellow-400/10 text-yellow-500'}/>
+                    <span className="text-[10px] text-base-muted">{c.evidence} evidence</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Access Control (reference model) ────────────────────────────────────────
 
 const PERMISSIONS = [
