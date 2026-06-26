@@ -1,6 +1,6 @@
 # Dependency Vulnerability Triage
 
-Last reviewed: 2026-06-25
+Last reviewed: 2026-06-26
 
 ## Current Status
 
@@ -12,8 +12,8 @@ Local review constraints for this pass:
 
 - No tools were installed on the machine.
 - Docker was not started.
-- `govulncheck` was not installed locally, so Go CVE status was not refreshed.
-- `pip-audit` was not installed locally, so Python CVE status was not refreshed.
+- Go and Python CVE status were refreshed from GitHub Actions check-runs on
+  commit `c573664`, not from local scanner installs.
 
 Commands run locally:
 
@@ -25,13 +25,15 @@ cd landing && npm audit --audit-level=high
 
 Result: all three Node surfaces returned `found 0 vulnerabilities`.
 
-The historical generated report from 2026-06-14 showed:
+The regenerated machine-readable report from successful CI check-runs now shows:
 
-| Component | Scanner | Historical findings | Triage |
+| Component | Scanner | Current findings | Triage |
 |---|---:|---:|---|
-| gateway | govulncheck | 0 | Not refreshed locally; now gated in CI. |
-| ml_engine | pip-audit | 7 | Not refreshed locally; must be reviewed from CI output before release. |
-| dashboard | npm audit | 2 | Locally retested on 2026-06-25; high-severity audit is clean. |
+| gateway | govulncheck | 0 | CI clean on `c573664`. |
+| ml_engine | pip-audit | 0 | CI clean on `c573664`; `CVE-2025-3000` remains an accepted ignore because no patched torch release is available. |
+| dashboard | npm audit | 0 | CI and local high-severity audit clean. |
+| browser-extension | npm audit | 0 | CI clean on `c573664`. |
+| landing | npm audit | 0 | CI and local high-severity audit clean. |
 
 ## Release Policy
 
@@ -45,8 +47,7 @@ Required before an enterprise release:
 
 ## Open Triage Items
 
-1. Refresh Python findings in CI with `pip-audit`.
-2. Refresh Go findings in CI with `govulncheck`.
-3. Regenerate `docs/security/scan-report.json` from trusted CI output.
-4. Remove any ignore once an upstream patched release is available.
-
+1. Remove the `CVE-2025-3000` ignore once an upstream patched torch release is
+   available.
+2. Keep `docs/security/scan-report.json` regenerated from trusted CI output
+   before each buyer-facing release.

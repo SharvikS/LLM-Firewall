@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:auth": "node scripts/verify-admin-auth.mjs"
   },
   "dependencies": {
     "framer-motion": "^12.40.0",

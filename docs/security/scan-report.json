@@ -1,21 +1,52 @@
 {
-  "generated_at": "2026-06-14T07:23:55Z",
-  "status": "findings",
+  "generated_at": "2026-06-26T05:56:34Z",
+  "status": "clean",
+  "source": {
+    "type": "github_actions",
+    "commit": "c573664",
+    "workflows": [
+      "release-gates",
+      "security-scan"
+    ],
+    "note": "Regenerated from successful GitHub check-runs on main. Local Docker was not started."
+  },
   "components": [
     {
       "name": "gateway (Go)",
       "scanner": "govulncheck",
-      "findings": 0
+      "findings": 0,
+      "conclusion": "success"
     },
     {
       "name": "ml_engine (Python)",
       "scanner": "pip-audit",
-      "findings": 7
+      "findings": 0,
+      "conclusion": "success",
+      "accepted_ignores": [
+        {
+          "id": "CVE-2025-3000",
+          "reason": "No patched torch release was available when the CI ignore was added; the gate still fails on new or fixable vulnerabilities.",
+          "reviewed": "2026-06-25"
+        }
+      ]
     },
     {
       "name": "dashboard (Node)",
       "scanner": "npm audit",
-      "findings": 2
+      "findings": 0,
+      "conclusion": "success"
+    },
+    {
+      "name": "browser-extension (Node)",
+      "scanner": "npm audit",
+      "findings": 0,
+      "conclusion": "success"
+    },
+    {
+      "name": "landing (Node)",
+      "scanner": "npm audit",
+      "findings": 0,
+      "conclusion": "success"
     }
   ]
 }

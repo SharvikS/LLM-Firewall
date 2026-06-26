@@ -900,7 +900,7 @@ export function VulnerabilitiesTab() {
             ))}
           </div>
           <div className="mt-5 p-4 bg-base-sec/50 rounded-lg border border-base-border/60 text-xs text-base-muted">
-            CI fails the build on high+ severity. The Python findings are in heavy ML/eval dependencies (torch, transformers) installed in the dev venv — pin/upgrade or scan <code className="bg-base-sec px-1 rounded">requirements.txt</code> only to scope them out of the production image.
+            CI fails the build on high+ severity. Any accepted advisory must be documented with owner, reason, and re-review date in the dependency triage notes.
           </div>
         </Card>
       )}
