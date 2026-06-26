@@ -57,6 +57,9 @@ jobs:
       - name: Production build
         run: npm run build
         working-directory: dashboard
+      - name: Playwright API tests
+        run: npm run test:e2e
+        working-directory: dashboard
 
   ml-engine:
     name: ML engine pytest

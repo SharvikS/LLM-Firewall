@@ -61,6 +61,21 @@ allow, prompt-injection block, toxicity block, WASM plugin block, PII masking,
 metrics, ClickHouse analytics, durable audit, and a live settings round trip.
 Expected result: `FAIL=0`.
 
+## Dashboard API Regression Tests
+
+Run the no-Docker Playwright API suite from the dashboard package:
+
+```bash
+cd dashboard
+npm run test:e2e
+```
+
+The suite starts a local Next.js dev server plus an in-test mock gateway. It
+does not launch browsers. Coverage includes login cookie handling, `/api/auth/me`,
+dashboard `/api/admin/*` proxy auth, RBAC status propagation, API key creation,
+API-key sandbox restriction forwarding, sandbox execution role checks, and
+gateway read proxy token forwarding.
+
 ## Scenario 1: PII Masking
 
 Risk: employees paste customer data into AI tools, sending regulated data to a
