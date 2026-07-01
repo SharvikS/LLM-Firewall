@@ -273,7 +273,7 @@ services:
       context: ./dashboard
       dockerfile: Dockerfile
     environment:
-      NEXT_PUBLIC_GATEWAY_URL: "http://gateway:8080"
+      GATEWAY_URL: "http://gateway:8080"
       ADMIN_TOKEN: "${ADMIN_TOKEN:-titan-admin-dev-secret}"
       NODE_ENV: production
     ports:
