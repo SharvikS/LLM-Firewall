@@ -19,8 +19,13 @@ func TestEmitKafka_NoBrokerConfigured_PersistsDirectlyToDB(t *testing.T) {
 
 	p := &LLMProxy{st: st, provider: "Groq"} // producer left nil on purpose
 
+	tenant, err := st.CreateTenant(context.Background(), "home-profile-proxy-test", "standard", 60)
+	if err != nil {
+		t.Fatalf("CreateTenant: %v", err)
+	}
+
 	reqID := uuid.New().String()
-	tenantID := uuid.New()
+	tenantID := tenant.ID
 
 	p.emitKafka(reqID, tenantID, uuid.Nil, "ALLOW", 12.5,
 		"/v1/chat/completions", 200, 42, "", "", "llama-3.1-8b-instant")
