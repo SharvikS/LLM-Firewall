@@ -289,6 +289,15 @@ interface TenantUsage {
 
 const fmt = (n: number) => n.toLocaleString();
 const limitLabel = (n: number) => (n === 0 ? '∞' : fmt(n));
+const priceLabel = (p: Plan) => {
+  if (p.tier === 'enterprise') return 'Custom';
+  if (p.price_usd_per_month === 0) return 'Free';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: Number.isInteger(p.price_usd_per_month) ? 0 : 2,
+  }).format(p.price_usd_per_month);
+};
 
 export function BillingTab({ myRole }: { myRole?: Role }) {
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -357,7 +366,7 @@ export function BillingTab({ myRole }: { myRole?: Role }) {
                 <div key={p.tier} className="px-4 py-3 border border-base-border rounded-lg">
                   <div className="text-sm font-semibold">{p.display_name}</div>
                   <div className="text-xs text-base-muted mt-0.5">{limitLabel(p.monthly_requests)} req/mo</div>
-                  <div className="text-lg font-semibold mt-2">${p.price_usd_per_month}<span className="text-xs text-base-muted font-normal">/mo</span></div>
+                  <div className="text-lg font-semibold mt-2">{priceLabel(p)}{p.price_usd_per_month > 0 && <span className="text-xs text-base-muted font-normal">/mo</span>}</div>
                 </div>
               ))}
             </div>

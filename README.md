@@ -123,9 +123,13 @@ Prerequisites: Docker 24+ and Docker Compose v2.
 ```bash
 git clone https://github.com/SharvikS/LLM-Firewall.git
 cd LLM-Firewall
-cp .env.example .env
-docker compose up -d --build
+./scripts/quickstart.sh
 ```
+
+The quickstart creates missing env files, generates a shared admin token,
+optionally saves your provider API key, starts the full Docker stack, waits for
+the dashboard and gateway, and prints the next commands. Existing `.env` files
+are preserved.
 
 Open the dashboard:
 
@@ -153,6 +157,14 @@ Run the smoke test after the stack is healthy:
 
 ```bash
 ./scripts/smoke.sh
+```
+
+Manual fallback:
+
+```bash
+cp .env.example .env
+cp gateway/.env.example gateway/.env
+docker compose up -d --build
 ```
 
 For the complete demo flow, use [docs/operations/DEMO_RUNBOOK.md](docs/operations/DEMO_RUNBOOK.md).

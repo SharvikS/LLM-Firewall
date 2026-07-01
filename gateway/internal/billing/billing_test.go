@@ -33,6 +33,18 @@ func TestValidTier(t *testing.T) {
 	}
 }
 
+func TestPublicPlanPrices(t *testing.T) {
+	if PlanFor("free").PriceUSD != 0 {
+		t.Fatalf("expected free price 0, got %.2f", PlanFor("free").PriceUSD)
+	}
+	if PlanFor("starter").PriceUSD != 9.99 {
+		t.Fatalf("expected starter price 9.99, got %.2f", PlanFor("starter").PriceUSD)
+	}
+	if PlanFor("pro").PriceUSD != 35 {
+		t.Fatalf("expected pro price 35, got %.2f", PlanFor("pro").PriceUSD)
+	}
+}
+
 func TestPlansOrdered(t *testing.T) {
 	p := Plans()
 	if len(p) != 4 || p[0].Tier != "free" || p[3].Tier != "enterprise" {

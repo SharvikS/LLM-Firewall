@@ -10,17 +10,17 @@ package billing
 
 // Plan is an entitlement tier. MonthlyRequests == 0 means unlimited.
 type Plan struct {
-	Tier            string `json:"tier"`
-	DisplayName     string `json:"display_name"`
-	MonthlyRequests int64  `json:"monthly_requests"`
-	PriceUSD        int    `json:"price_usd_per_month"`
+	Tier            string  `json:"tier"`
+	DisplayName     string  `json:"display_name"`
+	MonthlyRequests int64   `json:"monthly_requests"`
+	PriceUSD        float64 `json:"price_usd_per_month"`
 }
 
 // Catalog maps tenants.tier → plan. Tier strings match the tenants table.
 var Catalog = map[string]Plan{
 	"free":       {"free", "Free", 10_000, 0},
-	"starter":   {"starter", "Starter", 100_000, 49},
-	"pro":        {"pro", "Pro", 1_000_000, 499},
+	"starter":    {"starter", "Starter", 100_000, 9.99},
+	"pro":        {"pro", "Pro", 1_000_000, 35},
 	"enterprise": {"enterprise", "Enterprise", 0, 0},
 }
 

@@ -1,5 +1,6 @@
 'use client';
 
+import Image from 'next/image';
 import React from 'react';
 import { motion, type Variants } from 'framer-motion';
 import {
@@ -9,6 +10,11 @@ import {
 } from 'lucide-react';
 
 const GITHUB_URL = 'https://github.com/SharvikS/LLM-Firewall';
+const DOCS_URL = `${GITHUB_URL}/tree/main/docs`;
+const SUPPORT_URL = 'mailto:sharviksutar@gmail.com?subject=TITAN%20Gateway';
+const checkoutHref = (tier: 'free' | 'starter' | 'pro') => (
+  tier === 'free' ? GITHUB_URL : `/api/checkout?tier=${tier}`
+);
 
 // lucide dropped its brand marks (trademark), so the GitHub logo is inlined.
 function Github({ size = 16 }: { size?: number }) {
@@ -82,8 +88,9 @@ function Nav() {
         <nav className="hidden items-center gap-7 text-[13px] text-base-muted md:flex">
           <a href="#features" className="transition-colors hover:text-base-text">Features</a>
           <a href="#pipeline" className="transition-colors hover:text-base-text">How it works</a>
+          <a href="#setup" className="transition-colors hover:text-base-text">Setup</a>
           <a href="#pricing" className="transition-colors hover:text-base-text">Editions</a>
-          <a href={GITHUB_URL} target="_blank" rel="noreferrer" className="transition-colors hover:text-base-text">Docs</a>
+          <a href={DOCS_URL} target="_blank" rel="noreferrer" className="transition-colors hover:text-base-text">Docs</a>
         </nav>
         <div className="flex items-center gap-2.5">
           <a href={GITHUB_URL} target="_blank" rel="noreferrer"
@@ -126,7 +133,7 @@ function Hero() {
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
               <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
             </span>
-            Open-core · MIT licensed · Self-hostable
+            Open-core · MIT licensed · Checkout-ready
           </Pill>
         </motion.div>
 
@@ -169,8 +176,40 @@ function Hero() {
         >
           <Terminal_ />
         </motion.div>
+
+        <motion.div
+          variants={fadeUp} initial="hidden" animate="show" transition={{ delay: 0.32 }}
+          className="mx-auto mt-10 max-w-5xl"
+        >
+          <ProductPreview />
+        </motion.div>
       </div>
     </section>
+  );
+}
+
+function ProductPreview() {
+  return (
+    <div className="card card-glow overflow-hidden border-white/10 bg-[#0b0f14] text-left shadow-2xl shadow-black/40">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-base-border px-4 py-3">
+        <div className="flex items-center gap-2 text-[12px] text-base-muted">
+          <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+          Live command center
+        </div>
+        <div className="flex items-center gap-2 font-mono text-[11px] text-base-muted">
+          <ShieldCheck size={13} />
+          policy · audit · billing · DLP
+        </div>
+      </div>
+      <Image
+        src="/product/screenshot_overview.png"
+        alt="TITAN dashboard overview showing live LLM firewall telemetry"
+        width={1600}
+        height={1000}
+        priority
+        className="h-auto w-full"
+      />
+    </div>
   );
 }
 
@@ -375,56 +414,135 @@ function Features() {
   );
 }
 
+// ── Setup ────────────────────────────────────────────────────────────────────────
+
+function SetupSection() {
+  const steps = [
+    {
+      icon: <Terminal size={17} />,
+      t: 'Run one command',
+      d: './scripts/quickstart.sh checks Docker, creates env files, starts the stack, and waits for the dashboard.',
+    },
+    {
+      icon: <KeyRound size={17} />,
+      t: 'Paste one provider key',
+      d: 'Use Groq, OpenAI, or another compatible upstream. TITAN keeps the app-facing key local.',
+    },
+    {
+      icon: <ShieldCheck size={17} />,
+      t: 'Point your app at TITAN',
+      d: 'Change the SDK base URL and every request gets policy, DLP, quotas, audit, and observability.',
+    },
+  ];
+
+  return (
+    <section id="setup" className="border-y border-base-border/60 py-20">
+      <div className="mx-auto max-w-6xl px-5">
+        <Reveal>
+          <SectionLabel>Plug and pay</SectionLabel>
+          <div className="grid gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
+            <div>
+              <h2 className="max-w-xl text-3xl font-semibold tracking-tight sm:text-4xl">
+                Buyers should be running TITAN before they finish coffee
+              </h2>
+              <p className="mt-4 max-w-xl text-[15px] leading-relaxed text-base-muted">
+                The repo now has a guided Docker quickstart for non-experts: it preserves
+                existing secrets, creates missing config, starts the full stack, and prints
+                the dashboard, gateway, docs, and smoke-test commands.
+              </p>
+              <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+                <a href={checkoutHref('starter')}
+                  className="inline-flex items-center justify-center gap-2 rounded-xl btn-primary px-5 py-3 text-[14px] font-medium">
+                  Buy Starter <ArrowRight size={15} />
+                </a>
+                <a href={DOCS_URL} target="_blank" rel="noreferrer"
+                  className="inline-flex items-center justify-center gap-2 rounded-xl btn-ghost px-5 py-3 text-[14px] font-medium">
+                  Read setup docs <FileText size={15} />
+                </a>
+              </div>
+            </div>
+
+            <div className="grid gap-3">
+              {steps.map((s, i) => (
+                <Reveal key={s.t} delay={i * 0.05}>
+                  <div className="card card-hover flex gap-4 p-5">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-base-border bg-white/[0.03] text-base-text">
+                      {s.icon}
+                    </div>
+                    <div>
+                      <h3 className="text-[15px] font-medium">{s.t}</h3>
+                      <p className="mt-1.5 text-[13.5px] leading-relaxed text-base-muted">{s.d}</p>
+                    </div>
+                  </div>
+                </Reveal>
+              ))}
+              <Reveal delay={0.18}>
+                <div className="card overflow-hidden">
+                  <pre className="overflow-x-auto p-5 font-mono text-[12.5px] leading-relaxed text-base-muted">
+<span className="text-base-text">git clone https://github.com/SharvikS/LLM-Firewall.git</span>{'\n'}
+<span className="text-base-text">cd LLM-Firewall</span>{'\n'}
+<span className="text-emerald-300">./scripts/quickstart.sh</span>
+                  </pre>
+                </div>
+              </Reveal>
+            </div>
+          </div>
+        </Reveal>
+      </div>
+    </section>
+  );
+}
+
 // ── Pricing / Editions ───────────────────────────────────────────────────────────
 
 function Pricing() {
   const tiers = [
     {
-      name: 'Community',
+      name: 'Free',
       price: 'Free',
-      sub: 'MIT · self-hosted forever',
-      cta: 'Clone on GitHub',
-      href: GITHUB_URL,
+      sub: 'self-hosted · MIT core',
+      cta: 'Start free',
+      href: checkoutHref('free'),
       highlight: false,
       features: [
+        '10k inspected requests / month',
         'Full zero-trust proxy & failover',
         'Injection, toxicity, PII & secret detection',
         'Response-side output scanning',
         'Exact + semantic caching',
-        'No-code guardrails & policy engine',
-        'Browser DLP (text) + SDKs + dashboard',
+        'Dashboard, SDKs, and browser DLP',
+      ],
+    },
+    {
+      name: 'Starter',
+      price: '$9.99',
+      sub: 'per month',
+      cta: 'Buy Starter',
+      href: checkoutHref('starter'),
+      highlight: true,
+      features: [
+        '100k inspected requests / month',
+        'Everything in Free',
+        'Guided setup and deploy checklist',
+        'Plan quotas and usage visibility',
+        'Email setup support',
+        'Upgrade path to Pro without reinstalling',
       ],
     },
     {
       name: 'Pro',
-      price: '$499',
+      price: '$35',
       sub: 'per month',
-      cta: 'Start with Pro',
-      href: 'mailto:sharviksutar@gmail.com?subject=TITAN%20Pro',
-      highlight: true,
-      features: [
-        'Everything in Community',
-        'Multi-tenant isolation & metering',
-        'Plan quotas & usage billing',
-        'OIDC SSO + 4-tier RBAC',
-        'Real-time SOC alerting',
-        'Hallucination / groundedness scoring',
-      ],
-    },
-    {
-      name: 'Enterprise',
-      price: 'Custom',
-      sub: 'for regulated & at-scale teams',
-      cta: 'Contact sales',
-      href: 'mailto:sharviksutar@gmail.com?subject=TITAN%20Enterprise',
+      cta: 'Buy Pro',
+      href: checkoutHref('pro'),
       highlight: false,
       features: [
-        'Everything in Pro',
-        'Compliance & audit export',
-        'WASM custom-rule plugins',
-        'mTLS, backup / DR, Helm & Terraform',
-        'Unlimited tenants & volume',
-        'Priority support & SLA',
+        '1M inspected requests / month',
+        'Everything in Starter',
+        'Multi-tenant metering and quotas',
+        'RBAC, audit export, and SOC alerts',
+        'Hallucination / groundedness checks',
+        'Priority setup support',
       ],
     },
   ];
@@ -432,10 +550,10 @@ function Pricing() {
     <section id="pricing" className="mx-auto max-w-6xl px-5 py-20">
       <Reveal className="text-center">
         <SectionLabel><span className="mx-auto">Editions</span></SectionLabel>
-        <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">Open-core, fairly priced</h2>
+        <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">Simple pricing that can sell today</h2>
         <p className="mx-auto mt-4 max-w-2xl text-[15px] leading-relaxed text-base-muted">
-          The security engine is free and MIT. Paid tiers add what an organization needs at
-          scale &mdash; identity, governance, compliance, and a SOC.
+          Start free, then move to a paid monthly plan when TITAN protects real traffic.
+          Paid checkout can run through Stripe Payment Links or Stripe Checkout Sessions.
         </p>
       </Reveal>
 
@@ -498,16 +616,16 @@ function FinalCTA() {
           call is inspected, governed, and logged.
         </p>
         <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
-          <a href={GITHUB_URL} target="_blank" rel="noreferrer"
+          <a href={checkoutHref('free')} target="_blank" rel="noreferrer"
             className="inline-flex w-full items-center justify-center gap-2 rounded-xl btn-primary px-5 py-3 text-[14px] font-medium sm:w-auto">
-            <Github size={17} /> Get started free
+            <Github size={17} /> Start free
           </a>
-          <a href="mailto:sharviksutar@gmail.com?subject=TITAN%20Enterprise"
+          <a href={checkoutHref('pro')}
             className="inline-flex w-full items-center justify-center gap-2 rounded-xl btn-ghost px-5 py-3 text-[14px] font-medium sm:w-auto">
-            <Webhook size={16} /> Talk to us
+            <Webhook size={16} /> Buy Pro
           </a>
         </div>
-        <p className="mt-6 font-mono text-[12px] text-base-muted">docker-compose up -d &nbsp;·&nbsp; 8-service cluster in one command</p>
+        <p className="mt-6 font-mono text-[12px] text-base-muted">./scripts/quickstart.sh &nbsp;·&nbsp; full stack, guided setup, smoke test</p>
       </Reveal>
     </section>
   );
@@ -530,6 +648,7 @@ function Footer() {
           </a>
           <a href="#features" className="transition-colors hover:text-base-text">Features</a>
           <a href="#pricing" className="transition-colors hover:text-base-text">Editions</a>
+          <a href={SUPPORT_URL} className="transition-colors hover:text-base-text">Support</a>
           <span className="flex items-center gap-1.5"><Star size={13} /> MIT</span>
         </div>
       </div>
@@ -555,6 +674,7 @@ export default function Page() {
       <Threats />
       <Pipeline />
       <Features />
+      <SetupSection />
       <Pricing />
       <FinalCTA />
       <Footer />

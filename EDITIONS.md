@@ -69,10 +69,10 @@ groundedness scoring cleanly fails open.
 
 ## Pricing tiers
 
-| Tier | Audience | Includes |
-|---|---|---|
-| **Community** | Individuals, single teams | Open-core, MIT, self-host, free forever |
-| **Pro** | Growing orgs | Multi-tenant, SSO/RBAC, SOC alerting, audit export, hallucination detection |
-| **Enterprise** | Regulated / at-scale | + mTLS, DR, Helm/Terraform HA, WASM plugins, support SLA |
+| Tier | Price | Audience | Includes |
+|---|---:|---|---|
+| **Free** | $0/mo | Individuals, single teams | Open-core, MIT, self-host, 10k inspected requests/month |
+| **Starter** | $9.99/mo | Builders validating real traffic | Free + guided setup, usage visibility, 100k inspected requests/month |
+| **Pro** | $35/mo | Growing orgs | Starter + multi-tenant metering, RBAC/audit/SOC surfaces, 1M inspected requests/month |
 
 For commercial licensing: **sharviksutar@gmail.com**.
