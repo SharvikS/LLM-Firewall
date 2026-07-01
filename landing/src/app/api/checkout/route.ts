@@ -86,7 +86,7 @@ async function createStripeCheckoutSession(request: NextRequest, tier: PaidPlan,
   const origin = originFor(request);
   const body = new URLSearchParams({
     mode: 'subscription',
-    success_url: process.env.STRIPE_SUCCESS_URL || `${origin}/success?session_id={CHECKOUT_SESSION_ID}`,
+    success_url: process.env.STRIPE_SUCCESS_URL || `${origin}/start?tier=${tier}&session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: process.env.STRIPE_CANCEL_URL || `${origin}/#pricing`,
     allow_promotion_codes: 'true',
     billing_address_collection: 'auto',

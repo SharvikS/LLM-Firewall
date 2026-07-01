@@ -13,7 +13,7 @@ const GITHUB_URL = 'https://github.com/SharvikS/LLM-Firewall';
 const DOCS_URL = `${GITHUB_URL}/tree/main/docs`;
 const SUPPORT_URL = 'mailto:sharviksutar@gmail.com?subject=TITAN%20Gateway';
 const checkoutHref = (tier: 'free' | 'starter' | 'pro') => (
-  tier === 'free' ? GITHUB_URL : `/api/checkout?tier=${tier}`
+  tier === 'free' ? '/start?tier=free' : `/api/checkout?tier=${tier}`
 );
 
 // lucide dropped its brand marks (trademark), so the GitHub logo is inlined.
@@ -419,14 +419,14 @@ function Features() {
 function SetupSection() {
   const steps = [
     {
-      icon: <Terminal size={17} />,
-      t: 'Run one command',
-      d: './scripts/quickstart.sh checks Docker, creates env files, starts the stack, and waits for the dashboard.',
+      icon: <Check size={17} />,
+      t: 'Choose a plan',
+      d: 'Start free or complete Stripe Checkout for Starter and Pro.',
     },
     {
       icon: <KeyRound size={17} />,
-      t: 'Paste one provider key',
-      d: 'Use Groq, OpenAI, or another compatible upstream. TITAN keeps the app-facing key local.',
+      t: 'Activate a workspace',
+      d: 'The hosted flow creates your tenant, dashboard user, gateway URL, and first app key.',
     },
     {
       icon: <ShieldCheck size={17} />,
@@ -443,21 +443,21 @@ function SetupSection() {
           <div className="grid gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
             <div>
               <h2 className="max-w-xl text-3xl font-semibold tracking-tight sm:text-4xl">
-                Buyers should be running TITAN before they finish coffee
+                Hosted first. Self-host when you need control.
               </h2>
               <p className="mt-4 max-w-xl text-[15px] leading-relaxed text-base-muted">
-                The repo now has a guided Docker quickstart for non-experts: it preserves
-                existing secrets, creates missing config, starts the full stack, and prints
-                the dashboard, gateway, docs, and smoke-test commands.
+                The default buyer path is now checkout, workspace activation, and a ready
+                gateway endpoint. The Docker quickstart stays available for teams that want
+                to run the full stack themselves.
               </p>
               <div className="mt-7 flex flex-col gap-3 sm:flex-row">
-                <a href={checkoutHref('starter')}
+                <a href={checkoutHref('free')}
                   className="inline-flex items-center justify-center gap-2 rounded-xl btn-primary px-5 py-3 text-[14px] font-medium">
-                  Buy Starter <ArrowRight size={15} />
+                  Activate free <ArrowRight size={15} />
                 </a>
-                <a href={DOCS_URL} target="_blank" rel="noreferrer"
+                <a href={checkoutHref('starter')}
                   className="inline-flex items-center justify-center gap-2 rounded-xl btn-ghost px-5 py-3 text-[14px] font-medium">
-                  Read setup docs <FileText size={15} />
+                  Buy Starter <ArrowRight size={15} />
                 </a>
               </div>
             </div>
@@ -483,6 +483,9 @@ function SetupSection() {
 <span className="text-base-text">cd LLM-Firewall</span>{'\n'}
 <span className="text-emerald-300">./scripts/quickstart.sh</span>
                   </pre>
+                  <div className="border-t border-base-border px-5 py-3 text-[12px] text-base-muted">
+                    Self-host path for advanced deployments
+                  </div>
                 </div>
               </Reveal>
             </div>

@@ -116,7 +116,21 @@ For the deeper design and threat model, read:
 
 ---
 
-## Quick Start
+## Fastest Path: Hosted TITAN
+
+For most buyers, TITAN should work like ordinary SaaS:
+
+1. Choose **Free**, **Starter**, or **Pro** on the landing site.
+2. Paid plans complete Stripe Checkout.
+3. `/start` creates the workspace, dashboard user, and first app API key.
+4. Point an OpenAI-compatible SDK at the hosted gateway URL.
+
+The storefront provisioning route is in `landing/src/app/api/activate/route.ts`.
+Set `TITAN_CLOUD_GATEWAY_URL`, `TITAN_CLOUD_ADMIN_TOKEN`,
+`NEXT_PUBLIC_TITAN_DASHBOARD_URL`, and `NEXT_PUBLIC_TITAN_GATEWAY_BASE_URL` on
+the landing deployment to enable it. See [landing/README.md](landing/README.md).
+
+## Self-Hosted Quick Start
 
 Prerequisites: Docker 24+ and Docker Compose v2.
 

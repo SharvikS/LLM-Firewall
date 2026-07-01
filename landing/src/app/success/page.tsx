@@ -10,13 +10,12 @@ export default function SuccessPage() {
         </div>
         <h1 className="text-3xl font-semibold tracking-tight">Payment received</h1>
         <p className="mt-4 text-[15px] leading-relaxed text-base-muted">
-          Your TITAN plan is active in Stripe. Use the quickstart script to launch the
-          local stack, then send the checkout email to support if you need plan
-          activation help.
+          Your TITAN plan is active in Stripe. Activate your hosted workspace to get
+          the dashboard login, gateway base URL, and app API key.
         </p>
         <div className="mt-7 flex flex-col gap-3 sm:flex-row">
-          <Link href="/#setup" className="inline-flex items-center justify-center gap-2 rounded-xl btn-primary px-5 py-3 text-[14px] font-medium">
-            Setup TITAN <ArrowRight size={15} />
+          <Link href="/start" className="inline-flex items-center justify-center gap-2 rounded-xl btn-primary px-5 py-3 text-[14px] font-medium">
+            Activate workspace <ArrowRight size={15} />
           </Link>
           <Link href="/#pricing" className="inline-flex items-center justify-center rounded-xl btn-ghost px-5 py-3 text-[14px] font-medium">
             Back to pricing
