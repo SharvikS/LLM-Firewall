@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test:auth": "node scripts/verify-admin-auth.mjs",
+    "test:home-profile": "node scripts/verify-gateway-runtime-config.mjs",
     "test:e2e": "playwright test"
   },
   "dependencies": {
