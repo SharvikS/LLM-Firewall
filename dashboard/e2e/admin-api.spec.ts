@@ -2,6 +2,8 @@ import { expect, test } from '@playwright/test';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 
 const gatewayPort = Number(process.env.PLAYWRIGHT_GATEWAY_PORT ?? 18080);
+const dashboardPort = Number(process.env.PLAYWRIGHT_DASHBOARD_PORT ?? 3100);
+const dashboardOrigin = `http://localhost:${dashboardPort}`;
 const ADMIN_TOKEN = 'playwright-admin-token';
 
 type Call = {
@@ -37,7 +39,8 @@ test.afterAll(async () => {
   });
 });
 
-test.beforeEach(() => {
+test.beforeEach(async ({ request }) => {
+  await request.post('/api/auth/logout').catch(() => undefined);
   calls = [];
 });
 
@@ -62,10 +65,33 @@ test('login sets an httpOnly dashboard session and /api/auth/me resolves the use
   expect(lastCall('/admin/v1/auth/me')?.headers.authorization).toBe('Bearer admin-token');
 });
 
-test('dashboard admin proxy fails closed without a session cookie', async ({ request }) => {
-  const keys = await request.get('/api/admin/keys');
+test('SSO landing redeems one-time code server-side and never accepts token query handoff', async ({ request }) => {
+  const legacy = await request.get('/api/auth/sso?token=jwt-in-url', { maxRedirects: 0 });
+  expect(legacy.status()).toBe(307);
+  expect(legacy.headers()['location']).toContain('/login?error=sso');
+  expect(calls.find(call => call.path === '/admin/v1/auth/sso/exchange')).toBeUndefined();
+
+  const response = await request.get('/api/auth/sso?code=playwright-sso-code', { maxRedirects: 0 });
+  expect(response.status()).toBe(307);
+  expect(response.headers()['location']).toBe(`${dashboardOrigin}/`);
+  expect(response.headers()['set-cookie']).toContain('titan_session=sso-session-token');
+  expect(response.headers()['set-cookie']).toContain('HttpOnly');
+
+  const exchange = lastCall('/admin/v1/auth/sso/exchange');
+  expect(exchange?.method).toBe('POST');
+  expect(exchange?.headers['x-admin-token']).toBe(ADMIN_TOKEN);
+  expect(exchange?.body).toEqual({ code: 'playwright-sso-code' });
+});
+
+test('dashboard admin proxy fails closed without a session cookie', async ({ playwright }) => {
+  const anonymous = await playwright.request.newContext({
+    baseURL: `http://127.0.0.1:${dashboardPort}`,
+    extraHTTPHeaders: { Cookie: 'titan_session=' },
+  });
+  const keys = await anonymous.get('/api/admin/keys');
   expect(keys.status()).toBe(401);
   expect(await keys.json()).toEqual({ error: 'authentication required' });
+  await anonymous.dispose();
 
   expect(calls.find(call => call.path === '/admin/v1/keys')).toBeUndefined();
 });
@@ -82,14 +108,14 @@ test('RBAC is propagated for API key reads and admin-only key creation', async (
   expect(readCall?.headers['x-admin-token']).toBeUndefined();
 
   const viewerCreate = await request.post('/api/admin/keys', {
-    headers: cookie('viewer-token'),
+    headers: sameOriginCookie('viewer-token'),
     data: { tenant_id: 'tenant-1', name: 'blocked key' },
   });
   expect(viewerCreate.status()).toBe(403);
   expect(await viewerCreate.json()).toEqual({ error: 'insufficient role: this action requires admin' });
 
   const adminCreate = await request.post('/api/admin/keys', {
-    headers: cookie('admin-token'),
+    headers: sameOriginCookie('admin-token'),
     data: { tenant_id: 'tenant-1', name: 'production app' },
   });
   expect(adminCreate.status()).toBe(201);
@@ -112,7 +138,7 @@ test('API key sandbox restrictions are forwarded to the gateway sandbox endpoint
   };
 
   const response = await request.put('/api/admin/keys/key-1', {
-    headers: cookie('admin-token'),
+    headers: sameOriginCookie('admin-token'),
     data: sandbox,
   });
 
@@ -129,16 +155,30 @@ test('API key sandbox restrictions are forwarded to the gateway sandbox endpoint
   expect(call?.body).toEqual(sandbox);
 });
 
+test('cross-origin admin mutations are rejected before reaching the gateway', async ({ request }) => {
+  const response = await request.post('/api/admin/keys', {
+    headers: {
+      ...cookie('admin-token'),
+      Origin: 'http://evil.local',
+    },
+    data: { tenant_id: 'tenant-1', name: 'csrf attempt' },
+  });
+
+  expect(response.status()).toBe(403);
+  expect(await response.json()).toEqual({ error: 'same-origin request required' });
+  expect(calls.find(call => call.path === '/admin/v1/keys' && call.method === 'POST')).toBeUndefined();
+});
+
 test('sandbox execution APIs require security role and accept security sessions', async ({ request }) => {
   const viewer = await request.post('/api/admin/sandboxes', {
-    headers: cookie('viewer-token'),
+    headers: sameOriginCookie('viewer-token'),
     data: { backend: 'simulated', command: 'echo blocked' },
   });
   expect(viewer.status()).toBe(403);
   expect(await viewer.json()).toEqual({ error: 'insufficient role: this action requires security' });
 
   const security = await request.post('/api/admin/sandboxes', {
-    headers: cookie('security-token'),
+    headers: sameOriginCookie('security-token'),
     data: { backend: 'simulated', command: 'echo titan-sandbox-ok' },
   });
   expect(security.status()).toBe(202);
@@ -171,6 +211,10 @@ test('gateway read proxy validates session before forwarding machine token', asy
 
 function cookie(token: string) {
   return { Cookie: `titan_session=${token}` };
+}
+
+function sameOriginCookie(token: string) {
+  return { ...cookie(token), Origin: dashboardOrigin };
 }
 
 function lastCall(path: string) {
@@ -208,6 +252,17 @@ async function handleGatewayRequest(req: IncomingMessage, res: ServerResponse) {
       machine: false,
       edition: 'community',
       features: {},
+    });
+  }
+
+  if (req.method === 'POST' && path === '/admin/v1/auth/sso/exchange') {
+    if (req.headers['x-admin-token'] !== ADMIN_TOKEN) return json(res, 401, { error: 'machine authentication required' });
+    if ((parsedBody as { code?: unknown }).code !== 'playwright-sso-code') {
+      return json(res, 401, { error: 'invalid or expired SSO code' });
+    }
+    return json(res, 200, {
+      token: 'sso-session-token',
+      user: { email: 'sso@titan.local', role: 'viewer' },
     });
   }
 
