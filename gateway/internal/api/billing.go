@@ -36,10 +36,15 @@ func (h *billingHandler) listPlans(w http.ResponseWriter, _ *http.Request) {
 // listUsage returns current-month usage for every tenant (or one via ?tenant=).
 func (h *billingHandler) listUsage(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
+	id := identityFrom(r.Context())
 	if t := r.URL.Query().Get("tenant"); t != "" {
 		id, err := uuid.Parse(t)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid tenant id"})
+			return
+		}
+		if !canAccessTenant(identityFrom(r.Context()), id) {
+			forbiddenTenant(w)
 			return
 		}
 		tenant, err := h.st.GetTenantByID(r.Context(), id)
@@ -54,7 +59,15 @@ func (h *billingHandler) listUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tenants, err := h.st.ListTenants(r.Context())
+	var (
+		tenants []store.Tenant
+		err     error
+	)
+	if id.Global {
+		tenants, err = h.st.ListTenants(r.Context())
+	} else {
+		tenants, err = h.st.ListTenantsByIDs(r.Context(), id.TenantIDs)
+	}
 	if err != nil {
 		internalError(w, "list tenants", err)
 		return

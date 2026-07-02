@@ -2,13 +2,17 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/sharvik/llm-firewall/gateway/internal/auth"
 	"github.com/sharvik/llm-firewall/gateway/internal/edition"
@@ -21,10 +25,12 @@ type identityKey struct{}
 
 // Identity is the resolved caller (a human session or the machine master token).
 type Identity struct {
-	UserID  string
-	Email   string
-	Role    auth.Role
-	Machine bool
+	UserID    string
+	Email     string
+	Role      auth.Role
+	Machine   bool
+	Global    bool
+	TenantIDs []uuid.UUID
 }
 
 func identityFrom(ctx context.Context) Identity {
@@ -97,12 +103,18 @@ func (h *authHandler) login(w http.ResponseWriter, r *http.Request) {
 // me returns the current identity (from the authenticate middleware).
 func (h *authHandler) me(w http.ResponseWriter, r *http.Request) {
 	id := identityFrom(r.Context())
+	tenantIDs := make([]string, 0, len(id.TenantIDs))
+	for _, tid := range id.TenantIDs {
+		tenantIDs = append(tenantIDs, tid.String())
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"email":    id.Email,
-		"role":     id.Role,
-		"machine":  id.Machine,
-		"edition":  string(edition.Current()),
-		"features": edition.Entitled(),
+		"email":      id.Email,
+		"role":       id.Role,
+		"machine":    id.Machine,
+		"global":     id.Global,
+		"tenant_ids": tenantIDs,
+		"edition":    string(edition.Current()),
+		"features":   edition.Entitled(),
 	})
 }
 
@@ -126,9 +138,8 @@ func (h *authHandler) oidcLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
-// oidcCallback completes the code exchange, provisions the user, mints a session
-// token and bounces back to the dashboard with the token in the URL fragment so
-// the dashboard can store it as an httpOnly cookie.
+// oidcCallback completes the provider code exchange, provisions the user, and
+// bounces back to the dashboard with a one-time TITAN handoff code.
 func (h *authHandler) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	if !h.oidcEnabled {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "SSO not configured"})
@@ -172,28 +183,76 @@ func (h *authHandler) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "account disabled"})
 		return
 	}
-	token, err := h.issuer.Issue(cred.ID.String(), cred.Email, auth.Role(cred.Role), time.Now())
-	if err != nil {
-		internalError(w, "issue token", err)
-		return
-	}
 	go h.st.TouchLastLogin(context.Background(), cred.ID)
 	h.audit.Record(r, controlAuditEvent{
 		Action: "AUTH_SSO_SUCCEEDED", ActorEmail: cred.Email, ActorID: cred.ID.String(),
 		ActorRole: cred.Role, ActorType: "human", TargetType: "user", TargetID: cred.ID.String(),
 		Reason: "OIDC SSO succeeded",
 	})
-	// Hand the token to the dashboard's SSO landing route, which sets the
-	// httpOnly session cookie and redirects into the app.
-	dest := strings.TrimRight(h.dashboardURL, "/") + "/api/auth/sso?token=" + url.QueryEscape(token)
+	handoffCode, err := newExchangeCode()
+	if err != nil {
+		internalError(w, "sso exchange code", err)
+		return
+	}
+	if err := h.st.CreateSSOExchangeCode(r.Context(), handoffCode, cred.ID, cred.Email, cred.Role, 90*time.Second); err != nil {
+		internalError(w, "store sso exchange code", err)
+		return
+	}
+	// Hand the browser a one-time code only. The dashboard backend redeems it
+	// with the machine token, so the session JWT never appears in URLs.
+	dest := strings.TrimRight(h.dashboardURL, "/") + "/api/auth/sso?code=" + url.QueryEscape(handoffCode)
 	http.Redirect(w, r, dest, http.StatusFound)
+}
+
+// ssoExchange redeems the one-time OIDC handoff code for a session JWT. It is
+// machine-token protected by route middleware and called only by the dashboard
+// backend, never directly from browser JavaScript.
+func (h *authHandler) ssoExchange(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
+		return
+	}
+	body.Code = strings.TrimSpace(body.Code)
+	if body.Code == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing code"})
+		return
+	}
+	exchange, err := h.st.ConsumeSSOExchangeCode(r.Context(), body.Code)
+	if err != nil {
+		internalError(w, "consume sso exchange code", err)
+		return
+	}
+	if exchange == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid or expired SSO code"})
+		return
+	}
+	token, err := h.issuer.Issue(exchange.UserID.String(), exchange.Email, auth.Role(exchange.Role), time.Now())
+	if err != nil {
+		internalError(w, "issue token", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"token": token,
+		"user":  map[string]string{"email": exchange.Email, "role": exchange.Role},
+	})
+}
+
+func newExchangeCode() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 // ── RBAC middleware ───────────────────────────────────────────────────────────
 
 // authenticate resolves an Identity from the master token (machine → admin) or a
 // session JWT, else 401. Public auth routes are mounted outside this middleware.
-func authenticate(issuer *auth.Issuer, masterToken string) func(http.Handler) http.Handler {
+func authenticate(issuer *auth.Issuer, masterToken string, st *store.Store) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			xAdmin := r.Header.Get("X-Admin-Token")
@@ -205,19 +264,48 @@ func authenticate(issuer *auth.Issuer, masterToken string) func(http.Handler) ht
 				candidate = bearer
 			}
 			if masterToken != "" && subtle.ConstantTimeCompare([]byte(candidate), []byte(masterToken)) == 1 {
-				ctx := context.WithValue(r.Context(), identityKey{}, Identity{Email: "machine", Role: auth.RoleAdmin, Machine: true})
+				ctx := context.WithValue(r.Context(), identityKey{}, Identity{Email: "machine", Role: auth.RoleAdmin, Machine: true, Global: true})
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
 			}
 			// 2. Human session JWT in Authorization: Bearer.
 			if bearer != "" && issuer != nil {
 				if claims, err := issuer.Verify(bearer, time.Now()); err == nil {
-					ctx := context.WithValue(r.Context(), identityKey{}, Identity{UserID: claims.Sub, Email: claims.Email, Role: claims.Role})
+					id := Identity{UserID: claims.Sub, Email: claims.Email, Role: claims.Role}
+					if uid, parseErr := uuid.Parse(claims.Sub); parseErr == nil && st != nil {
+						tenantIDs, err := st.ListUserTenantIDs(r.Context(), uid)
+						if err != nil {
+							logger.Get().Warn("auth: tenant scope lookup failed",
+								slog.String("user_id", claims.Sub),
+								slog.String("error", err.Error()))
+							writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication service unavailable"})
+							return
+						}
+						id.TenantIDs = tenantIDs
+					}
+					id.Global = len(id.TenantIDs) == 0
+					ctx := context.WithValue(r.Context(), identityKey{}, id)
 					next.ServeHTTP(w, r.WithContext(ctx))
 					return
 				}
 			}
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
+		})
+	}
+}
+
+func machineOnly(masterToken string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			candidate := r.Header.Get("X-Admin-Token")
+			if candidate == "" {
+				candidate = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			}
+			if masterToken != "" && subtle.ConstantTimeCompare([]byte(candidate), []byte(masterToken)) == 1 {
+				next.ServeHTTP(w, r)
+				return
+			}
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "machine authentication required"})
 		})
 	}
 }
@@ -236,4 +324,23 @@ func requireRole(min auth.Role) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+func requireGlobalAdmin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := identityFrom(r.Context())
+		if !id.Role.AtLeast(auth.RoleAdmin) {
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"error": "insufficient role: this action requires admin",
+			})
+			return
+		}
+		if !id.Global {
+			writeJSON(w, http.StatusForbidden, map[string]string{
+				"error": "global admin scope required",
+			})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

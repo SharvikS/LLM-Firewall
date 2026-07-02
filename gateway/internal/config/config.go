@@ -119,6 +119,10 @@ type Config struct {
 	// DashboardURL is where SSO bounces the browser back after login.
 	DashboardURL string
 
+	// AdminAllowedOrigins controls browser CORS/origin checks for /admin/v1.
+	// Empty resolves to DashboardURL, so production does not wildcard CORS.
+	AdminAllowedOrigins []string
+
 	// SecurityScanReportPath is the consolidated CVE-scan report served to the
 	// dashboard Vulnerabilities tab (written by scripts/security-scan.sh / CI).
 	SecurityScanReportPath string
@@ -216,6 +220,7 @@ func Load() (*Config, error) {
 		OIDCComplianceGroups:     splitComma(os.Getenv("OIDC_COMPLIANCE_GROUPS")),
 		OIDCViewerGroups:         splitComma(os.Getenv("OIDC_VIEWER_GROUPS")),
 		DashboardURL:             getEnv("DASHBOARD_URL", "http://localhost:3000"),
+		AdminAllowedOrigins:      splitComma(getEnv("ADMIN_ALLOWED_ORIGINS", getEnv("DASHBOARD_URL", "http://localhost:3000"))),
 
 		SecurityScanReportPath: getEnv("SCAN_REPORT_PATH", "docs/security/scan-report.json"),
 

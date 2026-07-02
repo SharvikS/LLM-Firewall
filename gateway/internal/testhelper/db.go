@@ -52,7 +52,7 @@ func registerCleanup(t *testing.T, st *store.Store) {
 		// starts clean. Plain DELETEs — CockroachDB rejects PostgreSQL's
 		// TRUNCATE ... RESTART IDENTITY form.
 		ctx := context.Background()
-		for _, table := range []string{"audit_events", "api_keys", "policies", "tenants"} {
+		for _, table := range []string{"sso_exchange_codes", "user_tenant_access", "audit_events", "api_keys", "policies", "users", "tenants"} {
 			if _, err := st.Pool().Exec(ctx, "DELETE FROM "+table); err != nil {
 				t.Logf("testhelper: cleanup of %s failed: %v", table, err)
 			}

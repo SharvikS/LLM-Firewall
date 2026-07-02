@@ -37,6 +37,9 @@ func (h *adminHandler) complianceReport(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	if tenantID, err = h.applyComplianceScope(w, r, tenantID); err != nil {
+		return
+	}
 
 	summary, err := h.st.GetComplianceSummary(r.Context(), tenantID, from, to)
 	if err != nil {
@@ -72,6 +75,9 @@ func (h *adminHandler) complianceCoverage(w http.ResponseWriter, r *http.Request
 	from, to, tenantID, err := complianceParams(r)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if tenantID, err = h.applyComplianceScope(w, r, tenantID); err != nil {
 		return
 	}
 	summary, err := h.st.GetComplianceSummary(r.Context(), tenantID, from, to)
@@ -130,6 +136,9 @@ func (h *adminHandler) complianceExport(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	if tenantID, err = h.applyComplianceScope(w, r, tenantID); err != nil {
+		return
+	}
 
 	format := r.URL.Query().Get("format")
 	if format == "" {
@@ -167,6 +176,25 @@ func (h *adminHandler) complianceExport(w http.ResponseWriter, r *http.Request) 
 	default:
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "format must be csv or jsonl"})
 	}
+}
+
+func (h *adminHandler) applyComplianceScope(w http.ResponseWriter, r *http.Request, tenantID *uuid.UUID) (*uuid.UUID, error) {
+	id := identityFrom(r.Context())
+	if tenantID != nil {
+		if !canAccessTenant(id, *tenantID) {
+			forbiddenTenant(w)
+			return nil, fmt.Errorf("forbidden")
+		}
+		return tenantID, nil
+	}
+	if id.Global {
+		return nil, nil
+	}
+	if tid, ok := singleScopedTenant(id); ok {
+		return &tid, nil
+	}
+	writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant id required for scoped user"})
+	return nil, fmt.Errorf("tenant required")
 }
 
 // auditRowToCSV flattens an audit row into the CSV column order, mapping

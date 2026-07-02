@@ -37,10 +37,13 @@ func (h *settingsHandler) getSettings(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings unavailable"})
 		return
 	}
-	tenant, ok := tenantParam(r)
+	tenantID, ok := resolveTenantForScopedRequest(w, r, "tenant", false)
 	if !ok {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid tenant id"})
 		return
+	}
+	tenant := ""
+	if tenantID != nil {
+		tenant = tenantID.String()
 	}
 	if tenant == "" {
 		writeJSON(w, http.StatusOK, redactSecrets(h.mgr.Get()))
@@ -68,10 +71,13 @@ func (h *settingsHandler) updateSettings(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings unavailable"})
 		return
 	}
-	tenant, ok := tenantParam(r)
+	tenantID, ok := resolveTenantForScopedRequest(w, r, "tenant", false)
 	if !ok {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid tenant id"})
 		return
+	}
+	tenant := ""
+	if tenantID != nil {
+		tenant = tenantID.String()
 	}
 	patch, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
@@ -108,11 +114,11 @@ func (h *settingsHandler) deleteSettings(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "settings unavailable"})
 		return
 	}
-	tenant, ok := tenantParam(r)
-	if !ok || tenant == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant id required"})
+	tenantID, ok := resolveTenantForScopedRequest(w, r, "tenant", true)
+	if !ok {
 		return
 	}
+	tenant := tenantID.String()
 	if err := h.mgr.ClearTenant(r.Context(), tenant); err != nil {
 		internalError(w, "clear tenant settings", err)
 		return

@@ -55,7 +55,7 @@ func openTestStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() {
 		st.Pool().Exec(context.Background(), //nolint:errcheck
-			`TRUNCATE api_keys, policies, audit_events, tenants RESTART IDENTITY CASCADE`)
+			`TRUNCATE sso_exchange_codes, user_tenant_access, api_keys, policies, audit_events, users, tenants RESTART IDENTITY CASCADE`)
 		st.Close()
 	})
 	return st

@@ -55,16 +55,7 @@ func (s *Store) ListPolicies(ctx context.Context, tenantID *uuid.UUID) ([]Policy
 		return nil, err
 	}
 	defer rows.Close()
-
-	var out []Policy
-	for rows.Next() {
-		p, err := scanPolicy(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *p)
-	}
-	return out, rows.Err()
+	return scanPolicies(rows)
 }
 
 func (s *Store) GetPolicy(ctx context.Context, id uuid.UUID) (*Policy, error) {

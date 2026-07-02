@@ -418,9 +418,10 @@ func main() {
 		ScanReportPath:  cfg.SecurityScanReportPath,
 		Issuer:          sessionIssuer,
 		OIDC:            oidcClient,
-		OIDCEnabled:     oidcCfg.Enabled(),
+		OIDCEnabled:     oidcClient != nil,
 		DefaultOIDCRole: auth.Role(cfg.OIDCDefaultRole),
 		DashboardURL:    cfg.DashboardURL,
+		AllowedOrigins:  cfg.AdminAllowedOrigins,
 		PolicyEngine:    policyEngine,
 		Sandbox:         sandboxMgr,
 	}))

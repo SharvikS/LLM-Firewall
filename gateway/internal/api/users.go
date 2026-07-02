@@ -29,9 +29,10 @@ func (h *userHandler) listUsers(w http.ResponseWriter, r *http.Request) {
 
 func (h *userHandler) createUser(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Role     string `json:"role"`
+		Email     string   `json:"email"`
+		Password  string   `json:"password"`
+		Role      string   `json:"role"`
+		TenantIDs []string `json:"tenant_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
@@ -50,6 +51,10 @@ func (h *userHandler) createUser(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password must be at least 8 characters"})
 		return
 	}
+	tenantIDs, ok := parseTenantIDList(w, body.TenantIDs)
+	if !ok {
+		return
+	}
 	hash, err := auth.HashPassword(body.Password)
 	if err != nil {
 		internalError(w, "hash password", err)
@@ -61,6 +66,12 @@ func (h *userHandler) createUser(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusConflict, map[string]string{"error": "could not create user (email may already exist)"})
 		return
 	}
+	if err := h.st.SetUserTenantAccess(r.Context(), u.ID, tenantIDs); err != nil {
+		_ = h.st.DeleteUser(r.Context(), u.ID)
+		internalError(w, "set user tenant access", err)
+		return
+	}
+	u.TenantIDs = tenantIDs
 	h.audit.Record(r, controlAuditEvent{
 		Action: "ADMIN_USER_CREATED", StatusCode: http.StatusCreated,
 		TargetType: "user", TargetID: u.ID.String(), Reason: "user created",
@@ -75,7 +86,8 @@ func (h *userHandler) updateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Role string `json:"role"`
+		Role      string   `json:"role"`
+		TenantIDs []string `json:"tenant_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || !auth.Role(body.Role).Valid() {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "role must be viewer|compliance|security|admin"})
@@ -89,6 +101,24 @@ func (h *userHandler) updateRole(w http.ResponseWriter, r *http.Request) {
 	if u == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
 		return
+	}
+	if body.TenantIDs != nil {
+		tenantIDs, ok := parseTenantIDList(w, body.TenantIDs)
+		if !ok {
+			return
+		}
+		if err := h.st.SetUserTenantAccess(r.Context(), u.ID, tenantIDs); err != nil {
+			internalError(w, "set user tenant access", err)
+			return
+		}
+		u.TenantIDs = tenantIDs
+	} else {
+		tenantIDs, err := h.st.ListUserTenantIDs(r.Context(), u.ID)
+		if err != nil {
+			internalError(w, "list user tenant access", err)
+			return
+		}
+		u.TenantIDs = tenantIDs
 	}
 	h.audit.Record(r, controlAuditEvent{
 		Action:     "ADMIN_USER_ROLE_UPDATED",
@@ -116,4 +146,21 @@ func (h *userHandler) deleteUser(w http.ResponseWriter, r *http.Request) {
 		Action: "ADMIN_USER_DELETED", TargetType: "user", TargetID: id.String(), Reason: "user deleted",
 	})
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func parseTenantIDList(w http.ResponseWriter, raw []string) ([]uuid.UUID, bool) {
+	out := make([]uuid.UUID, 0, len(raw))
+	for _, v := range raw {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		id, err := uuid.Parse(v)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant_ids must contain UUIDs"})
+			return nil, false
+		}
+		out = append(out, id)
+	}
+	return out, true
 }

@@ -40,6 +40,7 @@ type AdminDeps struct {
 	OIDCEnabled     bool
 	DefaultOIDCRole auth.Role
 	DashboardURL    string // SSO bounce-back target
+	AllowedOrigins  []string
 	PolicyEngine    *policy.Engine
 	Sandbox         *sandboxrt.Manager
 }
@@ -55,7 +56,7 @@ type AdminDeps struct {
 func NewAdminRouter(d AdminDeps) http.Handler {
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RequestID)
-	r.Use(corsHeaders)
+	r.Use(corsHeaders(d.AllowedOrigins))
 
 	audit := newAuditRecorder(d.Store)
 	h := &adminHandler{st: d.Store, policyEngine: d.PolicyEngine, audit: audit}
@@ -82,10 +83,11 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 	r.Get("/auth/status", ah.authStatus)
 	r.Get("/auth/oidc/login", ah.oidcLogin)
 	r.Get("/auth/oidc/callback", ah.oidcCallback)
+	r.With(machineOnly(d.MasterToken)).Post("/auth/sso/exchange", ah.ssoExchange)
 
 	// ── Authenticated + RBAC ─────────────────────────────────────────────────
 	r.Group(func(r chi.Router) {
-		r.Use(authenticate(d.Issuer, d.MasterToken))
+		r.Use(authenticate(d.Issuer, d.MasterToken, d.Store))
 
 		r.Get("/auth/me", ah.me)
 
@@ -121,7 +123,7 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 		r.With(requireRole(auth.RoleSecurity)).Post("/dlp/flags/{id}/ack", dfh.ackFlag)
 		r.With(requireRole(auth.RoleSecurity)).Post("/sandboxes/execute", sbh.execute)
 		r.With(requireRole(auth.RoleSecurity)).Delete("/sandboxes/{id}", sbh.cancel)
-		r.With(requireRole(auth.RoleSecurity)).Post("/tenants", h.createTenant)
+		r.With(requireGlobalAdmin).Post("/tenants", h.createTenant)
 		r.With(requireRole(auth.RoleSecurity)).Post("/policies/evaluate", h.evaluatePolicy)
 		r.With(requireRole(auth.RoleSecurity)).Post("/policies", h.createPolicy)
 		r.With(requireRole(auth.RoleSecurity)).Get("/policies/{id}/versions", h.listPolicyVersions)
@@ -132,27 +134,44 @@ func NewAdminRouter(d AdminDeps) http.Handler {
 		r.With(requireRole(auth.RoleAdmin)).Post("/keys", h.createKey)
 		r.With(requireRole(auth.RoleAdmin)).Put("/keys/{id}/sandbox", h.updateKeySandbox)
 		r.With(requireRole(auth.RoleAdmin)).Delete("/keys/{id}", h.revokeKey)
-		r.With(requireRole(auth.RoleAdmin)).Get("/users", uh.listUsers)
-		r.With(requireRole(auth.RoleAdmin)).Post("/users", uh.createUser)
-		r.With(requireRole(auth.RoleAdmin)).Put("/users/{id}/role", uh.updateRole)
-		r.With(requireRole(auth.RoleAdmin)).Delete("/users/{id}", uh.deleteUser)
-		r.With(requireRole(auth.RoleAdmin)).Put("/tenants/{id}/plan", bh.updatePlan)
+		r.With(requireGlobalAdmin).Get("/users", uh.listUsers)
+		r.With(requireGlobalAdmin).Post("/users", uh.createUser)
+		r.With(requireGlobalAdmin).Put("/users/{id}/role", uh.updateRole)
+		r.With(requireGlobalAdmin).Delete("/users/{id}", uh.deleteUser)
+		r.With(requireGlobalAdmin).Put("/tenants/{id}/plan", bh.updatePlan)
 	})
 
 	return r
 }
 
-func corsHeaders(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type,X-Admin-Token,Authorization")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
+func corsHeaders(allowedOrigins []string) func(http.Handler) http.Handler {
+	allowed := map[string]bool{}
+	for _, origin := range allowedOrigins {
+		origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+		if origin != "" {
+			allowed[origin] = true
 		}
-		next.ServeHTTP(w, r)
-	})
+	}
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := strings.TrimRight(r.Header.Get("Origin"), "/")
+			if origin != "" {
+				if !allowed[origin] {
+					writeJSON(w, http.StatusForbidden, map[string]string{"error": "origin not allowed"})
+					return
+				}
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Vary", "Origin")
+			}
+			w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type,X-Admin-Token,Authorization")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 type adminHandler struct {
@@ -161,10 +180,82 @@ type adminHandler struct {
 	audit        *auditRecorder
 }
 
+func canAccessTenant(id Identity, tenantID uuid.UUID) bool {
+	if id.Global {
+		return true
+	}
+	for _, allowed := range id.TenantIDs {
+		if allowed == tenantID {
+			return true
+		}
+	}
+	return false
+}
+
+func forbiddenTenant(w http.ResponseWriter) {
+	writeJSON(w, http.StatusForbidden, map[string]string{"error": "tenant scope does not allow this action"})
+}
+
+func singleScopedTenant(id Identity) (uuid.UUID, bool) {
+	if id.Global || len(id.TenantIDs) != 1 {
+		return uuid.Nil, false
+	}
+	return id.TenantIDs[0], true
+}
+
+func requestedTenant(r *http.Request, key string) (*uuid.UUID, bool) {
+	raw := r.URL.Query().Get(key)
+	if raw == "" {
+		return nil, true
+	}
+	id, err := uuid.Parse(raw)
+	if err != nil {
+		return nil, false
+	}
+	return &id, true
+}
+
+func resolveTenantForScopedRequest(w http.ResponseWriter, r *http.Request, key string, requireTenant bool) (*uuid.UUID, bool) {
+	id := identityFrom(r.Context())
+	requested, ok := requestedTenant(r, key)
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid tenant id"})
+		return nil, false
+	}
+	if requested != nil {
+		if !canAccessTenant(id, *requested) {
+			forbiddenTenant(w)
+			return nil, false
+		}
+		return requested, true
+	}
+	if id.Global {
+		if requireTenant {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant id required"})
+			return nil, false
+		}
+		return nil, true
+	}
+	if tid, ok := singleScopedTenant(id); ok {
+		return &tid, true
+	}
+	writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant id required for scoped user"})
+	return nil, false
+}
+
 // ── Tenants ──────────────────────────────────────────────────────────────────
 
 func (h *adminHandler) listTenants(w http.ResponseWriter, r *http.Request) {
-	tenants, err := h.st.ListTenants(r.Context())
+	id := identityFrom(r.Context())
+	var (
+		tenants []store.Tenant
+		err     error
+	)
+	if id.Global {
+		tenants, err = h.st.ListTenants(r.Context())
+	} else {
+		tenants, err = h.st.ListTenantsByIDs(r.Context(), id.TenantIDs)
+	}
 	if err != nil {
 		internalError(w, "list tenants", err)
 		return
@@ -207,9 +298,25 @@ func (h *adminHandler) listKeys(w http.ResponseWriter, r *http.Request) {
 	if tid := r.URL.Query().Get("tenant_id"); tid != "" {
 		if parsed, err := uuid.Parse(tid); err == nil {
 			tenantID = parsed
+		} else {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid tenant_id UUID"})
+			return
 		}
 	}
-	keys, err := h.st.ListAPIKeys(r.Context(), tenantID)
+	id := identityFrom(r.Context())
+	if tenantID != uuid.Nil && !canAccessTenant(id, tenantID) {
+		forbiddenTenant(w)
+		return
+	}
+	var (
+		keys []store.APIKey
+		err  error
+	)
+	if tenantID != uuid.Nil || id.Global {
+		keys, err = h.st.ListAPIKeys(r.Context(), tenantID)
+	} else {
+		keys, err = h.st.ListAPIKeysForTenants(r.Context(), id.TenantIDs)
+	}
 	if err != nil {
 		internalError(w, "list keys", err)
 		return
@@ -229,6 +336,10 @@ func (h *adminHandler) createKey(w http.ResponseWriter, r *http.Request) {
 	tid, err := uuid.Parse(body.TenantID)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid tenant_id UUID"})
+		return
+	}
+	if !canAccessTenant(identityFrom(r.Context()), tid) {
+		forbiddenTenant(w)
 		return
 	}
 	rawKey, key, err := h.st.GenerateAPIKey(r.Context(), tid, body.Name)
@@ -253,6 +364,19 @@ func (h *adminHandler) revokeKey(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid key ID"})
 		return
 	}
+	key, err := h.st.GetAPIKeyByID(r.Context(), id)
+	if err != nil {
+		internalError(w, "lookup key", err)
+		return
+	}
+	if key == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
+		return
+	}
+	if !canAccessTenant(identityFrom(r.Context()), key.TenantID) {
+		forbiddenTenant(w)
+		return
+	}
 	if err := h.st.RevokeAPIKey(r.Context(), id); err != nil {
 		internalError(w, "revoke key", err)
 		return
@@ -267,6 +391,19 @@ func (h *adminHandler) updateKeySandbox(w http.ResponseWriter, r *http.Request) 
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid key ID"})
+		return
+	}
+	existing, err := h.st.GetAPIKeyByID(r.Context(), id)
+	if err != nil {
+		internalError(w, "lookup key", err)
+		return
+	}
+	if existing == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "api key not found"})
+		return
+	}
+	if !canAccessTenant(identityFrom(r.Context()), existing.TenantID) {
+		forbiddenTenant(w)
 		return
 	}
 	var body store.APISandbox
@@ -292,7 +429,16 @@ func (h *adminHandler) updateKeySandbox(w http.ResponseWriter, r *http.Request) 
 // ── Policies ─────────────────────────────────────────────────────────────────
 
 func (h *adminHandler) listPolicies(w http.ResponseWriter, r *http.Request) {
-	policies, err := h.st.ListPolicies(r.Context(), nil)
+	id := identityFrom(r.Context())
+	var (
+		policies []store.Policy
+		err      error
+	)
+	if id.Global {
+		policies, err = h.st.ListPolicies(r.Context(), nil)
+	} else {
+		policies, err = h.st.ListPoliciesForTenants(r.Context(), id.TenantIDs)
+	}
 	if err != nil {
 		internalError(w, "list policies", err)
 		return
@@ -322,7 +468,19 @@ func (h *adminHandler) createPolicy(w http.ResponseWriter, r *http.Request) {
 	if body.TenantID != nil {
 		if parsed, err := uuid.Parse(*body.TenantID); err == nil {
 			inp.TenantID = &parsed
+		} else {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid tenant_id UUID"})
+			return
 		}
+	}
+	if inp.TenantID == nil {
+		if !identityFrom(r.Context()).Global {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "global policy scope required"})
+			return
+		}
+	} else if !canAccessTenant(identityFrom(r.Context()), *inp.TenantID) {
+		forbiddenTenant(w)
+		return
 	}
 	if inp.Principal == "" {
 		inp.Principal = "*"
@@ -354,6 +512,24 @@ func (h *adminHandler) updatePolicy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON"})
 		return
 	}
+	existing, err := h.st.GetPolicy(r.Context(), id)
+	if err != nil {
+		internalError(w, "lookup policy", err)
+		return
+	}
+	if existing == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
+		return
+	}
+	if existing.TenantID == nil {
+		if !identityFrom(r.Context()).Global {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "global policy scope required"})
+			return
+		}
+	} else if !canAccessTenant(identityFrom(r.Context()), *existing.TenantID) {
+		forbiddenTenant(w)
+		return
+	}
 	p, err := h.st.UpdatePolicy(r.Context(), id, inp)
 	if err != nil {
 		internalError(w, "update policy", err)
@@ -376,7 +552,19 @@ func (h *adminHandler) deletePolicy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid policy ID"})
 		return
 	}
-	if existing, err := h.st.GetPolicy(r.Context(), id); err == nil && existing != nil {
+	if existing, err := h.st.GetPolicy(r.Context(), id); err != nil {
+		internalError(w, "lookup policy", err)
+		return
+	} else if existing != nil {
+		if existing.TenantID == nil {
+			if !identityFrom(r.Context()).Global {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "global policy scope required"})
+				return
+			}
+		} else if !canAccessTenant(identityFrom(r.Context()), *existing.TenantID) {
+			forbiddenTenant(w)
+			return
+		}
 		_, _ = h.st.RecordPolicyVersion(r.Context(), *existing, "deleted", identityFrom(r.Context()).Email)
 	}
 	if err := h.st.DeletePolicy(r.Context(), id); err != nil {
@@ -393,6 +581,20 @@ func (h *adminHandler) listPolicyVersions(w http.ResponseWriter, r *http.Request
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid policy ID"})
+		return
+	}
+	if policy, err := h.st.GetPolicy(r.Context(), id); err != nil {
+		internalError(w, "lookup policy", err)
+		return
+	} else if policy == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "policy not found"})
+		return
+	} else if policy.TenantID != nil && !canAccessTenant(identityFrom(r.Context()), *policy.TenantID) {
+		forbiddenTenant(w)
+		return
+	} else if policy.TenantID == nil && !identityFrom(r.Context()).Global {
+		// Global policy history can include all-tenant governance details.
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "global policy scope required"})
 		return
 	}
 	versions, err := h.st.ListPolicyVersions(r.Context(), id, parseQueryInt(r, "limit", 25))
@@ -417,6 +619,10 @@ func (h *adminHandler) evaluatePolicy(w http.ResponseWriter, r *http.Request) {
 	tid, err := uuid.Parse(body.TenantID)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "tenant_id must be a UUID"})
+		return
+	}
+	if !canAccessTenant(identityFrom(r.Context()), tid) {
+		forbiddenTenant(w)
 		return
 	}
 	if body.Action == "" {
@@ -463,6 +669,22 @@ func (h *adminHandler) listAudit(w http.ResponseWriter, r *http.Request) {
 	if limit > 200 {
 		limit = 200
 	}
+	id := identityFrom(r.Context())
+	filter, ok := requestedTenant(r, "tenant")
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid tenant id"})
+		return
+	}
+	if filter != nil && !canAccessTenant(id, *filter) {
+		forbiddenTenant(w)
+		return
+	}
+	filterIDs := []uuid.UUID{}
+	if filter != nil {
+		filterIDs = []uuid.UUID{*filter}
+	} else if !id.Global {
+		filterIDs = id.TenantIDs
+	}
 
 	if cursorStr, useCursor := cursorParam(r); useCursor {
 		before, err := decodeAuditCursor(cursorStr)
@@ -470,7 +692,15 @@ func (h *adminHandler) listAudit(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid cursor"})
 			return
 		}
-		rows, next, err := h.st.ListAuditEventsCursor(r.Context(), nil, limit, before)
+		var (
+			rows []store.AuditEventRow
+			next *store.AuditCursor
+		)
+		if len(filterIDs) > 0 {
+			rows, next, err = h.st.ListAuditEventsCursorForTenants(r.Context(), filterIDs, limit, before)
+		} else {
+			rows, next, err = h.st.ListAuditEventsCursor(r.Context(), nil, limit, before)
+		}
 		if err != nil {
 			internalError(w, "list audit (cursor)", err)
 			return
@@ -482,7 +712,16 @@ func (h *adminHandler) listAudit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	offset := parseQueryInt(r, "offset", 0)
-	rows, total, err := h.st.ListAuditEvents(r.Context(), nil, limit, offset)
+	var (
+		rows  []store.AuditEventRow
+		total int
+		err   error
+	)
+	if len(filterIDs) > 0 {
+		rows, total, err = h.st.ListAuditEventsForTenants(r.Context(), filterIDs, limit, offset)
+	} else {
+		rows, total, err = h.st.ListAuditEvents(r.Context(), nil, limit, offset)
+	}
 	if err != nil {
 		internalError(w, "list audit", err)
 		return

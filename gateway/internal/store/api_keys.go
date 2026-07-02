@@ -54,6 +54,15 @@ func (s *Store) GetAPIKeyByHash(ctx context.Context, hash string) (*APIKey, erro
 	return scanAPIKey(row)
 }
 
+func (s *Store) GetAPIKeyByID(ctx context.Context, id uuid.UUID) (*APIKey, error) {
+	row := s.pool.QueryRow(ctx,
+		`SELECT id,tenant_id,name,key_hash,key_prefix,active,requests,sandbox,last_used_at,created_at
+		   FROM api_keys WHERE id=$1`,
+		id,
+	)
+	return scanAPIKey(row)
+}
+
 // ListKeys returns all keys for a tenant (or all keys if tenantID is zero).
 func (s *Store) ListAPIKeys(ctx context.Context, tenantID uuid.UUID) ([]APIKey, error) {
 	var (
@@ -73,16 +82,7 @@ func (s *Store) ListAPIKeys(ctx context.Context, tenantID uuid.UUID) ([]APIKey, 
 		return nil, err
 	}
 	defer rows.Close()
-
-	var out []APIKey
-	for rows.Next() {
-		k, err := scanAPIKey(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *k)
-	}
-	return out, rows.Err()
+	return scanAPIKeys(rows)
 }
 
 // GenerateKey mints a new cryptographically random key, stores its hash, and

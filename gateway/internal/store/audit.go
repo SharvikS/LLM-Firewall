@@ -85,6 +85,30 @@ func (s *Store) ListAuditEvents(ctx context.Context, tenantID *uuid.UUID, limit,
 	return out, total, pgRows.Err()
 }
 
+func (s *Store) ListAuditEventsForTenants(ctx context.Context, tenantIDs []uuid.UUID, limit, offset int) ([]AuditEventRow, int, error) {
+	tenantIDs = uniqueUUIDs(tenantIDs)
+	if len(tenantIDs) == 0 {
+		return []AuditEventRow{}, 0, nil
+	}
+	var total int
+	const cols = `id,request_id,tenant_id,api_key_id,action,risk_score,path,latency_ms,status_code,reason,region,actor_id,actor_email,actor_role,actor_type,target_type,target_id,source_ip,user_agent,created_at`
+	if err := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM audit_events WHERE tenant_id = ANY($1)`, tenantIDs).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+cols+` FROM audit_events
+		  WHERE tenant_id = ANY($1)
+		  ORDER BY created_at DESC
+		  LIMIT $2 OFFSET $3`, tenantIDs, limit, offset)
+	if err != nil {
+		return nil, total, err
+	}
+	defer rows.Close()
+	out, err := scanAuditRows(rows)
+	return out, total, err
+}
+
 // AuditCursor is a keyset-pagination position: the (created_at, id) pair of
 // the last row the client has seen. Rows strictly older than it come next.
 type AuditCursor struct {
@@ -152,6 +176,40 @@ func (s *Store) ListAuditEventsCursor(ctx context.Context, tenantID *uuid.UUID, 
 	return out, next, nil
 }
 
+func (s *Store) ListAuditEventsCursorForTenants(ctx context.Context, tenantIDs []uuid.UUID, limit int, before *AuditCursor) ([]AuditEventRow, *AuditCursor, error) {
+	tenantIDs = uniqueUUIDs(tenantIDs)
+	if len(tenantIDs) == 0 {
+		return []AuditEventRow{}, nil, nil
+	}
+	const cols = `id,request_id,tenant_id,api_key_id,action,risk_score,path,latency_ms,status_code,reason,region,actor_id,actor_email,actor_role,actor_type,target_type,target_id,source_ip,user_agent,created_at`
+	q := `SELECT ` + cols + ` FROM audit_events WHERE tenant_id = ANY($1)`
+	args := []any{tenantIDs}
+	if before != nil {
+		args = append(args, before.CreatedAt, before.ID)
+		q += " AND (created_at, id) < ($2, $3)"
+	}
+	args = append(args, limit+1)
+	q += " ORDER BY created_at DESC, id DESC LIMIT $" + strconv.Itoa(len(args))
+
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	out, err := scanAuditRows(rows)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var next *AuditCursor
+	if len(out) > limit {
+		out = out[:limit]
+		last := out[len(out)-1]
+		next = &AuditCursor{CreatedAt: last.CreatedAt, ID: last.ID}
+	}
+	return out, next, nil
+}
+
 // AuditEventRow is the read-side DTO for the admin API.
 type AuditEventRow struct {
 	ID         uuid.UUID  `json:"id"`
@@ -174,6 +232,23 @@ type AuditEventRow struct {
 	SourceIP   *string    `json:"source_ip,omitempty"`
 	UserAgent  *string    `json:"user_agent,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
+}
+
+func scanAuditRows(rows pgx.Rows) ([]AuditEventRow, error) {
+	var out []AuditEventRow
+	for rows.Next() {
+		var e AuditEventRow
+		if err := rows.Scan(
+			&e.ID, &e.RequestID, &e.TenantID, &e.APIKeyID, &e.Action,
+			&e.RiskScore, &e.Path, &e.LatencyMs, &e.StatusCode, &e.Reason,
+			&e.Region, &e.ActorID, &e.ActorEmail, &e.ActorRole, &e.ActorType,
+			&e.TargetType, &e.TargetID, &e.SourceIP, &e.UserAgent, &e.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
 }
 
 // InsertAuditBatch writes all rows in a single network round-trip using

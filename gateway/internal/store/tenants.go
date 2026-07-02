@@ -34,16 +34,7 @@ func (s *Store) ListTenants(ctx context.Context) ([]Tenant, error) {
 		return nil, err
 	}
 	defer rows.Close()
-
-	var out []Tenant
-	for rows.Next() {
-		t, err := scanTenant(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, *t)
-	}
-	return out, rows.Err()
+	return scanTenants(rows)
 }
 
 func (s *Store) CreateTenant(ctx context.Context, name, tier string, rateLimit int) (*Tenant, error) {

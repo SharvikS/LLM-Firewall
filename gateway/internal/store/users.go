@@ -11,14 +11,15 @@ import (
 
 // User is the public (hash-free) view of a control-plane user.
 type User struct {
-	ID              uuid.UUID  `json:"id"`
-	Email           string     `json:"email"`
-	Role            string     `json:"role"`
-	AuthProvider    string     `json:"auth_provider"`
-	ExternalSubject *string    `json:"external_subject,omitempty"`
-	Disabled        bool       `json:"disabled"`
-	CreatedAt       time.Time  `json:"created_at"`
-	LastLogin       *time.Time `json:"last_login,omitempty"`
+	ID              uuid.UUID   `json:"id"`
+	Email           string      `json:"email"`
+	Role            string      `json:"role"`
+	TenantIDs       []uuid.UUID `json:"tenant_ids,omitempty"`
+	AuthProvider    string      `json:"auth_provider"`
+	ExternalSubject *string     `json:"external_subject,omitempty"`
+	Disabled        bool        `json:"disabled"`
+	CreatedAt       time.Time   `json:"created_at"`
+	LastLogin       *time.Time  `json:"last_login,omitempty"`
 }
 
 // UserCred carries the fields needed to authenticate a login (includes the hash).
@@ -89,6 +90,10 @@ func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	for rows.Next() {
 		var u User
 		if err := rows.Scan(&u.ID, &u.Email, &u.Role, &u.AuthProvider, &u.ExternalSubject, &u.Disabled, &u.CreatedAt, &u.LastLogin); err != nil {
+			return nil, err
+		}
+		u.TenantIDs, err = s.ListUserTenantIDs(ctx, u.ID)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, u)
