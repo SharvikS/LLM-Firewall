@@ -205,11 +205,21 @@ Recommended screens:
 1. **Welcome**
    - "TITAN will run locally on this computer."
    - Shows disk/RAM estimate before continuing.
+   - Asks what brought them here, in plain language, with two options (not
+     mutually exclusive, both may be selected): "Protect my ChatGPT/Claude
+     browsing" and "Protect an app I'm building or running." Answer only
+     changes which path is emphasized on the Done screen — every service
+     still installs and runs either way, since the extension needs the same
+     local ML engine regardless.
 2. **Provider key**
    - Provider selector: Groq first, OpenAI/compatible custom later.
-   - API key input.
-   - Optional "skip for now" allowed, but dashboard should clearly say live
-     model calls will fail until a key is added.
+   - API key input, with a collapsed "How do I get one?" per provider
+     (direct signup link + one-line explanation of what an API key is).
+   - Optional "skip for now" allowed. Copy differs by the Welcome answer:
+     developers see "live model calls through the proxy will fail until a
+     key is added"; browser-only users see "not required for browser
+     protection — only needed if you also want to route your own app's
+     calls."
 3. **Admin account**
    - Email.
    - Password.
@@ -223,8 +233,12 @@ Recommended screens:
    - Health-check every service.
 6. **Done**
    - Open Dashboard.
-   - Show local gateway base URL.
-   - Show example SDK snippet.
+   - If "browser protection" was selected (or both): lead with installing/
+     enabling the browser extension — no app or API base URL shown first.
+   - If "protect my app" was selected (or both): show the local Gateway
+     base URL and an example SDK snippet.
+   - Both blocks are always present; order follows the Welcome answer so
+     neither audience is treated as the assumed default.
 
 Provider key validation:
 
@@ -380,6 +394,12 @@ Do not auto-update the local database binary across major versions until tested.
 - Try PyInstaller first, then Nuitka if PyInstaller becomes brittle with torch.
 - Freeze Python version to 3.12 for wheel compatibility.
 - Bundle spaCy model and HuggingFace model cache.
+- Bundle EasyOCR's model weights and wire `model_storage_directory`/
+  `download_enabled=False` through an env var (see Gap Resolution #2) so the
+  Home build never phones home for OCR models.
+- Build natively per architecture — macOS arm64, macOS x64, Windows x64 — as
+  three separate CI runners. Do not attempt to cross-compile/cross-package
+  torch (see Gap Resolution #4).
 - Produce a repeatable `make package-ml-engine` or script.
 - Measure:
   - packaged size;
@@ -407,7 +427,12 @@ This is the highest-risk phase.
   - signed `.dmg`;
   - notarization;
   - Apple Silicon first, Intel second if needed.
-- Windows second:
+- **Go/no-go spike before any other Windows work** (see Gap Resolution #3):
+  verify a native `cockroach` Windows binary actually runs a usable
+  single-node server and passes Gateway migrations. If it doesn't, resolve
+  the fallback (WSL2, alternate embedded DB, or macOS-only v1) before
+  proceeding.
+- Windows second (only after the spike passes):
   - signed `.exe` or `.msi`;
   - Windows service/tray behavior decision;
   - Defender false-positive checks.
@@ -436,7 +461,8 @@ Automated QA:
 
 ## Open Questions
 
-- Platform order: recommendation is macOS Apple Silicon first, then Windows x64.
+- **Pending spike:** whether CockroachDB is viable on native Windows — see
+  Gap Resolution #3; gates the Windows release, not the macOS one.
 - Bootstrap vs offline public installer: recommendation is bootstrap public,
   offline full installer as alternate download.
 - Exact model set to bundle for Home: use the current Docker-equivalent set for
@@ -444,6 +470,126 @@ Automated QA:
 - Whether to include Qdrant in a "Home Pro" profile later for semantic cache.
 - Whether local Home should expose Browser DLP setup/install inside the native
   app.
+
+## Gap Resolutions (review pass, 2026-07-01)
+
+A verification pass against the actual codebase (not just the plan) surfaced
+six gaps. Each is resolved below; one requires a scope decision (see the
+Target User Decision at the end of this section).
+
+### 1. Dynamic port selection vs. the dashboard build — false alarm, confirmed safe
+
+Initial concern: `NEXT_PUBLIC_GATEWAY_URL` (`dashboard/src/lib/gateway.ts:7`)
+looked like a build-time-baked constant, which would break the wizard's
+"auto-pick a free port for the Gateway" step for a prebuilt standalone
+dashboard bundle.
+
+Verified: every importer of `GATEWAY` is a server-side `app/api/**/route.ts`
+handler (checked via grep across `dashboard/src`) — none are client
+components. Next.js only inlines `NEXT_PUBLIC_*` values into code that ships
+to the browser; server-side route handlers read `process.env` normally, at
+process start. Since the wizard writes the env file *before* launching the
+Dashboard's Node process, any chosen Gateway port is picked up correctly with
+no rebuild and no code change required.
+
+Action: add one regression test in Phase 0 that starts the packaged
+dashboard with a non-default `NEXT_PUBLIC_GATEWAY_URL` and confirms an
+`/api/gateway/*` route reaches the right port. This guards against a future
+change accidentally introducing a client-side import of `GATEWAY` and
+silently reintroducing the bug.
+
+### 2. EasyOCR breaks the offline promise
+
+`ml_engine/analyzer/extract.py`'s `easyocr.Reader(langs, gpu=False, ...)`
+call uses EasyOCR's defaults: `download_enabled=True`, default
+`model_storage_directory`. It downloads its detection/recognition weights
+from the internet on first OCR use — separate from the spaCy/HuggingFace
+caches already planned for bundling.
+
+Plan:
+- During ML-engine packaging, pre-download EasyOCR's model weights (e.g.
+  `craft_mlt_25k.pth`, `english_g2.pth`) into a bundled directory.
+- Change the `easyocr.Reader(...)` call site to accept
+  `model_storage_directory` and `download_enabled` from an env var (e.g.
+  `EASYOCR_MODEL_DIR`, default empty = current behavior), so Docker/Enterprise
+  installs are unaffected and the Home installer points at the bundled path
+  with downloads disabled.
+- Add ~200-300MB to the size estimate for OCR weights.
+- Add a Phase 2 smoke test: run an OCR scan with network access disabled and
+  confirm no download attempt occurs.
+
+### 3. CockroachDB on native Windows is unverified
+
+Nothing in this repo confirms whether CockroachDB's Windows binary is a
+genuinely production-usable native server, or whether Windows realistically
+needs Docker/WSL for it — this is an external fact this review can't check
+from the codebase.
+
+Plan: turn this into an explicit **go/no-go spike at the start of Phase 4**,
+not a discovery made partway through packaging:
+- Install the official `cockroach` Windows artifact on a clean Windows VM,
+  run `cockroach start-single-node --insecure`, confirm the Gateway can
+  connect and run its embedded migrations against it.
+- If it fails or isn't viable for real use: ranked fallbacks are (a) bundle
+  WSL2 with a Linux `cockroach` binary invoked through it — still not Docker,
+  but another virtualization layer to auto-install; (b) swap to an embeddable
+  Postgres-compatible database on Windows only, meaning storage differs by
+  OS — larger scope than currently planned; (c) ship macOS-only for v1 and
+  revisit Windows once (a) or (b) is scoped.
+- This spike gates the rest of Phase 4 for Windows; it does not block the
+  macOS release.
+
+### 4. Per-architecture ML engine packaging not called out
+
+Torch wheels differ per OS/arch (and CPU vs. GPU); Phase 4 already plans
+separate macOS Apple Silicon/Intel and Windows installers, but Phase 2 didn't
+say the PyInstaller/Nuitka build itself must happen natively per
+architecture — torch cannot be reliably cross-compiled/cross-packaged.
+
+Plan: add to Phase 2 explicitly — CI matrix with three native runners (macOS
+arm64, macOS x64, Windows x64), each producing its own packaged ML engine
+artifact. No cross-compilation attempted.
+
+### 5. Provider-key onboarding has no explainer
+
+The wizard's "Provider key" screen asks for an API key but never explains
+what one is or how to get one — a real gap if the target user doesn't
+already have a provider account.
+
+Plan: add an inline, collapsed "How do I get one?" per provider (direct
+signup link + one-line explanation) on that screen. Key remains optional/
+skippable as already planned, but the copy makes the skip consequence and
+the signup path both clear.
+
+### 6. Strategic scope — decided: one installer serves every audience
+
+Goal (per project direction): reach as many users as possible, rather than
+picking one persona and deferring the rest.
+
+Initial concern: TITAN's core value is being a proxy in front of *your own
+app's* LLM calls, so a user with no app of their own would seemingly have
+nothing to point at `127.0.0.1:8080`.
+
+Checked against the code and confirmed this concern doesn't force a scope
+split: `browser-extension/src/lib/config.js:8` shows the extension calls
+`http://localhost:8001/scan` (the ML engine) **directly**, in real time, for
+its core block/redact DLP behavior on ChatGPT/Claude/Gemini/Perplexity — not
+just for after-the-fact audit reporting. That means a true non-technical
+consumer, who never touches the Gateway's `/v1/*` proxy at all, still gets
+full value from the same native install: it's what powers their browser
+extension's live protection.
+
+**Decision: one installer, no persona split.** The native app is the single
+onboarding path for everyone:
+- A developer/small-business user additionally gets the SDK/`base_url`
+  snippet on the "Done" screen to route their own app.
+- A pure consumer's "Done" screen instead leads straight into installing/
+  enabling the browser extension — no app of their own required.
+
+Action: the First-Run Wizard's final "Done" screen (see below) presents
+both paths explicitly, and neither is treated as more "default" than the
+other — the wizard asks up front which the user wants (or shows both) so
+first-time copy doesn't assume a developer audience.
 
 ## Next Step
 
