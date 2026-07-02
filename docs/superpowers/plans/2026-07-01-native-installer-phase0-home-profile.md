@@ -27,7 +27,7 @@
 - Create: `dashboard/.env.home.example`
 
 **Interfaces:**
-- Consumes: existing `gateway/internal/config/config.go` env var names (`LISTEN_ADDR`, `DB_CONN_STRING`, `REDIS_ADDR`, `ANALYZER_ADDR`, `EMBEDDING_URL`, `KAFKA_BROKERS`, `CLICKHOUSE_URL`, `QDRANT_URL`, `ASR_URL`, `ADMIN_TOKEN`, `AUTH_SIGNING_SECRET`, `DEFAULT_ADMIN_EMAIL`, `DEFAULT_ADMIN_PASSWORD`, `DASHBOARD_URL`, `ADMIN_ALLOWED_ORIGINS`) and dashboard's `NEXT_PUBLIC_GATEWAY_URL` / `ADMIN_TOKEN` (`dashboard/src/lib/gateway.ts:7-8`).
+- Consumes: existing `gateway/internal/config/config.go` env var names (`LISTEN_ADDR`, `DB_CONN_STRING`, `REDIS_ADDR`, `ANALYZER_ADDR`, `EMBEDDING_URL`, `KAFKA_BROKERS`, `CLICKHOUSE_URL`, `QDRANT_URL`, `ASR_URL`, `ADMIN_TOKEN`, `AUTH_SIGNING_SECRET`, `DEFAULT_ADMIN_EMAIL`, `DEFAULT_ADMIN_PASSWORD`, `DASHBOARD_URL`, `ADMIN_ALLOWED_ORIGINS`) and dashboard's `GATEWAY_URL` / `ADMIN_TOKEN` (`dashboard/src/lib/gateway.ts:7-8`).
 - Produces: the documented env shape Task 6's `scripts/home-dev.sh` and Phase 1's Tauri wizard will both read from.
 
 This is a documentation-only task (no test cycle needed beyond "the file parses as env syntax and the gateway starts with it" — that's exercised by Task 6). Steps:
@@ -77,7 +77,7 @@ GROQ_API_KEY=your-groq-api-key-here
 ```env
 # Home profile — matches gateway/.env.home.example. Copy to dashboard/.env.local:
 #   cp dashboard/.env.home.example dashboard/.env.local
-NEXT_PUBLIC_GATEWAY_URL=http://127.0.0.1:8080
+GATEWAY_URL=http://127.0.0.1:8080
 ADMIN_TOKEN=your-admin-token-here
 ```
 
@@ -252,11 +252,11 @@ This guards the fact established in the design doc's Gap Resolution #1: `GATEWAY
 // dashboard/scripts/verify-gateway-runtime-config.mjs
 //
 // Guards a load-bearing assumption for the Home installer: dashboard/src/lib/gateway.ts's
-// GATEWAY constant reads NEXT_PUBLIC_GATEWAY_URL via process.env at runtime, which only
+// GATEWAY constant reads GATEWAY_URL via process.env at runtime, which only
 // works because every importer is a server-side route handler. If a client component
-// ('use client') ever imports GATEWAY, Next.js inlines the build-time value into the
-// browser bundle and the Home installer's "auto-pick a free Gateway port" wizard step
-// silently breaks. See docs/superpowers/specs/2026-07-01-native-desktop-installer-design.md,
+// ('use client') ever imports GATEWAY, the value can no longer stay server-only and
+// runtime-configurable for the Home installer's "auto-pick a free Gateway port"
+// wizard step. See docs/superpowers/specs/2026-07-01-native-desktop-installer-design.md,
 // Gap Resolution #1.
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -266,8 +266,13 @@ const root = new URL('..', import.meta.url).pathname;
 
 const gatewaySource = readFileSync(join(root, 'src/lib/gateway.ts'), 'utf8');
 assert(
-  gatewaySource.includes("process.env.NEXT_PUBLIC_GATEWAY_URL"),
-  'GATEWAY must read NEXT_PUBLIC_GATEWAY_URL from process.env so a runtime-written env file works',
+  gatewaySource.includes("process.env.GATEWAY_URL"),
+  'GATEWAY must read GATEWAY_URL from process.env so a runtime-written env file works',
+);
+
+assert(
+  !gatewaySource.includes('NEXT_PUBLIC_GATEWAY_URL'),
+  'gateway.ts must not read NEXT_PUBLIC_GATEWAY_URL because that freezes runtime port selection',
 );
 
 // Walk src/app looking for any file that imports '@/lib/gateway' (directly or via a
@@ -294,7 +299,7 @@ for (const file of files) {
 assert.equal(
   offenders.length,
   0,
-  `these client components import '@/lib/gateway' and will bake NEXT_PUBLIC_GATEWAY_URL ` +
+  `these client components import '@/lib/gateway' and will bake GATEWAY_URL ` +
   `at build time, breaking runtime port selection: ${offenders.join(', ')}`,
 );
 

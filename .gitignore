@@ -7,6 +7,8 @@
 # Go binaries and build artifacts
 gateway/server
 gateway/gateway
+gateway/bin/
+loadtest/loadtest
 *.exe
 *.exe~
 *.dll
@@ -21,6 +23,7 @@ __pycache__/
 
 # Runtime logs (per-service *.log are regenerated on every run)
 *.log
+dump.rdb
 
 # Stray root npm lockfile (real lockfiles live in dashboard/ and browser-extension/)
 /package-lock.json

@@ -479,21 +479,21 @@ Target User Decision at the end of this section).
 
 ### 1. Dynamic port selection vs. the dashboard build — false alarm, confirmed safe
 
-Initial concern: `NEXT_PUBLIC_GATEWAY_URL` (`dashboard/src/lib/gateway.ts:7`)
+Initial concern: `GATEWAY_URL` (`dashboard/src/lib/gateway.ts:7`)
 looked like a build-time-baked constant, which would break the wizard's
 "auto-pick a free port for the Gateway" step for a prebuilt standalone
 dashboard bundle.
 
 Verified: every importer of `GATEWAY` is a server-side `app/api/**/route.ts`
-handler (checked via grep across `dashboard/src`) — none are client
-components. Next.js only inlines `NEXT_PUBLIC_*` values into code that ships
-to the browser; server-side route handlers read `process.env` normally, at
-process start. Since the wizard writes the env file *before* launching the
-Dashboard's Node process, any chosen Gateway port is picked up correctly with
-no rebuild and no code change required.
+handler (checked via grep across `dashboard/src`) — none are client components.
+The dashboard deliberately reads the non-public `GATEWAY_URL` env var so a
+standalone build can pick up the installer-selected Gateway port at process
+start. Since the wizard writes the env file *before* launching the Dashboard's
+Node process, any chosen Gateway port is picked up correctly with no rebuild and
+no code change required.
 
 Action: add one regression test in Phase 0 that starts the packaged
-dashboard with a non-default `NEXT_PUBLIC_GATEWAY_URL` and confirms an
+dashboard with a non-default `GATEWAY_URL` and confirms an
 `/api/gateway/*` route reaches the right port. This guards against a future
 change accidentally introducing a client-side import of `GATEWAY` and
 silently reintroducing the bug.

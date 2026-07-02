@@ -27,7 +27,7 @@ spec:
           ports:
             - containerPort: 3000
           env:
-            - name: NEXT_PUBLIC_GATEWAY_URL
+            - name: GATEWAY_URL
               value: "http://{{ include "titan.fullname" . }}-gateway:{{ .Values.gateway.service.port }}"
             - name: ADMIN_TOKEN
               valueFrom:
