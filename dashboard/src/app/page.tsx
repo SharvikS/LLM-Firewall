@@ -280,7 +280,7 @@ function EnterpriseUpsell({ label }: { label: string }) {
           Community (open-core). Upgrade to unlock multi-tenant governance, SSO/RBAC,
           usage metering &amp; quotas, SOC alerting, and hallucination detection.
         </p>
-        <a href="https://titan.sharvik.tech/pricing" target="_blank" rel="noreferrer"
+        <a href="https://titan.sharvik.tech/#pricing" target="_blank" rel="noreferrer"
           className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-[13px] font-medium text-white"
           style={{ background: 'var(--accent)' }}>
           View Enterprise plans

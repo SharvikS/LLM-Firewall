@@ -73,12 +73,11 @@ function useLiveSettings() {
 
 // ─── Edge Routing ────────────────────────────────────────────────────────────
 
-const ROUTES = [
-  { path: '/v1/chat/completions', provider: 'Groq',  model: 'llama-3.1-8b-instant', weight: 100, status: 'active' },
-  { path: '/v1/embeddings',       provider: 'OpenAI', model: 'text-embedding-3-small', weight: 100, status: 'active' },
-  { path: '/v1/completions',      provider: 'Groq',  model: 'llama-3.3-70b-versatile', weight: 50,  status: 'active' },
-  { path: '/v1/images/generations', provider: 'OpenAI', model: 'dall-e-3', weight: 100, status: 'disabled' },
-];
+const PROVIDER_LABEL: Record<string, string> = {
+  openai: 'OpenAI-compatible',
+  anthropic: 'Anthropic',
+  google: 'Google',
+};
 
 export function EdgeRoutingTab() {
   const { settings, state, apply } = useLiveSettings();
@@ -97,25 +96,27 @@ export function EdgeRoutingTab() {
       </Card>
       <Card>
         <div className="flex justify-between items-center mb-5">
-          <h3 className="text-sm font-semibold">Route Table</h3>
-          <span className="text-xs text-base-muted">Configured at deploy via TARGET_URL / FALLBACK_TARGET_URL</span>
+          <h3 className="text-sm font-semibold">Active Route</h3>
+          <span className="text-xs text-base-muted">Change the upstream in Settings → Upstream Provider</span>
         </div>
         <div className="space-y-2">
-          {ROUTES.map((r, i) => (
-            <div key={i} className={`flex items-center gap-4 px-4 py-3 border border-base-border rounded-lg text-sm transition-opacity ${r.status === 'disabled' ? 'opacity-40' : ''}`}>
-              <Globe size={14} className="text-base-muted shrink-0"/>
-              <code className="text-[12px] font-mono text-base-text flex-1">{r.path}</code>
-              <span className="text-xs text-base-muted">{r.provider}</span>
-              <code className="text-[11px] font-mono text-base-muted hidden md:block">{r.model}</code>
-              <div className="flex items-center gap-2 ml-auto">
-                <div className="h-1 w-16 bg-base-sec rounded-full overflow-hidden">
-                  <div className="h-full bg-base-accent rounded-full" style={{ width: `${r.weight}%` }}/>
-                </div>
-                <span className="text-xs text-base-muted w-8 text-right">{r.weight}%</span>
-                <Tag label={r.status} color={r.status === 'active' ? 'bg-green-400/10 text-green-400' : 'bg-base-sec text-base-muted'}/>
-              </div>
-            </div>
-          ))}
+          <div className="flex items-center gap-4 px-4 py-3 border border-base-border rounded-lg text-sm">
+            <Globe size={14} className="text-base-muted shrink-0"/>
+            <code className="text-[12px] font-mono text-base-text flex-1 truncate">
+              {settings ? (settings.upstream_url || 'default upstream (TARGET_URL)') : 'loading…'}
+            </code>
+            <span className="text-xs text-base-muted hidden sm:block">
+              {settings ? (PROVIDER_LABEL[settings.upstream_provider] ?? settings.upstream_provider) : ''}
+            </span>
+            <Tag label={settings ? 'primary' : '…'} color="bg-green-400/10 text-green-400"/>
+          </div>
+          <div className={`flex items-center gap-4 px-4 py-3 border border-base-border rounded-lg text-sm transition-opacity ${settings?.failover_enabled ? '' : 'opacity-40'}`}>
+            <Globe size={14} className="text-base-muted shrink-0"/>
+            <code className="text-[12px] font-mono text-base-text flex-1">fallback upstream (FALLBACK_TARGET_URL)</code>
+            <span className="text-xs text-base-muted hidden sm:block">replayed on 5xx / timeout</span>
+            <Tag label={settings?.failover_enabled ? 'armed' : 'off'}
+              color={settings?.failover_enabled ? 'bg-green-400/10 text-green-400' : 'bg-base-sec text-base-muted'}/>
+          </div>
         </div>
       </Card>
     </div>
@@ -492,29 +493,30 @@ export function ComplianceCoverageTab() {
   );
 }
 
-// ─── Access Control (reference model) ────────────────────────────────────────
+// ─── Access Control (live RBAC model, mirrors gateway route middleware) ──────
 
+// Keep in sync with gateway/internal/api/admin.go route RBAC.
 const PERMISSIONS = [
-  { resource: 'Gateway API',      admin: true,  engineer: true,  compliance: false, viewer: false },
-  { resource: 'Policy Engine',    admin: true,  engineer: true,  compliance: false, viewer: true },
-  { resource: 'Audit Logs',       admin: true,  engineer: false, compliance: true,  viewer: true },
-  { resource: 'API Keys',         admin: true,  engineer: false, compliance: false, viewer: false },
-  { resource: 'Team Management',  admin: true,  engineer: false, compliance: false, viewer: false },
-  { resource: 'Billing',          admin: true,  engineer: false, compliance: false, viewer: false },
-  { resource: 'ML Engine Config', admin: true,  engineer: true,  compliance: false, viewer: false },
+  { resource: 'Tenants, keys, policies, settings (read)', viewer: true,  compliance: true,  security: true, admin: true },
+  { resource: 'Audit logs, DLP flags, usage (read)',      viewer: true,  compliance: true,  security: true, admin: true },
+  { resource: 'Compliance reports & audit export',        viewer: false, compliance: true,  security: true, admin: true },
+  { resource: 'Settings, policies, guardrails (edit)',    viewer: false, compliance: false, security: true, admin: true },
+  { resource: 'Sandbox execution & alert tests',          viewer: false, compliance: false, security: true, admin: true },
+  { resource: 'API keys (create / revoke)',               viewer: false, compliance: false, security: false, admin: true },
+  { resource: 'Team, tenants & billing plans',            viewer: false, compliance: false, security: false, admin: true },
 ];
 
 export function AccessControlTab() {
   return (
     <div className="max-w-4xl mx-auto">
-      <PageHeader title="Access Control" sub="Reference RBAC model. Enforcement is via API-key scoping and the admin token today; role assignment ships next." badge="Reference"/>
+      <PageHeader title="Access Control" sub="Role-based access enforced by the gateway on every admin API call. Assign roles from the Team tab." badge="Enforced" badgeColor="green"/>
       <Card>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-base-border">
-                <th className="text-left text-xs font-semibold text-base-muted uppercase tracking-widest py-3 pr-4">Resource</th>
-                {['Admin','Engineer','Compliance','Viewer'].map(r => (
+                <th className="text-left text-xs font-semibold text-base-muted uppercase tracking-widest py-3 pr-4">Capability</th>
+                {['Viewer','Compliance','Security','Admin'].map(r => (
                   <th key={r} className="text-center text-xs font-semibold text-base-muted uppercase tracking-widest py-3 px-3">{r}</th>
                 ))}
               </tr>
@@ -523,7 +525,7 @@ export function AccessControlTab() {
               {PERMISSIONS.map(p => (
                 <tr key={p.resource} className="hover:bg-base-sec/30 transition-colors">
                   <td className="py-3 pr-4 text-base-text font-medium">{p.resource}</td>
-                  {[p.admin, p.engineer, p.compliance, p.viewer].map((has, i) => (
+                  {[p.viewer, p.compliance, p.security, p.admin].map((has, i) => (
                     <td key={i} className="py-3 px-3 text-center">
                       <span className={`inline-block w-4 h-4 rounded-full ${has ? 'bg-green-400/20 text-green-400' : 'bg-base-sec text-base-muted/30'}`}>
                         {has ? '✓' : '×'}
@@ -535,6 +537,10 @@ export function AccessControlTab() {
             </tbody>
           </table>
         </div>
+        <p className="mt-4 text-xs text-base-muted">
+          Non-global users are additionally scoped to their assigned tenants — reads and writes
+          outside those tenants are rejected by the gateway regardless of role.
+        </p>
       </Card>
     </div>
   );
