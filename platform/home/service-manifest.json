@@ -1,0 +1,45 @@
+{
+  "$schema": "https://titan.local/schemas/home-service-manifest-v1.json",
+  "profile": "home",
+  "startOrder": ["cockroachdb", "redis", "ml_engine", "gateway", "dashboard"],
+  "shutdownOrder": ["dashboard", "gateway", "ml_engine", "redis", "cockroachdb"],
+  "services": {
+    "cockroachdb": {
+      "bind": "127.0.0.1",
+      "port": 26257,
+      "required": true,
+      "healthCheck": { "type": "tcp", "port": 26257 }
+    },
+    "redis": {
+      "bind": "127.0.0.1",
+      "port": 6379,
+      "required": true,
+      "healthCheck": { "type": "tcp", "port": 6379 }
+    },
+    "ml_engine": {
+      "bind": "127.0.0.1",
+      "grpcPort": 50051,
+      "httpPort": 8001,
+      "required": true,
+      "healthCheck": { "type": "http", "url": "http://127.0.0.1:8001/health" }
+    },
+    "gateway": {
+      "bind": "127.0.0.1",
+      "port": 8080,
+      "required": true,
+      "healthCheck": { "type": "http", "url": "http://127.0.0.1:8080/health" },
+      "readyCheck": { "type": "http", "url": "http://127.0.0.1:8080/ready" }
+    },
+    "dashboard": {
+      "bind": "127.0.0.1",
+      "port": 3000,
+      "required": true,
+      "healthCheck": { "type": "http", "url": "http://127.0.0.1:3000/login" }
+    }
+  },
+  "disabledInHomeProfile": ["kafka", "clickhouse", "qdrant", "asr", "jaeger", "grafana"],
+  "envFiles": {
+    "gateway": "gateway/.env.home.example",
+    "dashboard": "dashboard/.env.home.example"
+  }
+}

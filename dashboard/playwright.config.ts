@@ -14,7 +14,7 @@ export default defineConfig({
   webServer: {
     command: [
       `NEXT_TELEMETRY_DISABLED=1`,
-      `NEXT_PUBLIC_GATEWAY_URL=http://127.0.0.1:${gatewayPort}`,
+      `GATEWAY_URL=http://127.0.0.1:${gatewayPort}`,
       `ADMIN_TOKEN=playwright-admin-token`,
       `npm run dev -- --hostname 127.0.0.1 --port ${port}`,
     ].join(' '),

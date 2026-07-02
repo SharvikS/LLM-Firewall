@@ -37,3 +37,6 @@ certs/
 venv/
 **/venv/
 .venv/
+
+# Runtime scratch directories
+.home-dev-data/

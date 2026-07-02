@@ -4,7 +4,7 @@
 import { cookies } from 'next/headers';
 import { SESSION_COOKIE } from '@/lib/session';
 
-export const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL ?? 'http://localhost:8080';
+export const GATEWAY = process.env.GATEWAY_URL ?? 'http://localhost:8080';
 export const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? 'titan-admin-dev-secret';
 
 export class GatewayReadAuthError extends Error {

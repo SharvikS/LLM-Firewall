@@ -1,10 +1,14 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/sharvik/llm-firewall/gateway/internal/testhelper"
 )
 
 func TestMapBrowserAction(t *testing.T) {
@@ -58,5 +62,39 @@ func TestBrowserDLPReport(t *testing.T) {
 	hTok.Report(rec3, req3)
 	if rec3.Code != http.StatusAccepted {
 		t.Fatalf("expected 202 with valid token, got %d", rec3.Code)
+	}
+}
+
+// TestBrowserDLPReport_NoBrokerConfigured_PersistsDirectlyToDB proves the
+// Home profile's assumption for the browser-extension audit path: with no
+// Kafka producer, a DLP report handled by Report() still lands a durable
+// audit row in CockroachDB via the direct fallback.
+func TestBrowserDLPReport_NoBrokerConfigured_PersistsDirectlyToDB(t *testing.T) {
+	st := testhelper.OpenTestDBOrSkip(t)
+	h := NewBrowserDLPHandler(nil, nil, st, 3, "") // producer nil on purpose
+
+	body := `{"site":"chatgpt","decision":"block","action":"blocked","risk":80,"reason":"prompt injection"}`
+	req := httptest.NewRequest(http.MethodPost, "/internal/dlp-event", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Report(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		rows, _, err := st.ListAuditEvents(context.Background(), nil, 20, 0)
+		if err != nil {
+			t.Fatalf("ListAuditEvents: %v", err)
+		}
+		for _, row := range rows {
+			if row.Action == "BROWSER_DLP_BLOCK" {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected a BROWSER_DLP_BLOCK audit row after waiting, got %d total rows", len(rows))
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
