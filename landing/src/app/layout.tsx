@@ -22,6 +22,14 @@ export const metadata: Metadata = {
     description:
       "Intercept, inspect, and govern every LLM request. Prompt-injection defense, PII masking, output scanning, and a full control plane. Open-core, MIT.",
     type: "website",
+    images: ["/product/screenshot_overview.png"],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "TITAN — Zero-Trust Firewall for LLMs",
+    description:
+      "A drop-in reverse proxy that intercepts, inspects, and governs every LLM request before it reaches the model.",
+    images: ["/product/screenshot_overview.png"],
   },
 };
 

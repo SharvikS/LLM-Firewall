@@ -6,7 +6,7 @@ import { motion, type Variants } from 'framer-motion';
 import {
   Shield, ShieldCheck, Lock, Eye, Zap, Database, Activity, Terminal,
   ArrowRight, Check, Cpu, FileText, Network, AlertTriangle,
-  KeyRound, Gauge, Boxes, Star, ScanLine, Webhook,
+  KeyRound, Gauge, Boxes, Star, ScanLine,
 } from 'lucide-react';
 
 const GITHUB_URL = 'https://github.com/SharvikS/LLM-Firewall';
@@ -133,7 +133,7 @@ function Hero() {
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
               <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
             </span>
-            Open-core · MIT licensed · Checkout-ready
+            Open-core · MIT licensed · Hosted or self-hosted
           </Pill>
         </motion.div>
 
@@ -503,7 +503,7 @@ function Pricing() {
     {
       name: 'Free',
       price: 'Free',
-      sub: 'self-hosted · MIT core',
+      sub: 'hosted workspace · MIT core',
       cta: 'Start free',
       href: checkoutHref('free'),
       highlight: false,
@@ -553,10 +553,10 @@ function Pricing() {
     <section id="pricing" className="mx-auto max-w-6xl px-5 py-20">
       <Reveal className="text-center">
         <SectionLabel><span className="mx-auto">Editions</span></SectionLabel>
-        <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">Simple pricing that can sell today</h2>
+        <h2 className="text-3xl font-semibold tracking-tight sm:text-4xl">Start free. Upgrade when it matters.</h2>
         <p className="mx-auto mt-4 max-w-2xl text-[15px] leading-relaxed text-base-muted">
-          Start free, then move to a paid monthly plan when TITAN protects real traffic.
-          Paid checkout can run through Stripe Payment Links or Stripe Checkout Sessions.
+          Every plan runs the same firewall. Move to a paid tier when TITAN protects
+          real traffic &mdash; checkout takes a minute and you can cancel anytime.
         </p>
       </Reveal>
 
@@ -619,13 +619,13 @@ function FinalCTA() {
           call is inspected, governed, and logged.
         </p>
         <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
-          <a href={checkoutHref('free')} target="_blank" rel="noreferrer"
+          <a href={checkoutHref('free')}
             className="inline-flex w-full items-center justify-center gap-2 rounded-xl btn-primary px-5 py-3 text-[14px] font-medium sm:w-auto">
-            <Github size={17} /> Start free
+            <ShieldCheck size={17} /> Start free
           </a>
           <a href={checkoutHref('pro')}
             className="inline-flex w-full items-center justify-center gap-2 rounded-xl btn-ghost px-5 py-3 text-[14px] font-medium sm:w-auto">
-            <Webhook size={16} /> Buy Pro
+            Buy Pro <ArrowRight size={15} />
           </a>
         </div>
         <p className="mt-6 font-mono text-[12px] text-base-muted">./scripts/quickstart.sh &nbsp;·&nbsp; full stack, guided setup, smoke test</p>
