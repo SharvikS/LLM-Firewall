@@ -7,9 +7,17 @@ import { ADMIN_TOKEN, GATEWAY } from '@/lib/gateway';
 // the browser here with a one-time code; this server-side route redeems it for
 // the real session JWT so the JWT never appears in browser-visible URLs.
 export async function GET(req: Request) {
-  const code = new URL(req.url).searchParams.get('code');
+  // Redirect relative to the host the browser actually used — Next normalizes
+  // req.url to the configured hostname (e.g. localhost), and a redirect to a
+  // different host would strand the freshly set host-scoped session cookie.
+  const requestURL = new URL(req.url);
+  const forwardedHost = req.headers.get('x-forwarded-host') ?? req.headers.get('host');
+  if (forwardedHost) requestURL.host = forwardedHost;
+  const redirect = (path: string) => NextResponse.redirect(new URL(path, requestURL));
+
+  const code = requestURL.searchParams.get('code');
   if (!code) {
-    return NextResponse.redirect(new URL('/login?error=sso', req.url));
+    return redirect('/login?error=sso');
   }
   try {
     const res = await fetch(`${GATEWAY}/admin/v1/auth/sso/exchange`, {
@@ -21,12 +29,12 @@ export async function GET(req: Request) {
     });
     const data = await res.json();
     if (!res.ok || !data.token) {
-      return NextResponse.redirect(new URL('/login?error=sso', req.url));
+      return redirect('/login?error=sso');
     }
     const cookieStore = await cookies();
     cookieStore.set(SESSION_COOKIE, data.token, sessionCookieOptions(60 * 60 * 12));
-    return NextResponse.redirect(new URL('/', req.url));
+    return redirect('/');
   } catch {
-    return NextResponse.redirect(new URL('/login?error=sso', req.url));
+    return redirect('/login?error=sso');
   }
 }

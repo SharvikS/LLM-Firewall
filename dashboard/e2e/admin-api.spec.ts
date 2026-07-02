@@ -3,7 +3,9 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 
 const gatewayPort = Number(process.env.PLAYWRIGHT_GATEWAY_PORT ?? 18080);
 const dashboardPort = Number(process.env.PLAYWRIGHT_DASHBOARD_PORT ?? 3100);
-const dashboardOrigin = `http://localhost:${dashboardPort}`;
+// Must match playwright.config.ts baseURL host — a real browser's Origin
+// header always matches the address-bar origin.
+const dashboardOrigin = `http://127.0.0.1:${dashboardPort}`;
 const ADMIN_TOKEN = 'playwright-admin-token';
 
 type Call = {

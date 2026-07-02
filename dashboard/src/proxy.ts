@@ -10,11 +10,14 @@ export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   if (pathname.startsWith('/api/admin/') && isMutating(request.method)) {
+    // Compare hosts, not nextUrl.origin — Next normalizes nextUrl to the
+    // configured hostname (e.g. localhost) even when the browser is on
+    // 127.0.0.1, which would 403 every legitimate mutation.
+    const expectedHost =
+      request.headers.get('x-forwarded-host') ?? request.headers.get('host') ?? '';
     const origin = request.headers.get('origin');
-    const referer = request.headers.get('referer');
-    const expected = request.nextUrl.origin;
-    const actual = origin ?? originFromReferer(referer);
-    if (actual !== expected) {
+    const actual = origin ?? (request.headers.get('referer') ?? '');
+    if (!expectedHost || hostFromURL(actual) !== expectedHost) {
       return NextResponse.json({ error: 'same-origin request required' }, { status: 403 });
     }
   }
@@ -25,6 +28,10 @@ export function proxy(request: NextRequest) {
   }
 
   if (!request.cookies.has(SESSION_COOKIE)) {
+    // API callers get a machine-readable 401; page loads get the login page.
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json({ error: 'authentication required' }, { status: 401 });
+    }
     const url = new URL('/login', request.url);
     return NextResponse.redirect(url);
   }
@@ -45,10 +52,10 @@ function isMutating(method: string) {
   return method !== 'GET' && method !== 'HEAD' && method !== 'OPTIONS';
 }
 
-function originFromReferer(referer: string | null) {
-  if (!referer) return '';
+function hostFromURL(value: string) {
+  if (!value) return '';
   try {
-    return new URL(referer).origin;
+    return new URL(value).host;
   } catch {
     return '';
   }
