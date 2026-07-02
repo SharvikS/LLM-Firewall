@@ -73,9 +73,32 @@ async function verifyActivationPayment(tier: PlanTier, sessionId: string) {
     metadata?: Record<string, string | undefined>;
   };
   const planMatches = !session.metadata?.titan_plan || session.metadata.titan_plan === tier;
+  const notReplayed = session.metadata?.titan_activated !== 'true';
   return session.status === 'complete'
     && (session.payment_status === 'paid' || session.payment_status === 'no_payment_required')
-    && planMatches;
+    && planMatches
+    && notReplayed;
+}
+
+// Best-effort: stamp the checkout session so the same payment cannot be
+// replayed to provision additional workspaces.
+async function markSessionActivated(sessionId: string) {
+  const stripeKey = clean(process.env.STRIPE_SECRET_KEY);
+  if (!stripeKey || !sessionId) return;
+  try {
+    await fetch(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(sessionId)}`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${stripeKey}`,
+        'content-type': 'application/x-www-form-urlencoded',
+        'stripe-version': STRIPE_API_VERSION,
+      },
+      body: new URLSearchParams({ 'metadata[titan_activated]': 'true' }),
+      cache: 'no-store',
+    });
+  } catch (error) {
+    console.error('failed to mark checkout session as activated', error);
+  }
 }
 
 async function adminFetch(path: string, init: RequestInit) {
@@ -156,6 +179,8 @@ export async function POST(request: NextRequest) {
         name: 'Default app key',
       }),
     }) as { key: string; metadata?: { key_prefix?: string } };
+
+    if (tier !== 'free') await markSessionActivated(sessionId);
 
     return json(201, {
       status: 'active',
