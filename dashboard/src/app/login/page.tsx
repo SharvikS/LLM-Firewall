@@ -19,6 +19,14 @@ export default function LoginPage() {
       .then(r => r.json())
       .then(d => setSsoEnabled(!!d.oidc_enabled))
       .catch(() => {});
+    // Surface SSO handoff failures (the SSO landing route redirects here
+    // with ?error=sso when code redemption fails or expires). Deferred, per
+    // the same post-hydration pattern as the theme restore in page.tsx.
+    queueMicrotask(() => {
+      if (new URLSearchParams(window.location.search).get('error') === 'sso') {
+        setError('SSO sign-in failed or the sign-in link expired. Try again, or use email and password.');
+      }
+    });
   }, []);
 
   const submit = async (e: React.FormEvent) => {
