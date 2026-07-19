@@ -13,22 +13,22 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "TITAN — Zero-Trust Firewall for LLMs",
+  title: "TITAN — Secure Every LLM Request",
   description:
-    "A drop-in reverse proxy that intercepts, inspects, and governs every LLM request before it reaches the model. Sub-millisecond ML threat detection, PII masking, and full observability. Open-core, MIT.",
+    "An OpenAI-compatible security gateway for prompt-injection defense, bidirectional PII masking, output scanning, policy enforcement, and audit evidence. MIT-licensed core.",
   metadataBase: new URL("https://titan.sharvik.tech"),
   openGraph: {
-    title: "TITAN — Zero-Trust Firewall for LLMs",
+    title: "TITAN — Secure Every LLM Request",
     description:
-      "Intercept, inspect, and govern every LLM request. Prompt-injection defense, PII masking, output scanning, and a full control plane. Open-core, MIT.",
+      "Put one enforceable security layer between your applications, users, and every LLM provider. OpenAI-compatible and open core.",
     type: "website",
     images: ["/product/screenshot_overview.png"],
   },
   twitter: {
     card: "summary_large_image",
-    title: "TITAN — Zero-Trust Firewall for LLMs",
+    title: "TITAN — Secure Every LLM Request",
     description:
-      "A drop-in reverse proxy that intercepts, inspects, and governs every LLM request before it reaches the model.",
+      "Prompt-injection defense, bidirectional PII masking, output scanning, policy enforcement, and audit evidence in one LLM gateway.",
     images: ["/product/screenshot_overview.png"],
   },
 };

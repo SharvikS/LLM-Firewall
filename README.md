@@ -419,7 +419,9 @@ See [EDITIONS.md](EDITIONS.md), [LICENSE](LICENSE), and
 ## Contributing And Security
 
 Contributions to the MIT core are welcome. Open-core boundaries are documented
-in [EDITIONS.md](EDITIONS.md).
+in [EDITIONS.md](EDITIONS.md). Start with the
+[contribution guide](CONTRIBUTING.md) for local setup, component-specific checks,
+and the pull request workflow.
 
 Do not open public issues for vulnerabilities. Use GitHub Security Advisories or
 contact the maintainer privately. The target response window is 48 hours, with a
