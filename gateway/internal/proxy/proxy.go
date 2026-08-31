@@ -198,6 +198,10 @@ func NewLLMProxy(
 				}
 			}
 		}
+		// A key's own sandbox can pin it to a different upstream than the
+		// gateway-wide setting above, so one gateway process can front several
+		// provider dialects at once (see docs/architecture/UPSTREAM_ROUTING_PER_KEY.md).
+		up, key, prov = applySandboxUpstream(up, key, prov, mw.GetAuthContext(req.Context()).Sandbox)
 		req.URL.Scheme = up.Scheme
 		req.URL.Host = up.Host
 		// Re-join the upstream's base path (e.g. "/openai" for Groq, "" for Ollama)
@@ -249,6 +253,22 @@ func NewLLMProxy(
 	}
 	p.rp = rp
 	return p, nil
+}
+
+// applySandboxUpstream overrides the resolved upstream/key/provider with an
+// API key's own sandbox settings, when it has one. Falls back to the values
+// passed in — the gateway-wide default, or another key's override — when the
+// sandbox has no UpstreamURL set (the common case) or the URL doesn't parse
+// to a usable host. Pure and allocation-light so it can run on every request.
+func applySandboxUpstream(up *url.URL, key string, prov provider.Type, sandbox store.APISandbox) (*url.URL, string, provider.Type) {
+	if sandbox.UpstreamURL == "" {
+		return up, key, prov
+	}
+	u, err := url.Parse(sandbox.UpstreamURL)
+	if err != nil || u.Host == "" {
+		return up, key, prov
+	}
+	return u, sandbox.UpstreamAPIKey, provider.Parse(sandbox.UpstreamProvider)
 }
 
 // singleJoiningSlash joins two URL path segments with exactly one slash. Copied
