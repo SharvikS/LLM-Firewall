@@ -113,7 +113,7 @@ For the deeper design and threat model, read:
 - [Threat Model](docs/security/THREAT_MODEL.md)
 - [Production Deployment Guide](docs/operations/PRODUCTION_DEPLOYMENT.md)
 - [Architecture docs](docs/README.md#architecture--design--technical-analyses)
-- [Known limitation: one upstream provider per gateway process](docs/architecture/UPSTREAM_ROUTING_LIMITATION.md)
+- [Per-API-key upstream routing](docs/architecture/UPSTREAM_ROUTING_PER_KEY.md)
 
 ---
 

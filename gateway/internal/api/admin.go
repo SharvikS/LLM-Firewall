@@ -214,6 +214,9 @@ func (h *adminHandler) listKeys(w http.ResponseWriter, r *http.Request) {
 		internalError(w, "list keys", err)
 		return
 	}
+	for i := range keys {
+		keys[i].Sandbox.UpstreamAPIKey = "" // write-only secret, like Settings.UpstreamAPIKey
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"keys": keys, "count": len(keys)})
 }
 
@@ -286,6 +289,7 @@ func (h *adminHandler) updateKeySandbox(w http.ResponseWriter, r *http.Request) 
 	h.audit.Record(r, controlAuditEvent{
 		Action: "ADMIN_API_KEY_SANDBOX_UPDATED", TargetType: "api_key", TargetID: id.String(), Reason: "api key sandbox updated",
 	})
+	key.Sandbox.UpstreamAPIKey = "" // write-only secret, like Settings.UpstreamAPIKey
 	writeJSON(w, http.StatusOK, key)
 }
 

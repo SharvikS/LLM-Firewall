@@ -42,6 +42,17 @@ type APISandbox struct {
 	MaxTokensPerMinute   int      `json:"max_tokens_per_minute,omitempty"`
 	RequirePIIRedaction  bool     `json:"require_pii_redaction,omitempty"`
 	RequireOutputScan    bool     `json:"require_output_scan,omitempty"`
+
+	// UpstreamProvider/UpstreamURL/UpstreamAPIKey pin this key to a different
+	// upstream than the gateway-wide "Edge Routing" setting, independent of
+	// Enabled. This is how one gateway process fronts several provider
+	// dialects at once — e.g. a key handed to an OpenAI-speaking client and
+	// another key handed to an Anthropic-speaking client. Empty UpstreamURL
+	// means "use the gateway default" (the common case). UpstreamAPIKey is
+	// write-only — redacted in API responses, like Settings.UpstreamAPIKey.
+	UpstreamProvider string `json:"upstream_provider,omitempty"`
+	UpstreamURL      string `json:"upstream_url,omitempty"`
+	UpstreamAPIKey   string `json:"upstream_api_key,omitempty"`
 }
 
 // GetByHash looks up a key by SHA-256(rawKey).  Returns nil, nil on miss.
@@ -246,6 +257,9 @@ func normalizeSandbox(s APISandbox) APISandbox {
 	if s.MaxTokensPerMinute < 0 {
 		s.MaxTokensPerMinute = 0
 	}
+	s.UpstreamProvider = strings.TrimSpace(s.UpstreamProvider)
+	s.UpstreamURL = strings.TrimSpace(s.UpstreamURL)
+	s.UpstreamAPIKey = strings.TrimSpace(s.UpstreamAPIKey)
 	return s
 }
 
